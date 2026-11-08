@@ -1,0 +1,93 @@
+{
+  "name": "agentic-seo-check",
+  "version": "0.1.0",
+  "description": "SEO analysis for coding agents: a CLI and MCP server that audit URLs, static build output or raw HTML and return machine-actionable findings.",
+  "license": "MIT",
+  "author": "Rik Visser <rik@rivi.software>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rivi-software/agentic-seo-check.git"
+  },
+  "homepage": "https://github.com/rivi-software/agentic-seo-check#readme",
+  "bugs": {
+    "url": "https://github.com/rivi-software/agentic-seo-check/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "bin": {
+    "agentic-seo-check": "./dist/cli.js",
+    "agentic-seo-check-mcp": "./dist/mcp-bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx src/cli.ts",
+    "mcp": "tsx src/mcp-bin.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "seo",
+    "audit",
+    "mcp",
+    "model-context-protocol",
+    "cli",
+    "coding-agents",
+    "lighthouse",
+    "crawler"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "cheerio": "^1.2.0",
+    "commander": "^15.1.0",
+    "domhandler": "^5.0.3",
+    "fast-xml-parser": "^5.12.0",
+    "robots-parser": "^3.0.1",
+    "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "chrome-launcher": "^1.2.3",
+    "lighthouse": "^13.6.0",
+    "playwright": "^1.65.0"
+  },
+  "peerDependenciesMeta": {
+    "chrome-launcher": {
+      "optional": true
+    },
+    "lighthouse": {
+      "optional": true
+    },
+    "playwright": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "chrome-launcher": "^1.2.3",
+    "lighthouse": "^13.6.0",
+    "playwright": "^1.65.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  }
+}
