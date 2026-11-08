@@ -103,36 +103,35 @@ export const RENDER_RULES: RuleMeta[] = [
 ];
 
 const byId = new Map(RENDER_RULES.map((r) => [r.id, r]));
-const m = (id: string): RuleMeta => byId.get(id)!;
 
-export function snapshot(
+const m = (id: string): RuleMeta => {
+  const rule = byId.get(id);
+
+  if (!rule) {
+    throw new Error(`Unknown rendering rule: ${id}`);
+  }
+
+  return rule;
+};
+
+export const snapshot = (
   page: ExtractedPage,
   response?: ResponseInfo
-): RenderSnapshot {
-  return {
-    title: page.title,
-    metaDescription: page.metaDescription,
-    canonical: page.canonical,
-    robots: robotsDirectives(page, response).directives,
-    h1Count: page.h1s.filter(Boolean).length,
-    wordCount: page.wordCount,
-    internalLinks: page.links.filter((l) => l.internal).length,
-    structuredDataCount: page.structuredData.length,
-  };
-}
+): RenderSnapshot => ({
+  title: page.title,
+  metaDescription: page.metaDescription,
+  canonical: page.canonical,
+  robots: robotsDirectives(page, response).directives,
+  h1Count: page.h1s.filter(Boolean).length,
+  wordCount: page.wordCount,
+  internalLinks: page.links.filter((l) => l.internal).length,
+  structuredDataCount: page.structuredData.length,
+});
 
-export function compareRender(
-  raw: ExtractedPage,
-  rendered: ExtractedPage,
-  renderedUrl: string,
-  consoleErrors: string[],
-  rawResponse?: ResponseInfo
-): { comparison: RenderComparison; findings: Finding[] } {
-  const a = snapshot(raw, rawResponse);
-  const b = snapshot(rendered);
+/** Title, description, canonical and robots: what the head says before and after JavaScript runs. */
+const headFindings = (a: RenderSnapshot, b: RenderSnapshot): Finding[] => {
   const findings: Finding[] = [];
-  const url = rawResponse?.finalUrl ?? raw.url;
-  const add = (f: Finding) => findings.push({ ...f, url });
+  const add = (f: Finding) => findings.push(f);
 
   if (!a.title && b.title) {
     add(
@@ -224,6 +223,18 @@ export function compareRender(
     );
   }
 
+  return findings;
+};
+
+/** H1, words, links, structured data and script errors: what only the rendered body has. */
+const bodyFindings = (
+  a: RenderSnapshot,
+  b: RenderSnapshot,
+  consoleErrors: string[]
+): Finding[] => {
+  const findings: Finding[] = [];
+  const add = (f: Finding) => findings.push(f);
+
   if (a.h1Count === 0 && b.h1Count > 0) {
     add(
       finding(
@@ -285,6 +296,30 @@ export function compareRender(
     );
   }
 
+  return findings;
+};
+
+export interface RenderCompareResult {
+  comparison: RenderComparison;
+  findings: Finding[];
+}
+
+export const compareRender = (
+  raw: ExtractedPage,
+  rendered: ExtractedPage,
+  renderedUrl: string,
+  consoleErrors: string[],
+  rawResponse?: ResponseInfo
+): RenderCompareResult => {
+  const a = snapshot(raw, rawResponse);
+  const b = snapshot(rendered);
+  const url = rawResponse?.finalUrl ?? raw.url;
+
+  const findings = [
+    ...headFindings(a, b),
+    ...bodyFindings(a, b, consoleErrors),
+  ].map((f) => ({ ...f, url }));
+
   return {
     comparison: {
       tool: "playwright",
@@ -295,4 +330,4 @@ export function compareRender(
     },
     findings,
   };
-}
+};

@@ -21,12 +21,62 @@ export interface ExtractOptions {
   siteHost?: string;
 }
 
-export function extractPage(
+const relList = (rel: string | null | undefined): string[] =>
+  (rel ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
+
+const attrOrNull = (value: string | undefined): string | null =>
+  value?.trim() || null;
+
+const firstNonEmpty = (values: string[]): string | null => {
+  for (const v of values) {
+    if (v) {
+      return v;
+    }
+  }
+
+  return null;
+};
+
+const detectCharset = ($: CheerioAPI): string | null => {
+  const direct = $("meta[charset]").first().attr("charset");
+
+  if (direct) {
+    return direct.trim();
+  }
+
+  const httpEquiv = $("meta[http-equiv]")
+    .toArray()
+    .find(
+      (el) => ($(el).attr("http-equiv") ?? "").toLowerCase() === "content-type"
+    );
+
+  const content = httpEquiv ? $(httpEquiv).attr("content") : undefined;
+  const match = content?.match(/charset=(?<charset>[\w-]+)/iu);
+
+  return match?.groups?.charset ?? null;
+};
+
+const visibleText = ($: CheerioAPI): string => {
+  const body = $("body").clone();
+  body.find("script, style, noscript, template, svg, iframe, head").remove();
+  // Insert spaces at block boundaries so words don't fuse.
+  body
+    .find(
+      "p, div, li, h1, h2, h3, h4, h5, h6, br, tr, td, th, section, article, header, footer, nav, blockquote, pre, dd, dt, figcaption"
+    )
+    .each((_, el) => {
+      $(el).prepend(" ").append(" ");
+    });
+
+  return collapseWhitespace(body.text());
+};
+
+export const extractPage = (
   html: string,
   options: ExtractOptions
-): ExtractedPage {
+): ExtractedPage => {
   const $ = load(html);
-  const hasDoctype = /^\s*<!doctype\s+html/i.test(html);
+  const hasDoctype = /^\s*<!doctype\s+html/iu.test(html);
   const baseHref = $("base[href]").first().attr("href");
   const base = (baseHref && resolveUrl(baseHref, options.url)) || options.url;
   const siteHost = options.siteHost ?? hostOf(options.url) ?? "";
@@ -163,7 +213,7 @@ export function extractPage(
     canonicals,
     canonical: canonicals[0] ? resolveUrl(canonicals[0], base) : null,
     headings,
-    h1s: headings.filter((h) => h.level === 1).map((h) => h.text),
+    h1s: headings.flatMap((h) => (h.level === 1 ? [h.text] : [])),
     og,
     twitter,
     images,
@@ -173,61 +223,7 @@ export function extractPage(
     structuredDataErrors: structured.errors,
     text,
     wordCount: wordCount(text),
-    htmlBytes: Buffer.byteLength(html, "utf8"),
+    htmlBytes: Buffer.byteLength(html, "utf-8"),
     hasBaseHref: Boolean(baseHref),
   };
-}
-
-function relList(rel: string | null | undefined): string[] {
-  return (rel ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-}
-
-function attrOrNull(value: string | undefined): string | null {
-  const v = value?.trim();
-
-  return v ? v : null;
-}
-
-function firstNonEmpty(values: string[]): string | null {
-  for (const v of values) {
-    if (v) {
-      return v;
-    }
-  }
-
-  return null;
-}
-
-function detectCharset($: CheerioAPI): string | null {
-  const direct = $("meta[charset]").first().attr("charset");
-
-  if (direct) {
-    return direct.trim();
-  }
-
-  const httpEquiv = $("meta[http-equiv]")
-    .toArray()
-    .find(
-      (el) => ($(el).attr("http-equiv") ?? "").toLowerCase() === "content-type"
-    );
-
-  const content = httpEquiv ? $(httpEquiv).attr("content") : undefined;
-  const match = content?.match(/charset=([\w-]+)/i);
-
-  return match?.[1] ?? null;
-}
-
-function visibleText($: CheerioAPI): string {
-  const body = $("body").clone();
-  body.find("script, style, noscript, template, svg, iframe, head").remove();
-  // Insert spaces at block boundaries so words don't fuse.
-  body
-    .find(
-      "p, div, li, h1, h2, h3, h4, h5, h6, br, tr, td, th, section, article, header, footer, nav, blockquote, pre, dd, dt, figcaption"
-    )
-    .each((_, el) => {
-      $(el).prepend(" ").append(" ");
-    });
-
-  return collapseWhitespace(body.text());
-}
+};

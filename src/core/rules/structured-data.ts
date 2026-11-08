@@ -1,4 +1,5 @@
-import { typesOf } from "../html/structured-data.js";
+import { isJsonObject, isString, typesOf } from "../html/structured-data.js";
+import type { JsonObject, JsonValue } from "../html/structured-data.js";
 import type { StructuredDataItem } from "../types.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
 
@@ -19,6 +20,7 @@ const ARTICLE: SchemaSpec = {
   docs: `${G}article`,
 };
 
+// oxlint-disable-next-line anti-slop/no-known-value-widening -- the table is read with whatever @type a page names, so it needs an index type that lets a lookup miss
 export const SCHEMA_SPECS: Record<string, SchemaSpec> = {
   Article: ARTICLE,
   NewsArticle: ARTICLE,
@@ -204,7 +206,7 @@ const DATE_PROPS = new Set([
 ]);
 
 const ISO_DATE =
-  /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/u;
 
 interface Issue {
   type: string;
@@ -212,12 +214,20 @@ interface Issue {
   path: string;
 }
 
-function isPresent(value: unknown): boolean {
+/** What one structured-data item lacks or gets wrong, against the specs above. */
+export interface ItemValidation {
+  required: Issue[];
+  recommended: Issue[];
+  badDates: string[];
+  unknownTypes: string[];
+}
+
+const isPresent = (value: JsonValue | undefined): boolean => {
   if (value === null || value === undefined) {
     return false;
   }
 
-  if (typeof value === "string") {
+  if (isString(value)) {
     return value.trim().length > 0;
   }
 
@@ -226,38 +236,55 @@ function isPresent(value: unknown): boolean {
   }
 
   return true;
-}
+};
+
+/** The properties a typed object lacks: required ones (and oneOf groups it fills none of), then recommended ones. */
+const missingProperties = (obj: JsonObject, spec: SchemaSpec) => {
+  const required = spec.required.filter((p) => !isPresent(obj[p]));
+
+  for (const group of spec.oneOf ?? []) {
+    if (!group.some((p) => isPresent(obj[p]))) {
+      required.push(`one of: ${group.join(" | ")}`);
+    }
+  }
+
+  const recommended = spec.recommended.filter((p) => !isPresent(obj[p]));
+
+  return { required, recommended };
+};
 
 /** Walk one structured-data item (and nested typed objects) collecting spec violations. */
-export function validateItem(item: StructuredDataItem): {
-  required: Issue[];
-  recommended: Issue[];
-  badDates: string[];
-  unknownTypes: string[];
-} {
+export const validateItem = (item: StructuredDataItem): ItemValidation => {
   const required: Issue[] = [];
   const recommended: Issue[] = [];
   const badDates: string[] = [];
   const unknownTypes: string[] = [];
-  const visited = new Set<unknown>();
+  const visited = new Set<JsonObject | JsonValue[]>();
 
-  const walk = (node: unknown, path: string, depth: number): void => {
-    if (depth > 6 || !node || typeof node !== "object" || visited.has(node)) {
+  const walk = (
+    node: JsonValue | undefined,
+    path: string,
+    depth: number
+  ): void => {
+    if (
+      depth > 6 ||
+      !(Array.isArray(node) || isJsonObject(node)) ||
+      visited.has(node)
+    ) {
       return;
     }
 
     visited.add(node);
 
     if (Array.isArray(node)) {
-      node.forEach((n, i) => walk(n, `${path}[${i}]`, depth));
+      for (const [i, n] of node.entries()) {
+        walk(n, `${path}[${i}]`, depth);
+      }
 
       return;
     }
 
-    const obj = node as Record<string, unknown>;
-    const types = typesOf(obj["@type"]);
-
-    for (const type of types) {
+    for (const type of typesOf(node["@type"])) {
       const spec = SCHEMA_SPECS[type];
 
       if (!spec) {
@@ -265,44 +292,37 @@ export function validateItem(item: StructuredDataItem): {
         continue;
       }
 
-      const missingReq = spec.required.filter((p) => !isPresent(obj[p]));
+      const missing = missingProperties(node, spec);
 
-      for (const group of spec.oneOf ?? []) {
-        if (!group.some((p) => isPresent(obj[p]))) {
-          missingReq.push(`one of: ${group.join(" | ")}`);
-        }
+      if (missing.required.length) {
+        required.push({ type, missing: missing.required, path });
       }
 
-      if (missingReq.length) {
-        required.push({ type, missing: missingReq, path });
-      }
-
-      const missingRec = spec.recommended.filter((p) => !isPresent(obj[p]));
-
-      if (missingRec.length) {
-        recommended.push({ type, missing: missingRec, path });
+      if (missing.recommended.length) {
+        recommended.push({ type, missing: missing.recommended, path });
       }
     }
 
-    for (const [key, value] of Object.entries(obj)) {
+    for (const [key, value] of Object.entries(node)) {
       if (
         DATE_PROPS.has(key) &&
-        typeof value === "string" &&
+        isString(value) &&
         !ISO_DATE.test(value.trim())
       ) {
         badDates.push(`${path ? `${path}.` : ""}${key}="${value}"`);
       }
 
-      if (value && typeof value === "object") {
+      if (Array.isArray(value) || isJsonObject(value)) {
         walk(value, path ? `${path}.${key}` : key, depth + 1);
       }
     }
   };
 
-  walk(item.data, "", 0);
+  // SAFETY: extractStructuredData builds every item's data from JSON.parse or from microdata, and both hold JSON values alone.
+  walk(item.data as JsonObject, "", 0);
 
   return { required, recommended, badDates, unknownTypes };
-}
+};
 
 export const structuredDataRules = [
   defineRule(

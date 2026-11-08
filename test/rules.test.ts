@@ -7,12 +7,12 @@ import { ALL_RULES } from "../src/core/rules/index.js";
 
 const good = readFileSync(
   new URL("fixtures/good-page.html", import.meta.url),
-  "utf8"
+  "utf-8"
 );
 
 const bad = readFileSync(
   new URL("fixtures/bad-page.html", import.meta.url),
-  "utf8"
+  "utf-8"
 );
 
 const rulesOf = (findings: { rule: string }[]) => findings.map((f) => f.rule);
@@ -25,10 +25,11 @@ describe("page rules", () => {
     });
 
     const serious = audit.findings.filter((f) => f.severity !== "info");
-    expect(serious, JSON.stringify(serious, null, 2)).toHaveLength(0);
+    // An empty array compared in full shows any finding in the failure's diff.
+    expect(serious).toStrictEqual([]);
     expect(audit.score).toBeGreaterThanOrEqual(95);
-    expect(audit.summary.indexable).toBe(true);
-    expect(audit.summary.structuredDataTypes).toEqual(["Product"]);
+    expect(audit.summary.indexable).toBeTruthy();
+    expect(audit.summary.structuredDataTypes).toStrictEqual(["Product"]);
   });
 
   it("flags the classic mistakes on a bad page", async () => {
@@ -80,21 +81,21 @@ describe("page rules", () => {
 
     const canonical = audit.findings.find(
       (f) => f.rule === "canonical.multiple"
-    )!;
+    );
 
-    expect(canonical.severity).toBe("error");
-    const alt = audit.findings.find((f) => f.rule === "img.alt-missing")!;
-    expect(alt.evidence).toMatchObject({ count: 2, total: 3 });
+    expect(canonical?.severity).toBe("error");
+    const alt = audit.findings.find((f) => f.rule === "img.alt-missing");
+    expect(alt?.evidence).toMatchObject({ count: 2, total: 3 });
 
     const required = audit.findings.find(
       (f) => f.rule === "structured-data.missing-required"
-    )!;
+    );
 
-    expect(required.evidence).toMatchObject({
+    expect(required?.evidence).toMatchObject({
       type: "Product",
       missing: ["name", "one of: offers | review | aggregateRating"],
     });
-    expect(audit.findings[0]!.severity).toBe("error");
+    expect(audit.findings[0]?.severity).toBe("error");
     expect(audit.score).toBeLessThan(30);
   });
 
@@ -104,10 +105,10 @@ describe("page rules", () => {
       { url: "https://a.test/" }
     );
 
-    const f = audit.findings.find((x) => x.rule === "title.missing")!;
-    expect(f.severity).toBe("error");
-    expect(f.selector).toBe("head > title");
-    expect(f.url).toBe("https://a.test/");
+    const f = audit.findings.find((x) => x.rule === "title.missing");
+    expect(f?.severity).toBe("error");
+    expect(f?.selector).toBe("head > title");
+    expect(f?.url).toBe("https://a.test/");
   });
 
   it("reads X-Robots-Tag from the response", async () => {
@@ -127,9 +128,9 @@ describe("page rules", () => {
       }
     );
 
-    const f = audit.findings.find((x) => x.rule === "robots.noindex")!;
-    expect(f.evidence).toMatchObject({ sources: ["header"] });
-    expect(audit.summary.indexable).toBe(false);
+    const f = audit.findings.find((x) => x.rule === "robots.noindex");
+    expect(f?.evidence).toMatchObject({ sources: ["header"] });
+    expect(audit.summary.indexable).toBeFalsy();
   });
 
   it("keyword rules run only with a keyword", async () => {
@@ -139,7 +140,7 @@ describe("page rules", () => {
     const without = await auditHtml(html, { url: "https://a.test/pricing" });
     expect(
       rulesOf(without.findings).some((r) => r.startsWith("keyword."))
-    ).toBe(false);
+    ).toBeFalsy();
 
     const withKw = await auditHtml(
       html,
@@ -147,7 +148,7 @@ describe("page rules", () => {
       { keyword: "blue widgets" }
     );
 
-    expect(rulesOf(withKw.findings)).toEqual(
+    expect(rulesOf(withKw.findings)).toStrictEqual(
       expect.arrayContaining([
         "keyword.not-in-title",
         "keyword.not-in-h1",
@@ -162,9 +163,9 @@ describe("page rules", () => {
       { keyword: "pricing" }
     );
 
-    expect(rulesOf(match.findings).some((r) => r.startsWith("keyword."))).toBe(
-      false
-    );
+    expect(
+      rulesOf(match.findings).some((r) => r.startsWith("keyword."))
+    ).toBeFalsy();
   });
 
   it("canonical.other-page compares by path on localhost", async () => {
@@ -204,7 +205,7 @@ describe("page rules", () => {
     });
 
     const rules = rulesOf(audit.findings);
-    expect(rules).toEqual(
+    expect(rules).toStrictEqual(
       expect.arrayContaining([
         "response.error-status",
         "response.redirect-chain",
@@ -220,7 +221,7 @@ describe("page rules", () => {
       { includeInfo: false, disableRules: ["title.generic"] }
     );
 
-    expect(audit.findings.every((f) => f.severity !== "info")).toBe(true);
+    expect(audit.findings.every((f) => f.severity !== "info")).toBeTruthy();
     expect(rulesOf(audit.findings)).not.toContain("title.generic");
   });
 

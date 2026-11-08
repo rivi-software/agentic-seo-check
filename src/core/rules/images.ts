@@ -1,7 +1,7 @@
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
 
 const FILENAME_ALT =
-  /^(img|image|dsc|dscn|dcim|photo|screenshot|screen shot|untitled)[-_ ]?\d*|\.(jpe?g|png|gif|webp|avif|svg)$/i;
+  /^(?:img|image|dsc|dscn|dcim|photo|screenshot|screen shot|untitled)[-_ ]?\d*|\.(?:jpe?g|png|gif|webp|avif|svg)$/iu;
 
 export const imageRules = [
   defineRule(

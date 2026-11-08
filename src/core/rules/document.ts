@@ -1,6 +1,6 @@
 import { defineRule, GOOGLE_DOCS } from "./rule.js";
 
-const BCP47 = /^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$/;
+const BCP47 = /^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/u;
 
 export const documentRules = [
   defineRule(
@@ -62,10 +62,10 @@ export const documentRules = [
         "Remove user-scalable=no and maximum-scale limits; blocking zoom is an accessibility problem flagged by Lighthouse.",
     },
     ({ page }, make) => {
-      const v = (page.viewport ?? "").toLowerCase().replaceAll(/\s/g, "");
+      const v = (page.viewport ?? "").toLowerCase().replaceAll(/\s/gu, "");
 
-      return /user-scalable=(no|0)/.test(v) ||
-        /maximum-scale=1(\.0*)?(,|$)/.test(v)
+      return /user-scalable=(?:no|0)/u.test(v) ||
+        /maximum-scale=1(?:\.0*)?(?:,|$)/u.test(v)
         ? make("Viewport prevents users from zooming.", {
             selector: 'head > meta[name="viewport"]',
             evidence: { viewport: page.viewport },

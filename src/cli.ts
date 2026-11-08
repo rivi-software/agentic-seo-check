@@ -24,6 +24,7 @@ program
   .showHelpAfterError();
 
 const intArg = (value: string): number => {
+  // oxlint-disable-next-line unicorn/prefer-number-coercion -- parseInt reads the leading digits ("10.5" is 10), where Number would refuse what users have always passed
   const n = Number.parseInt(value, 10);
 
   if (!Number.isFinite(n) || n < 0) {
@@ -33,7 +34,7 @@ const intArg = (value: string): number => {
   return n;
 };
 
-function addAuditOptions(cmd: Command, crawlDefault: boolean): Command {
+const addAuditOptions = (cmd: Command, crawlDefault: boolean): Command => {
   if (!crawlDefault) {
     cmd.option(
       "--crawl",
@@ -113,7 +114,7 @@ function addAuditOptions(cmd: Command, crawlDefault: boolean): Command {
       'Extra request header "Name: value" (repeatable)'
     )
     .option("-q, --quiet", "Suppress progress output on stderr");
-}
+};
 
 interface CliOptions {
   crawl?: boolean;
@@ -144,11 +145,24 @@ interface CliOptions {
   quiet?: boolean;
 }
 
-async function runAudit(
+/** The report format: as asked, else by the output file's extension, else Markdown on a terminal. */
+const formatOf = (opts: CliOptions): "json" | "md" => {
+  if (opts.format !== undefined) {
+    return opts.format;
+  }
+
+  if (opts.out) {
+    return opts.out.endsWith(".md") ? "md" : "json";
+  }
+
+  return process.stdout.isTTY ? "md" : "json";
+};
+
+const runAudit = async (
   target: string,
   opts: CliOptions,
   forceCrawl: boolean
-): Promise<void> {
+): Promise<void> => {
   const headers: Record<string, string> = {};
 
   for (const h of opts.header ?? []) {
@@ -209,21 +223,13 @@ async function runAudit(
     audit = compactAudit(audit);
   }
 
-  const format =
-    opts.format ??
-    (opts.out
-      ? opts.out.endsWith(".md")
-        ? "md"
-        : "json"
-      : process.stdout.isTTY
-        ? "md"
-        : "json");
+  const format = formatOf(opts);
 
   const output =
     format === "md" ? renderMarkdown(audit) : JSON.stringify(audit, null, 2);
 
   if (opts.out) {
-    await fs.writeFile(opts.out, `${output}\n`, "utf8");
+    await fs.writeFile(opts.out, `${output}\n`, "utf-8");
 
     if (!opts.quiet) {
       process.stderr.write(`Report written to ${opts.out}\n`);
@@ -250,7 +256,7 @@ async function runAudit(
       process.exitCode = 1;
     }
   }
-}
+};
 
 addAuditOptions(
   program
@@ -327,9 +333,11 @@ program
     await startMcpServer();
   });
 
-program.parseAsync(process.argv).catch((err: unknown) => {
+try {
+  await program.parseAsync(process.argv);
+} catch (error) {
   process.stderr.write(
-    `agentic-seo-check: ${err instanceof Error ? err.message : String(err)}\n`
+    `agentic-seo-check: ${error instanceof Error ? error.message : String(error)}\n`
   );
   process.exit(2);
-});
+}

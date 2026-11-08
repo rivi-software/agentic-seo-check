@@ -85,7 +85,7 @@ export const linkRules = [
     },
     ({ page }, make) => {
       const bad = page.links.filter(
-        (l) => l.href === "" || l.href === "#" || /^javascript:/i.test(l.href)
+        (l) => l.href === "" || l.href === "#" || /^javascript:/iu.test(l.href)
       );
 
       return bad.length

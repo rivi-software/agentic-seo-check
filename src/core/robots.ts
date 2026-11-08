@@ -1,16 +1,17 @@
 import { createRequire } from "node:module";
 
+import type robotsParserModule from "robots-parser";
+
 import { fetchPage } from "./fetch.js";
 import type { FetchOptions } from "./fetch.js";
 import type { RobotsTxtInfo } from "./types.js";
 
-type Robot = ReturnType<(typeof import("robots-parser"))["default"]>;
-
 // robots-parser is CommonJS; require() avoids ESM default-export interop mismatches.
-const robotsParser = createRequire(import.meta.url)("robots-parser") as (
-  url: string,
-  robotstxt: string
-) => Robot;
+// SAFETY: require() returns the package's module.exports, which is the parser function that its
+// index.d.ts declares as the default export.
+const robotsParser = createRequire(import.meta.url)(
+  "robots-parser"
+) as (typeof robotsParserModule)["default"];
 
 export interface RobotsResult {
   info: RobotsTxtInfo;
@@ -18,40 +19,13 @@ export interface RobotsResult {
   allows: (url: string) => boolean;
 }
 
-export async function loadRobotsTxt(
-  origin: string,
-  userAgent: string,
-  options: FetchOptions = {}
-): Promise<RobotsResult> {
-  const url = new URL("/robots.txt", origin).href;
-
-  const res = await fetchPage(url, {
-    ...options,
-    timeoutMs: Math.min(options.timeoutMs ?? 10_000, 10_000),
-  });
-
-  const found =
-    res.status === 200 &&
-    typeof res.body === "string" &&
-    !res.error &&
-    !/<html/i.test(res.body.slice(0, 500));
-
-  return buildRobots(
-    url,
-    res.status,
-    res.error,
-    found ? res.body : null,
-    userAgent
-  );
-}
-
-export function buildRobots(
+export const buildRobots = (
   url: string,
   status: number | null,
   error: string | undefined,
   text: string | null,
   userAgent: string
-): RobotsResult {
+): RobotsResult => {
   const info: RobotsTxtInfo = {
     url,
     status,
@@ -79,11 +53,38 @@ export function buildRobots(
       return allowed === undefined ? true : allowed;
     },
   };
-}
+};
+
+export const loadRobotsTxt = async (
+  origin: string,
+  userAgent: string,
+  options: FetchOptions = {}
+): Promise<RobotsResult> => {
+  const url = new URL("/robots.txt", origin).href;
+
+  const res = await fetchPage(url, {
+    ...options,
+    timeoutMs: Math.min(options.timeoutMs ?? 10_000, 10_000),
+  });
+
+  const found =
+    res.status === 200 &&
+    res.body !== null &&
+    !res.error &&
+    !/<html/iu.test(res.body.slice(0, 500));
+
+  return buildRobots(
+    url,
+    res.status,
+    res.error,
+    found ? res.body : null,
+    userAgent
+  );
+};
 
 /** Short bot token used for robots.txt matching, derived from the full UA string. */
-export function robotsUserAgentToken(userAgent: string): string {
-  const match = /agentic-seo-check|Googlebot|bingbot/i.exec(userAgent);
+export const robotsUserAgentToken = (userAgent: string): string => {
+  const match = /agentic-seo-check|Googlebot|bingbot/iu.exec(userAgent);
 
   return match ? match[0] : userAgent;
-}
+};

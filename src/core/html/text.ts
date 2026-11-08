@@ -2,29 +2,24 @@
 
 const WORD_RE = /[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu;
 
-export function words(text: string): string[] {
-  return text.match(WORD_RE) ?? [];
-}
+export const words = (text: string): string[] => text.match(WORD_RE) ?? [];
 
-export function wordCount(text: string): number {
-  return words(text).length;
-}
+export const wordCount = (text: string): number => words(text).length;
 
-export function collapseWhitespace(text: string): string {
-  return text.replaceAll(/\s+/g, " ").trim();
-}
+export const collapseWhitespace = (text: string): string =>
+  text.replaceAll(/\s+/gu, " ").trim();
 
-export function sentenceCount(text: string): number {
+export const sentenceCount = (text: string): number => {
   const parts = text
-    .split(/[.!?]+(?:\s+|$)/)
+    .split(/[.!?]+(?:\s+|$)/u)
     .filter((s) => s.trim().length > 0);
 
   return Math.max(1, parts.length);
-}
+};
 
 /** English syllable heuristic: vowel groups minus silent trailing e, min 1. */
-export function syllables(word: string): number {
-  const w = word.toLowerCase().replaceAll(/[^a-z]/g, "");
+export const syllables = (word: string): number => {
+  const w = word.toLowerCase().replaceAll(/[^a-z]/gu, "");
 
   if (!w) {
     return 0;
@@ -34,20 +29,20 @@ export function syllables(word: string): number {
     return 1;
   }
 
-  let count = (w.replace(/e$/, "").match(/[aeiouy]+/g) ?? []).length;
+  let count = (w.replace(/e$/u, "").match(/[aeiouy]+/gu) ?? []).length;
 
-  if (w.endsWith("le") && !/[aeiouy]le$/.test(w)) {
-    count++;
+  if (w.endsWith("le") && !/[aeiouy]le$/u.test(w)) {
+    count += 1;
   }
 
   return Math.max(1, count);
-}
+};
 
 /**
  * Flesch Reading Ease (English formula). Returns null when there is not enough text.
  * 90-100 very easy, 60-70 plain English, 30-50 difficult, <30 very difficult.
  */
-export function fleschReadingEase(text: string): number | null {
+export const fleschReadingEase = (text: string): number | null => {
   const ws = words(text);
 
   if (ws.length < 100) {
@@ -61,13 +56,12 @@ export function fleschReadingEase(text: string): number | null {
     206.835 - 1.015 * (ws.length / sentences) - 84.6 * (syl / ws.length);
 
   return Math.round(score * 10) / 10;
-}
+};
 
-const PLACEHOLDER_RE = /lorem ipsum|dolor sit amet|consectetur adipiscing/i;
+const PLACEHOLDER_RE = /lorem ipsum|dolor sit amet|consectetur adipiscing/iu;
 
-export function hasPlaceholderText(text: string): boolean {
-  return PLACEHOLDER_RE.test(text);
-}
+export const hasPlaceholderText = (text: string): boolean =>
+  PLACEHOLDER_RE.test(text);
 
 export const GENERIC_TITLES = new Set([
   "home",
@@ -107,9 +101,8 @@ export const GENERIC_TITLES = new Set([
   "example",
 ]);
 
-export function isGenericTitle(title: string): boolean {
-  return GENERIC_TITLES.has(collapseWhitespace(title).toLowerCase());
-}
+export const isGenericTitle = (title: string): boolean =>
+  GENERIC_TITLES.has(collapseWhitespace(title).toLowerCase());
 
 export const GENERIC_ANCHORS = new Set([
   "click here",
@@ -133,23 +126,22 @@ export const GENERIC_ANCHORS = new Set([
   "www",
 ]);
 
-export function isGenericAnchor(text: string): boolean {
+export const isGenericAnchor = (text: string): boolean => {
   const t = collapseWhitespace(text)
     .toLowerCase()
-    .replace(/[.!…»›>]+$/, "")
+    .replace(/[.!…»›>]+$/u, "")
     .trim();
 
   return GENERIC_ANCHORS.has(t);
-}
+};
 
-export function normalizeForComparison(text: string): string {
-  return collapseWhitespace(text).toLowerCase();
-}
+export const normalizeForComparison = (text: string): string =>
+  collapseWhitespace(text).toLowerCase();
 
-export function includesKeyword(
+export const includesKeyword = (
   haystack: string | null | undefined,
   keyword: string
-): boolean {
+): boolean => {
   if (!haystack) {
     return false;
   }
@@ -157,9 +149,9 @@ export function includesKeyword(
   return normalizeForComparison(haystack).includes(
     normalizeForComparison(keyword)
   );
-}
+};
 
-export function keywordOccurrences(text: string, keyword: string): number {
+export const keywordOccurrences = (text: string, keyword: string): number => {
   const hay = normalizeForComparison(text);
   const needle = normalizeForComparison(keyword);
 
@@ -171,26 +163,26 @@ export function keywordOccurrences(text: string, keyword: string): number {
   let idx = hay.indexOf(needle);
 
   while (idx !== -1) {
-    count++;
+    count += 1;
     idx = hay.indexOf(needle, idx + needle.length);
   }
 
   return count;
-}
+};
 
 /** 5-word shingles for near-duplicate detection. */
-export function shingles(text: string, size = 5): Set<string> {
+export const shingles = (text: string, size = 5): Set<string> => {
   const ws = words(normalizeForComparison(text));
   const out = new Set<string>();
 
-  for (let i = 0; i + size <= ws.length; i++) {
+  for (let i = 0; i + size <= ws.length; i += 1) {
     out.add(ws.slice(i, i + size).join(" "));
   }
 
   return out;
-}
+};
 
-export function jaccard(a: Set<string>, b: Set<string>): number {
+export const jaccard = (a: Set<string>, b: Set<string>): number => {
   if (a.size === 0 && b.size === 0) {
     return 1;
   }
@@ -200,9 +192,9 @@ export function jaccard(a: Set<string>, b: Set<string>): number {
 
   for (const s of small) {
     if (large.has(s)) {
-      inter++;
+      inter += 1;
     }
   }
 
   return inter / (a.size + b.size - inter);
-}
+};

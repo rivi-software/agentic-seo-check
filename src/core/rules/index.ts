@@ -51,10 +51,19 @@ export interface RunRulesOptions {
   disable?: Set<string>;
 }
 
-export function runPageRules(
+export const sortFindings = (findings: Finding[]): Finding[] => {
+  const rank = { error: 0, warning: 1, info: 2 } as const;
+
+  return findings.toSorted(
+    (a, b) =>
+      rank[a.severity] - rank[b.severity] || a.rule.localeCompare(b.rule)
+  );
+};
+
+export const runPageRules = (
   ctx: PageContext,
   options: RunRulesOptions = {}
-): Finding[] {
+): Finding[] => {
   const findings: Finding[] = [];
 
   for (const rule of PAGE_RULES) {
@@ -74,12 +83,12 @@ export function runPageRules(
 
         findings.push(f);
       }
-    } catch (err) {
+    } catch (error) {
       findings.push({
         rule: "tool.rule-error",
         severity: "info",
         category: "tool",
-        message: `Rule ${rule.meta.id} failed: ${(err as Error).message}`,
+        message: `Rule ${rule.meta.id} failed: ${error instanceof Error ? error.message : String(error)}`,
         recommendation:
           "Report this as a bug at https://github.com/rivi-software/agentic-seo-check/issues; the rest of the audit is unaffected.",
         url: ctx.page.url,
@@ -88,17 +97,7 @@ export function runPageRules(
   }
 
   return sortFindings(findings);
-}
+};
 
-export function sortFindings(findings: Finding[]): Finding[] {
-  const rank = { error: 0, warning: 1, info: 2 } as const;
-
-  return [...findings].sort(
-    (a, b) =>
-      rank[a.severity] - rank[b.severity] || a.rule.localeCompare(b.rule)
-  );
-}
-
-export function findRule(id: string): RuleMeta | undefined {
-  return ALL_RULES.find((r) => r.id === id);
-}
+export const findRule = (id: string): RuleMeta | undefined =>
+  ALL_RULES.find((r) => r.id === id);

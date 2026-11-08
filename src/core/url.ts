@@ -68,12 +68,11 @@ const NON_HTML_EXTENSIONS = new Set([
   ".csv",
 ]);
 
-export function isHttpUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value.trim());
-}
+export const isHttpUrl = (value: string): boolean =>
+  /^https?:\/\//iu.test(value.trim());
 
 /** Resolve `href` against `base`, returning null for non-http(s) or unparsable values. */
-export function resolveUrl(href: string, base: string): string | null {
+export const resolveUrl = (href: string, base: string): string | null => {
   const trimmed = href.trim();
 
   if (!trimmed) {
@@ -81,7 +80,7 @@ export function resolveUrl(href: string, base: string): string | null {
   }
 
   if (
-    /^(mailto|tel|sms|javascript|data|blob|file|ftp|whatsapp|skype):/i.test(
+    /^(?:mailto|tel|sms|javascript|data|blob|file|ftp|whatsapp|skype):/iu.test(
       trimmed
     )
   ) {
@@ -99,14 +98,14 @@ export function resolveUrl(href: string, base: string): string | null {
   } catch {
     return null;
   }
-}
+};
 
 /**
  * Canonical form used for visited-sets and comparisons: lower-cased scheme/host,
  * default ports dropped, fragment removed, tracking parameters removed.
  * Path and remaining query are kept verbatim (trailing slashes matter to servers).
  */
-export function normalizeUrl(input: string): string | null {
+export const normalizeUrl = (input: string): string | null => {
   try {
     const url = new URL(input);
 
@@ -140,26 +139,24 @@ export function normalizeUrl(input: string): string | null {
   } catch {
     return null;
   }
-}
+};
 
-export function hostOf(url: string): string | null {
+export const hostOf = (url: string): string | null => {
   try {
     return new URL(url).hostname.toLowerCase();
   } catch {
     return null;
   }
-}
+};
 
-export function stripWww(host: string): string {
-  return host.replace(/^www\./i, "");
-}
+export const stripWww = (host: string): string => host.replace(/^www\./iu, "");
 
 /** Same site: identical host ignoring `www.`; optionally any subdomain of the start host. */
-export function isSameSite(
+export const isSameSite = (
   candidate: string,
   startHost: string,
   includeSubdomains = false
-): boolean {
+): boolean => {
   const host = hostOf(candidate);
 
   if (!host) {
@@ -174,10 +171,10 @@ export function isSameSite(
   }
 
   return includeSubdomains && a.endsWith(`.${b}`);
-}
+};
 
 /** Heuristic: does the path look like it points at an HTML document (not an asset)? */
-export function looksLikeHtml(url: string): boolean {
+export const looksLikeHtml = (url: string): boolean => {
   try {
     const { pathname } = new URL(url);
     const ext = path.posix.extname(pathname).toLowerCase();
@@ -201,21 +198,10 @@ export function looksLikeHtml(url: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** Compare two URLs by path only (used for static-directory audits where the host is synthetic). */
-export function samePath(a: string, b: string): boolean {
-  try {
-    return (
-      normalizePath(new URL(a).pathname) === normalizePath(new URL(b).pathname)
-    );
-  } catch {
-    return false;
-  }
-}
+};
 
 /** `/dir/index.html` -> `/dir/`, `/page.html` -> `/page`, trailing slash dropped except root. */
-export function normalizePath(pathname: string): string {
+export const normalizePath = (pathname: string): string => {
   let p = pathname;
 
   try {
@@ -224,16 +210,26 @@ export function normalizePath(pathname: string): string {
     /* keep as-is */
   }
 
-  p = p.replace(/\/index\.html?$/i, "/");
-  p = p.replace(/\.html?$/i, "");
+  p = p.replace(/\/index\.html?$/iu, "/");
+  p = p.replace(/\.html?$/iu, "");
 
   if (p.length > 1 && p.endsWith("/")) {
     p = p.slice(0, -1);
   }
 
   return p === "" ? "/" : p;
-}
+};
 
-export function truncate(value: string, max = 120): string {
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
-}
+/** Compare two URLs by path only (used for static-directory audits where the host is synthetic). */
+export const samePath = (a: string, b: string): boolean => {
+  try {
+    return (
+      normalizePath(new URL(a).pathname) === normalizePath(new URL(b).pathname)
+    );
+  } catch {
+    return false;
+  }
+};
+
+export const truncate = (value: string, max = 120): string =>
+  value.length > max ? `${value.slice(0, max - 1)}…` : value;

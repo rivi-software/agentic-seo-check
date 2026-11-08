@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -9,17 +10,18 @@ export interface Route {
 
 export interface FixtureServer {
   origin: string;
-  close(): Promise<void>;
+  close: () => Promise<void>;
   requests: string[];
 }
 
 const page = (title: string, body: string, extraHead = "") =>
   `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><meta name="description" content="Description for ${title} that is long enough to pass the minimum length check easily."><link rel="canonical" href="__ORIGIN__/__PATH__">${extraHead}</head><body><h1>${title}</h1>${body}</body></html>`;
 
-export function siteRoutes(): Record<string, Route> {
-  const text = Array(40)
-    .fill("Useful words about widgets and workshops appear here in sentences.")
-    .join(" ");
+export const siteRoutes = () => {
+  const text = Array.from(
+    { length: 40 },
+    () => "Useful words about widgets and workshops appear here in sentences."
+  ).join(" ");
 
   return {
     "/": {
@@ -63,19 +65,27 @@ export function siteRoutes(): Record<string, Route> {
       headers: { "content-type": "application/xml" },
       body: '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>__ORIGIN__/</loc></url><url><loc>__ORIGIN__/about/</loc></url><url><loc>__ORIGIN__/blog/post-1</loc></url><url><loc>__ORIGIN__/orphan</loc></url><url><loc>__ORIGIN__/gone</loc></url></urlset>',
     },
-  };
-}
+  } satisfies Record<string, Route>;
+};
 
-export async function startFixtureServer(
+const originOf = (server: http.Server) => {
+  // SAFETY: the server listens on a TCP port, never a pipe, so its address is an AddressInfo; it
+  // is read only once the server is listening.
+  const { port } = server.address() as AddressInfo;
+
+  return `http://localhost:${port}`;
+};
+
+export const startFixtureServer = async (
   routes: Record<string, Route>
-): Promise<FixtureServer> {
+): Promise<FixtureServer> => {
   const requests: string[] = [];
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     requests.push(url.pathname);
     const route = routes[url.pathname];
-    const origin = `http://localhost:${(server.address() as AddressInfo).port}`;
+    const origin = originOf(server);
 
     if (!route) {
       res.writeHead(404, { "content-type": "text/html" });
@@ -86,29 +96,26 @@ export async function startFixtureServer(
       return;
     }
 
-    const headers: Record<string, string> = {
-      "content-type": "text/html; charset=utf-8",
-      ...route.headers,
-    };
+    res.setHeader("content-type", "text/html; charset=utf-8");
 
-    if (headers["location"]) {
-      headers["location"] = headers["location"].replace("__ORIGIN__", origin);
+    for (const [name, value] of Object.entries(route.headers ?? {})) {
+      res.setHeader(name, value.replace("__ORIGIN__", origin));
     }
 
-    res.writeHead(route.status ?? 200, headers);
+    res.writeHead(route.status ?? 200);
     res.end(
       (route.body ?? "")
         .replaceAll("__ORIGIN__", origin)
-        .replaceAll("__PATH__", url.pathname.replace(/^\//, ""))
+        .replaceAll("__PATH__", url.pathname.replace(/^\//u, ""))
     );
   });
 
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const origin = `http://localhost:${(server.address() as AddressInfo).port}`;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
 
   return {
-    origin,
+    origin: originOf(server),
     requests,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => server[Symbol.asyncDispose](),
   };
-}
+};

@@ -79,7 +79,7 @@ export const socialRules = [
     ({ page }, make) => {
       const img = page.og["image"];
 
-      return img && !/^https?:\/\//i.test(img)
+      return img && !/^https?:\/\//iu.test(img)
         ? make(`og:image "${img}" is not an absolute URL.`, {
             selector: 'head > meta[property="og:image"]',
             evidence: { image: img },

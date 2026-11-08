@@ -19,10 +19,42 @@ const parser = new XMLParser({
   isArray: (name) => name === "url" || name === "sitemap",
 });
 
-export function parseSitemap(
+/**
+ * The parts of fast-xml-parser's output that a sitemap is read for. The parser checks no schema,
+ * so every value is unknown until the guards below look at it.
+ */
+interface SitemapXml {
+  sitemapindex?: { sitemap?: unknown };
+  urlset?: { url?: unknown };
+}
+
+const isString = (value: unknown): value is string => typeof value === "string";
+
+const isNumber = (value: unknown): value is number => typeof value === "number";
+
+const isEntry = (value: unknown): value is { loc?: unknown } =>
+  Boolean(value) && typeof value === "object";
+
+const locsOf = (entries: unknown[]): string[] => {
+  const out: string[] = [];
+
+  for (const e of entries) {
+    const loc = isEntry(e) ? e.loc : undefined;
+
+    if (isString(loc) && loc.trim()) {
+      out.push(loc.trim());
+    } else if (isNumber(loc)) {
+      out.push(String(loc));
+    }
+  }
+
+  return out;
+};
+
+export const parseSitemap = (
   body: string,
   contentType: string | null = null
-): ParsedSitemap {
+): ParsedSitemap => {
   const trimmed = body.trim();
 
   if (!trimmed) {
@@ -32,72 +64,110 @@ export function parseSitemap(
   if (!trimmed.startsWith("<")) {
     if (
       (contentType ?? "").includes("text/plain") ||
-      /^https?:\/\//m.test(trimmed)
+      /^https?:\/\//mu.test(trimmed)
     ) {
       return {
         kind: "text",
         locs: trimmed
-          .split(/\r?\n/)
+          .split(/\r?\n/u)
           .map((l) => l.trim())
-          .filter((l) => /^https?:\/\//i.test(l)),
+          .filter((l) => /^https?:\/\//iu.test(l)),
       };
     }
 
     return { kind: "unknown", locs: [] };
   }
 
-  let doc: Record<string, unknown>;
+  let doc: SitemapXml;
 
   try {
-    doc = parser.parse(trimmed) as Record<string, unknown>;
+    doc = parser.parse(trimmed);
   } catch {
     return { kind: "unknown", locs: [] };
   }
 
-  const index = doc["sitemapindex"] as Record<string, unknown> | undefined;
+  if (doc.sitemapindex) {
+    const entries = doc.sitemapindex.sitemap;
 
-  if (index) {
-    return { kind: "sitemapindex", locs: locsOf(index["sitemap"]) };
+    return {
+      kind: "sitemapindex",
+      locs: Array.isArray(entries) ? locsOf(entries) : [],
+    };
   }
 
-  const urlset = doc["urlset"] as Record<string, unknown> | undefined;
+  if (doc.urlset) {
+    const entries = doc.urlset.url;
 
-  if (urlset) {
-    return { kind: "urlset", locs: locsOf(urlset["url"]) };
+    return {
+      kind: "urlset",
+      locs: Array.isArray(entries) ? locsOf(entries) : [],
+    };
   }
 
   return { kind: "unknown", locs: [] };
-}
+};
 
-function locsOf(entries: unknown): string[] {
-  if (!Array.isArray(entries)) {
-    return [];
+/** What fetching one sitemap gave: one to read, an error to report, or nothing to say. */
+type SitemapFetch =
+  | { kind: "parsed"; parsed: ParsedSitemap }
+  | { kind: "error"; message: string }
+  | { kind: "skip" };
+
+const fetchSitemap = async (
+  url: string,
+  candidates: string[],
+  options: FetchOptions
+): Promise<SitemapFetch> => {
+  if (url.endsWith(".gz")) {
+    return {
+      kind: "error",
+      message: `${url}: gzip sitemaps are not supported yet`,
+    };
   }
 
-  const out: string[] = [];
+  const res = await fetchPage(url, {
+    ...options,
+    timeoutMs: Math.min(options.timeoutMs ?? 15_000, 20_000),
+    maxBodyBytes: 15_000_000,
+  });
 
-  for (const e of entries) {
-    const loc =
-      e && typeof e === "object"
-        ? (e as Record<string, unknown>)["loc"]
-        : undefined;
+  if (res.error) {
+    return { kind: "error", message: `${url}: ${res.error}` };
+  }
 
-    if (typeof loc === "string" && loc.trim()) {
-      out.push(loc.trim());
-    } else if (typeof loc === "number") {
-      out.push(String(loc));
+  if (res.status !== 200 || res.body === null) {
+    // A sitemap that answers 404 is passed over without an error.
+    if (res.status !== 404) {
+      return { kind: "error", message: `${url}: HTTP ${res.status}` };
     }
+
+    return { kind: "skip" };
   }
 
-  return out;
-}
+  const parsed = parseSitemap(res.body, res.contentType);
+
+  if (parsed.kind !== "unknown") {
+    return { kind: "parsed", parsed };
+  }
+
+  if (!/<html/iu.test(res.body.slice(0, 1000))) {
+    return { kind: "error", message: `${url}: could not parse as a sitemap` };
+  }
+
+  // The one guessed /sitemap.xml answered with an SPA's fallback page: there is no sitemap.
+  if (candidates.includes(url) && candidates.length === 1) {
+    return { kind: "skip" };
+  }
+
+  return { kind: "error", message: `${url}: returned an HTML page, not XML` };
+};
 
 /** Fetch sitemap candidates (following sitemap indexes) and collect page URLs. */
-export async function loadSitemaps(
+export const loadSitemaps = async (
   candidates: string[],
   options: FetchOptions = {},
   limits: SitemapLimits = {}
-): Promise<SitemapInfo> {
+): Promise<SitemapInfo> => {
   const maxSitemaps = limits.maxSitemaps ?? 25;
   const maxUrls = limits.maxUrls ?? 5000;
   const info: SitemapInfo = { sources: [], urls: [], urlCount: 0, errors: [] };
@@ -106,69 +176,30 @@ export async function loadSitemaps(
   const urls = new Set<string>();
 
   while (
-    queue.length &&
+    queue.length > 0 &&
     info.sources.length < maxSitemaps &&
     urls.size < maxUrls
   ) {
-    const url = queue.shift()!;
+    const url = queue.shift();
 
-    if (seen.has(url)) {
+    if (url === undefined || seen.has(url)) {
       continue;
     }
 
     seen.add(url);
 
-    if (url.endsWith(".gz")) {
-      info.errors.push(`${url}: gzip sitemaps are not supported yet`);
+    // oxlint-disable-next-line eslint/no-await-in-loop -- a sitemap index adds the sitemaps to fetch next, and the limits count what the earlier ones gave
+    const fetched = await fetchSitemap(url, candidates, options);
+
+    if (fetched.kind === "error") {
+      info.errors.push(fetched.message);
+    }
+
+    if (fetched.kind !== "parsed") {
       continue;
     }
 
-    const res = await fetchPage(url, {
-      ...options,
-      timeoutMs: Math.min(options.timeoutMs ?? 15_000, 20_000),
-      maxBodyBytes: 15_000_000,
-    });
-
-    if (res.error) {
-      info.errors.push(`${url}: ${res.error}`);
-      continue;
-    }
-
-    if (res.status !== 200 || typeof res.body !== "string") {
-      // A missing default /sitemap.xml is not an error; a declared one is.
-      if (
-        res.status !== 404 ||
-        candidates.indexOf(url) === -1 ||
-        candidates.length > 1
-      ) {
-        if (res.status !== 404) {
-          info.errors.push(`${url}: HTTP ${res.status}`);
-        }
-      }
-
-      continue;
-    }
-
-    const parsed = parseSitemap(res.body, res.contentType);
-
-    if (parsed.kind === "unknown") {
-      if (/<html/i.test(res.body.slice(0, 1000))) {
-        if (
-          res.status === 200 &&
-          candidates.includes(url) &&
-          candidates.length === 1
-        ) {
-          continue;
-        } // SPA fallback page for /sitemap.xml
-
-        info.errors.push(`${url}: returned an HTML page, not XML`);
-      } else {
-        info.errors.push(`${url}: could not parse as a sitemap`);
-      }
-
-      continue;
-    }
-
+    const { parsed } = fetched;
     info.sources.push(url);
 
     if (parsed.kind === "sitemapindex") {
@@ -186,4 +217,4 @@ export async function loadSitemaps(
   info.urlCount = urls.size;
 
   return info;
-}
+};

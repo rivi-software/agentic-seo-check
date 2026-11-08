@@ -28,18 +28,18 @@ export const responseRules = [
         "Link directly to the final URL (internal links, sitemap, canonical) so crawlers and users skip the redirect.",
       docs: GOOGLE_DOCS.redirects,
     },
-    ({ response }, make) =>
-      response && response.redirectChain.length === 1
-        ? make(
-            `Request redirected (${response.redirectChain[0]!.status}) to ${response.finalUrl}.`,
-            {
-              evidence: {
-                chain: response.redirectChain,
-                finalUrl: response.finalUrl,
-              },
-            }
-          )
-        : null
+    ({ response }, make) => {
+      const [hop] = response?.redirectChain ?? [];
+
+      return response && hop && response.redirectChain.length === 1
+        ? make(`Request redirected (${hop.status}) to ${response.finalUrl}.`, {
+            evidence: {
+              chain: response.redirectChain,
+              finalUrl: response.finalUrl,
+            },
+          })
+        : null;
+    }
   ),
   defineRule(
     {
@@ -96,11 +96,17 @@ export const responseRules = [
         "Serve pages with Content-Type: text/html; charset=utf-8.",
     },
     ({ response }, make) => {
-      const ct = response?.contentType?.toLowerCase();
+      const contentType = response?.contentType;
 
-      return ct && !ct.includes("html") && !ct.includes("xhtml")
-        ? make(`Content-Type is "${response!.contentType}", not HTML.`, {
-            evidence: { contentType: response!.contentType },
+      if (!contentType) {
+        return null;
+      }
+
+      const ct = contentType.toLowerCase();
+
+      return !ct.includes("html") && !ct.includes("xhtml")
+        ? make(`Content-Type is "${contentType}", not HTML.`, {
+            evidence: { contentType },
           })
         : null;
     }

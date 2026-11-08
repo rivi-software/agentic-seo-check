@@ -19,22 +19,22 @@ export interface PageContext {
 
 export interface Rule {
   meta: RuleMeta;
-  check(ctx: PageContext): Finding[];
+  check: (ctx: PageContext) => Finding[];
 }
 
 export interface FindingExtras {
   severity?: Severity;
   recommendation?: string;
   selector?: string;
-  evidence?: Record<string, unknown>;
+  evidence?: Finding["evidence"];
 }
 
 /** Build a finding from rule metadata, overriding only what differs for this instance. */
-export function finding(
+export const finding = (
   meta: RuleMeta,
   message: string,
   extras: FindingExtras = {}
-): Finding {
+): Finding => {
   const f: Finding = {
     rule: meta.id,
     severity: extras.severity ?? meta.severity,
@@ -56,34 +56,31 @@ export function finding(
   }
 
   return f;
-}
+};
 
-export function defineRule(
+export const defineRule = (
   meta: RuleMeta,
   check: (
     ctx: PageContext,
     make: (message: string, extras?: FindingExtras) => Finding
-  ) => Finding[] | Finding | null | undefined | void
-): Rule {
-  return {
-    meta,
-    check(ctx) {
-      const result = check(ctx, (message, extras) =>
-        finding(meta, message, extras)
-      );
+  ) => Finding[] | Finding | null | undefined
+): Rule => ({
+  meta,
+  check(ctx) {
+    const result = check(ctx, (message, extras) =>
+      finding(meta, message, extras)
+    );
 
-      if (!result) {
-        return [];
-      }
+    if (!result) {
+      return [];
+    }
 
-      return Array.isArray(result) ? result : [result];
-    },
-  };
-}
+    return Array.isArray(result) ? result : [result];
+  },
+});
 
-export function cap<T>(items: T[], max = 10): T[] {
-  return items.length > max ? items.slice(0, max) : items;
-}
+export const cap = <T>(items: T[], max = 10): T[] =>
+  items.length > max ? items.slice(0, max) : items;
 
 export const GOOGLE_DOCS = {
   titles: "https://developers.google.com/search/docs/appearance/title-link",

@@ -9,10 +9,10 @@ export interface RobotsDirectives {
 }
 
 /** Combine <meta name="robots"> / googlebot and the X-Robots-Tag header. */
-export function robotsDirectives(
+export const robotsDirectives = (
   page: ExtractedPage,
   response?: ResponseInfo
-): RobotsDirectives {
+): RobotsDirectives => {
   const directives: string[] = [];
   const sources: string[] = [];
 
@@ -49,7 +49,7 @@ export function robotsDirectives(
     sources: [...new Set(sources)],
     directives: [...new Set(directives)],
   };
-}
+};
 
 export const indexingRules = [
   defineRule(

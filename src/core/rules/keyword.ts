@@ -109,7 +109,7 @@ export const keywordRules = [
         /* keep */
       }
 
-      const slug = pathname.replaceAll(/[-_/.+]+/g, " ");
+      const slug = pathname.replaceAll(/[-_/.+]+/gu, " ");
 
       return includesKeyword(slug, keyword)
         ? null

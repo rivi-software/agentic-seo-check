@@ -220,7 +220,16 @@ export const SITE_RULES: RuleMeta[] = [
 ];
 
 const byId = new Map(SITE_RULES.map((r) => [r.id, r]));
-const m = (id: string): RuleMeta => byId.get(id)!;
+
+const m = (id: string): RuleMeta => {
+  const rule = byId.get(id);
+
+  if (!rule) {
+    throw new Error(`Unknown site rule: ${id}`);
+  }
+
+  return rule;
+};
 
 export interface PageRecord {
   /** Normalized final URL (or synthetic URL for files). */
@@ -281,31 +290,149 @@ export interface SiteContext {
   unlinkedPages?: string[];
 }
 
-export function runSiteRules(ctx: SiteContext): Finding[] {
-  const out: Finding[] = [];
+/** Appends `value` to the list under `k`, starting the list when there is none. */
+const pushTo = (
+  groups: Map<string, string[]>,
+  k: string,
+  value: string
+): void => {
+  const list = groups.get(k);
 
-  const key = (url: string): string =>
-    ctx.pathOnly ? pathKey(url) : (normalizeUrl(url) ?? url);
+  if (list) {
+    list.push(value);
+  } else {
+    groups.set(k, [value]);
+  }
+};
 
-  const pagesByKey = new Map<string, PageRecord>();
+const pathKey = (url: string): string => {
+  try {
+    return normalizePath(new URL(url).pathname);
+  } catch {
+    return url;
+  }
+};
 
-  for (const p of ctx.pages) {
-    pagesByKey.set(key(p.url), p);
+const pushDuplicates = (
+  out: Finding[],
+  rule: RuleMeta,
+  pages: PageRecord[],
+  pick: (p: PageRecord) => string | null,
+  label: string
+): void => {
+  const groups = new Map<string, string[]>();
+
+  for (const p of pages) {
+    const value = pick(p);
+
+    if (!value) {
+      continue;
+    }
+
+    const k = normalizeForComparison(value);
+
+    pushTo(groups, k, p.url);
   }
 
-  const checksByKey = new Map<string, LinkCheck>();
+  const dupes = [...groups.entries()].filter(([, urls]) => urls.length > 1);
 
-  for (const [u, c] of ctx.linkChecks) {
-    if (!checksByKey.has(key(u))) {
-      checksByKey.set(key(u), c);
+  if (!dupes.length) {
+    return;
+  }
+
+  const pagesAffected = dupes.reduce((n, [, urls]) => n + urls.length, 0);
+  out.push(
+    finding(
+      rule,
+      `${dupes.length} ${label}(s) are shared by ${pagesAffected} pages.`,
+      {
+        evidence: {
+          groups: cap(
+            dupes.map(([value, urls]) => ({
+              value: value.slice(0, 120),
+              pages: cap(urls, 5),
+              count: urls.length,
+            }))
+          ),
+        },
+      }
+    )
+  );
+};
+
+const pushDuplicateContent = (out: Finding[], pages: PageRecord[]): void => {
+  const candidates = pages.filter((p) => p.page.wordCount >= 50);
+  const groups: { pages: string[]; similarity: number }[] = [];
+  const exact = new Map<string, string[]>();
+
+  for (const p of candidates) {
+    const k = normalizeForComparison(p.page.text);
+
+    pushTo(exact, k, p.url);
+  }
+
+  const seen = new Set<string>();
+
+  for (const urls of exact.values()) {
+    if (urls.length > 1) {
+      groups.push({ pages: urls, similarity: 1 });
+
+      for (const u of urls) {
+        seen.add(u);
+      }
     }
   }
 
-  const isIndexable = (p: PageRecord): boolean =>
-    !robotsDirectives(p.page, p.response).noindex &&
-    (p.response?.status ?? 200) < 400;
+  if (candidates.length <= 150) {
+    const sets = candidates.map((p) => ({
+      url: p.url,
+      set: shingles(p.page.text),
+    }));
 
-  const okPages = ctx.pages.filter((p) => (p.response?.status ?? 200) < 400);
+    for (const [i, a] of sets.entries()) {
+      for (const b of sets.slice(i + 1)) {
+        if (seen.has(a.url) && seen.has(b.url)) {
+          continue;
+        }
+
+        const sim = jaccard(a.set, b.set);
+
+        if (sim >= 0.9) {
+          groups.push({
+            pages: [a.url, b.url],
+            similarity: Number(sim.toFixed(2)),
+          });
+          seen.add(a.url);
+          seen.add(b.url);
+        }
+      }
+    }
+  }
+
+  if (groups.length) {
+    out.push(
+      finding(
+        m("site.duplicate-content"),
+        `${groups.length} group(s) of pages have (near-)identical body text.`,
+        { evidence: { groups: cap(groups) } }
+      )
+    );
+  }
+};
+
+/** The lookups that the sections of the site rules share. */
+interface SiteScope {
+  ctx: SiteContext;
+  key: (url: string) => string;
+  pagesByKey: Map<string, PageRecord>;
+  checksByKey: Map<string, LinkCheck>;
+  /** Pages that answered below 400. */
+  okPages: PageRecord[];
+  isIndexable: (p: PageRecord) => boolean;
+}
+
+const robotsFindings = (ctx: SiteContext): Finding[] => {
+  const out: Finding[] = [];
 
   /* robots.txt */
   if (ctx.robots) {
@@ -368,8 +495,161 @@ export function runSiteRules(ctx: SiteContext): Finding[] {
     );
   }
 
-  /* sitemaps */
+  return out;
+};
+
+/** Noindex, non-canonical, broken and redirecting URLs listed in the sitemap. */
+const sitemapUrlFindings = ({
+  ctx,
+  key,
+  pagesByKey,
+  checksByKey,
+}: SiteScope): Finding[] => {
+  const out: Finding[] = [];
+
+  const noindex: string[] = [];
+  const nonCanonical: { url: string; canonical: string }[] = [];
+  const broken: { url: string; status: number | null }[] = [];
+  const redirecting: { url: string; finalUrl: string }[] = [];
+
+  for (const smUrl of ctx.sitemaps.urls) {
+    const k = key(smUrl);
+    const page = pagesByKey.get(k);
+
+    if (page) {
+      if (robotsDirectives(page.page, page.response).noindex) {
+        noindex.push(smUrl);
+      }
+
+      const canon = page.page.canonical;
+
+      if (canon && key(canon) !== k) {
+        nonCanonical.push({ url: smUrl, canonical: canon });
+      }
+    }
+
+    const check = checksByKey.get(k);
+
+    if (check) {
+      if ((check.status ?? 0) >= 400 || check.error) {
+        broken.push({ url: smUrl, status: check.status });
+      } else if (check.redirectChain.length > 0) {
+        redirecting.push({ url: smUrl, finalUrl: check.finalUrl });
+      }
+    }
+  }
+
+  if (noindex.length) {
+    out.push(
+      finding(
+        m("site.sitemap-noindex-page"),
+        `${noindex.length} sitemap URL(s) are noindex.`,
+        { evidence: { count: noindex.length, examples: cap(noindex) } }
+      )
+    );
+  }
+
+  if (nonCanonical.length) {
+    out.push(
+      finding(
+        m("site.sitemap-non-canonical"),
+        `${nonCanonical.length} sitemap URL(s) canonicalise to another URL.`,
+        {
+          evidence: {
+            count: nonCanonical.length,
+            examples: cap(nonCanonical),
+          },
+        }
+      )
+    );
+  }
+
+  if (broken.length) {
+    out.push(
+      finding(
+        m("site.sitemap-broken-url"),
+        `${broken.length} sitemap URL(s) return errors.`,
+        { evidence: { count: broken.length, examples: cap(broken) } }
+      )
+    );
+  }
+
+  if (redirecting.length) {
+    out.push(
+      finding(
+        m("site.sitemap-redirecting-url"),
+        `${redirecting.length} sitemap URL(s) redirect.`,
+        {
+          evidence: { count: redirecting.length, examples: cap(redirecting) },
+        }
+      )
+    );
+  }
+
+  return out;
+};
+
+/** Indexable pages missing from the sitemap, and sitemap URLs nothing links to. */
+const sitemapCoverageFindings = ({
+  ctx,
+  key,
+  okPages,
+  isIndexable,
+}: SiteScope): Finding[] => {
+  const out: Finding[] = [];
   const sitemapKeys = new Set(ctx.sitemaps.urls.map(key));
+
+  const notInSitemap = okPages
+    .filter(
+      (p) =>
+        isIndexable(p) &&
+        !sitemapKeys.has(key(p.url)) &&
+        (!p.page.canonical || key(p.page.canonical) === key(p.url))
+    )
+    .map((p) => p.url);
+
+  if (notInSitemap.length) {
+    out.push(
+      finding(
+        m("site.not-in-sitemap"),
+        `${notInSitemap.length} crawled indexable page(s) are missing from the sitemap.`,
+        {
+          evidence: {
+            count: notInSitemap.length,
+            examples: cap(notInSitemap),
+          },
+        }
+      )
+    );
+  }
+
+  if (!ctx.crawl.hitPageLimit) {
+    const linked = new Set<string>();
+
+    for (const target of ctx.linkSources.keys()) {
+      linked.add(key(target));
+    }
+
+    linked.add(key(ctx.startUrl));
+    const orphans = ctx.sitemaps.urls.filter((u) => !linked.has(key(u)));
+
+    if (orphans.length) {
+      out.push(
+        finding(
+          m("site.orphan-pages"),
+          `${orphans.length} sitemap URL(s) are not linked from any crawled page.`,
+          { evidence: { count: orphans.length, examples: cap(orphans) } }
+        )
+      );
+    }
+  }
+
+  return out;
+};
+
+const sitemapFindings = (scope: SiteScope): Finding[] => {
+  const { ctx } = scope;
+  const out: Finding[] = [];
 
   if (ctx.sitemaps.errors.length) {
     out.push(
@@ -390,130 +670,15 @@ export function runSiteRules(ctx: SiteContext): Finding[] {
   }
 
   if (ctx.sitemaps.urlCount > 0) {
-    const noindex: string[] = [];
-    const nonCanonical: { url: string; canonical: string }[] = [];
-    const broken: { url: string; status: number | null }[] = [];
-    const redirecting: { url: string; finalUrl: string }[] = [];
-
-    for (const smUrl of ctx.sitemaps.urls) {
-      const k = key(smUrl);
-      const page = pagesByKey.get(k);
-
-      if (page) {
-        if (robotsDirectives(page.page, page.response).noindex) {
-          noindex.push(smUrl);
-        }
-
-        const canon = page.page.canonical;
-
-        if (canon && key(canon) !== k) {
-          nonCanonical.push({ url: smUrl, canonical: canon });
-        }
-      }
-
-      const check = checksByKey.get(k);
-
-      if (check) {
-        if ((check.status ?? 0) >= 400 || check.error) {
-          broken.push({ url: smUrl, status: check.status });
-        } else if (check.redirectChain.length > 0) {
-          redirecting.push({ url: smUrl, finalUrl: check.finalUrl });
-        }
-      }
-    }
-
-    if (noindex.length) {
-      out.push(
-        finding(
-          m("site.sitemap-noindex-page"),
-          `${noindex.length} sitemap URL(s) are noindex.`,
-          { evidence: { count: noindex.length, examples: cap(noindex) } }
-        )
-      );
-    }
-
-    if (nonCanonical.length) {
-      out.push(
-        finding(
-          m("site.sitemap-non-canonical"),
-          `${nonCanonical.length} sitemap URL(s) canonicalise to another URL.`,
-          {
-            evidence: {
-              count: nonCanonical.length,
-              examples: cap(nonCanonical),
-            },
-          }
-        )
-      );
-    }
-
-    if (broken.length) {
-      out.push(
-        finding(
-          m("site.sitemap-broken-url"),
-          `${broken.length} sitemap URL(s) return errors.`,
-          { evidence: { count: broken.length, examples: cap(broken) } }
-        )
-      );
-    }
-
-    if (redirecting.length) {
-      out.push(
-        finding(
-          m("site.sitemap-redirecting-url"),
-          `${redirecting.length} sitemap URL(s) redirect.`,
-          {
-            evidence: { count: redirecting.length, examples: cap(redirecting) },
-          }
-        )
-      );
-    }
-
-    const notInSitemap = okPages
-      .filter(
-        (p) =>
-          isIndexable(p) &&
-          !sitemapKeys.has(key(p.url)) &&
-          (!p.page.canonical || key(p.page.canonical) === key(p.url))
-      )
-      .map((p) => p.url);
-
-    if (notInSitemap.length) {
-      out.push(
-        finding(
-          m("site.not-in-sitemap"),
-          `${notInSitemap.length} crawled indexable page(s) are missing from the sitemap.`,
-          {
-            evidence: {
-              count: notInSitemap.length,
-              examples: cap(notInSitemap),
-            },
-          }
-        )
-      );
-    }
-
-    if (!ctx.crawl.hitPageLimit) {
-      const linked = new Set<string>();
-
-      for (const target of ctx.linkSources.keys()) {
-        linked.add(key(target));
-      }
-
-      linked.add(key(ctx.startUrl));
-      const orphans = ctx.sitemaps.urls.filter((u) => !linked.has(key(u)));
-
-      if (orphans.length) {
-        out.push(
-          finding(
-            m("site.orphan-pages"),
-            `${orphans.length} sitemap URL(s) are not linked from any crawled page.`,
-            { evidence: { count: orphans.length, examples: cap(orphans) } }
-          )
-        );
-      }
-    }
+    out.push(...sitemapUrlFindings(scope), ...sitemapCoverageFindings(scope));
   }
+
+  return out;
+};
+
+/** Internal link targets that are broken, redirect once, or redirect in a chain. */
+const linkHealthFindings = (ctx: SiteContext): Finding[] => {
+  const out: Finding[] = [];
 
   /* link health */
   const broken: {
@@ -539,6 +704,9 @@ export function runSiteRules(ctx: SiteContext): Finding[] {
       continue;
     }
 
+    // Chains of two or more hops are handled first, so a first hop here is the only one.
+    const [firstHop] = check.redirectChain;
+
     if (check.error || (check.status ?? 0) >= 400) {
       broken.push({
         url: check.url,
@@ -552,11 +720,11 @@ export function runSiteRules(ctx: SiteContext): Finding[] {
         hops: check.redirectChain.length,
         finalUrl: check.finalUrl,
       });
-    } else if (check.redirectChain.length === 1) {
+    } else if (firstHop) {
       redirected.push({
         url: check.url,
         finalUrl: check.finalUrl,
-        status: check.redirectChain[0]!.status,
+        status: firstHop.status,
         linkedFrom: cap(sources, 3),
       });
     }
@@ -593,6 +761,13 @@ export function runSiteRules(ctx: SiteContext): Finding[] {
       )
     );
   }
+
+  return out;
+};
+
+/** Broken external links (when they were probed) and HTML files nothing links to. */
+const unreachedFindings = (ctx: SiteContext): Finding[] => {
+  const out: Finding[] = [];
 
   if (ctx.externalChecks) {
     const dead: {
@@ -639,6 +814,12 @@ export function runSiteRules(ctx: SiteContext): Finding[] {
     );
   }
 
+  return out;
+};
+
+const duplicateFindings = ({ okPages, isIndexable }: SiteScope): Finding[] => {
+  const out: Finding[] = [];
+
   /* duplicates */
   const indexable = okPages.filter(isIndexable);
   pushDuplicates(
@@ -663,6 +844,13 @@ export function runSiteRules(ctx: SiteContext): Finding[] {
     "H1"
   );
   pushDuplicateContent(out, indexable);
+
+  return out;
+};
+
+/** Pages deep in the site, and how the server answers a made-up URL and the other host names. */
+const architectureFindings = ({ ctx, okPages }: SiteScope): Finding[] => {
+  const out: Finding[] = [];
 
   /* architecture */
   const deep = okPages.filter((p) => p.depth > ctx.thresholds.deepPageDepth);
@@ -725,6 +913,12 @@ export function runSiteRules(ctx: SiteContext): Finding[] {
     );
   }
 
+  return out;
+};
+
+const hreflangFindings = ({ ctx, key, pagesByKey }: SiteScope): Finding[] => {
+  const out: Finding[] = [];
+
   /* hreflang return links */
   const missingReturn: { page: string; alternate: string }[] = [];
 
@@ -782,127 +976,44 @@ export function runSiteRules(ctx: SiteContext): Finding[] {
   }
 
   return out;
-}
+};
 
-function pathKey(url: string): string {
-  try {
-    return normalizePath(new URL(url).pathname);
-  } catch {
-    return url;
-  }
-}
+export const runSiteRules = (ctx: SiteContext): Finding[] => {
+  const key = (url: string): string =>
+    ctx.pathOnly ? pathKey(url) : (normalizeUrl(url) ?? url);
 
-function pushDuplicates(
-  out: Finding[],
-  rule: RuleMeta,
-  pages: PageRecord[],
-  pick: (p: PageRecord) => string | null,
-  label: string
-): void {
-  const groups = new Map<string, string[]>();
+  const pagesByKey = new Map<string, PageRecord>();
 
-  for (const p of pages) {
-    const value = pick(p);
-
-    if (!value) {
-      continue;
-    }
-
-    const k = normalizeForComparison(value);
-
-    if (!groups.has(k)) {
-      groups.set(k, []);
-    }
-
-    groups.get(k)!.push(p.url);
+  for (const p of ctx.pages) {
+    pagesByKey.set(key(p.url), p);
   }
 
-  const dupes = [...groups.entries()].filter(([, urls]) => urls.length > 1);
+  const checksByKey = new Map<string, LinkCheck>();
 
-  if (!dupes.length) {
-    return;
-  }
-
-  const pagesAffected = dupes.reduce((n, [, urls]) => n + urls.length, 0);
-  out.push(
-    finding(
-      rule,
-      `${dupes.length} ${label}(s) are shared by ${pagesAffected} pages.`,
-      {
-        evidence: {
-          groups: cap(
-            dupes.map(([value, urls]) => ({
-              value: value.slice(0, 120),
-              pages: cap(urls, 5),
-              count: urls.length,
-            }))
-          ),
-        },
-      }
-    )
-  );
-}
-
-function pushDuplicateContent(out: Finding[], pages: PageRecord[]): void {
-  const candidates = pages.filter((p) => p.page.wordCount >= 50);
-  const groups: { pages: string[]; similarity: number }[] = [];
-  const exact = new Map<string, string[]>();
-
-  for (const p of candidates) {
-    const k = normalizeForComparison(p.page.text);
-
-    if (!exact.has(k)) {
-      exact.set(k, []);
-    }
-
-    exact.get(k)!.push(p.url);
-  }
-
-  const seen = new Set<string>();
-
-  for (const urls of exact.values()) {
-    if (urls.length > 1) {
-      groups.push({ pages: urls, similarity: 1 });
-      urls.forEach((u) => seen.add(u));
+  for (const [u, c] of ctx.linkChecks) {
+    if (!checksByKey.has(key(u))) {
+      checksByKey.set(key(u), c);
     }
   }
 
-  if (candidates.length <= 150) {
-    const sets = candidates.map((p) => ({
-      url: p.url,
-      set: shingles(p.page.text),
-    }));
+  const scope: SiteScope = {
+    ctx,
+    key,
+    pagesByKey,
+    checksByKey,
+    okPages: ctx.pages.filter((p) => (p.response?.status ?? 200) < 400),
+    isIndexable: (p) =>
+      !robotsDirectives(p.page, p.response).noindex &&
+      (p.response?.status ?? 200) < 400,
+  };
 
-    for (let i = 0; i < sets.length; i++) {
-      for (let j = i + 1; j < sets.length; j++) {
-        const a = sets[i]!;
-        const b = sets[j]!;
-
-        if (seen.has(a.url) && seen.has(b.url)) {
-          continue;
-        }
-
-        const sim = jaccard(a.set, b.set);
-
-        if (sim >= 0.9) {
-          groups.push({
-            pages: [a.url, b.url],
-            similarity: Number(sim.toFixed(2)),
-          });
-          seen.add(a.url);
-          seen.add(b.url);
-        }
-      }
-    }
-  }
-
-  if (groups.length) {
-    out.push(
-      finding(
-        m("site.duplicate-content"),
-        `${groups.length} group(s) of pages have (near-)identical body text.`,
-        { evidence: { groups: cap(groups) } }
-      )
-    );
-  }
-}
+  return [
+    ...robotsFindings(ctx),
+    ...sitemapFindings(scope),
+    ...linkHealthFindings(ctx),
+    ...unreachedFindings(ctx),
+    ...duplicateFindings(scope),
+    ...architectureFindings(scope),
+    ...hreflangFindings(scope),
+  ];
+};

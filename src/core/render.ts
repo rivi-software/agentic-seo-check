@@ -1,3 +1,6 @@
+import type { Browser } from "playwright";
+import type * as Playwright from "playwright";
+
 import { DEFAULT_USER_AGENT } from "./fetch.js";
 
 export class RenderUnavailableError extends Error {
@@ -25,11 +28,12 @@ export interface RenderOutput {
 export const RENDER_INSTALL_HINT =
   "Install Playwright to enable rendering: `pnpm add -D playwright && pnpm exec playwright install chromium` (or npm/npx equivalents).";
 
-async function launchSystemBrowser(
-  playwright: typeof import("playwright")
-): Promise<import("playwright").Browser | null> {
+const launchSystemBrowser = async (
+  playwright: typeof Playwright
+): Promise<Browser | null> => {
   for (const channel of ["chrome", "msedge"] as const) {
     try {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one browser at a time, in order of preference
       return await playwright.chromium.launch({ headless: true, channel });
     } catch {
       /* try next */
@@ -37,18 +41,17 @@ async function launchSystemBrowser(
   }
 
   return null;
-}
+};
 
-function firstLine(message: string): string {
-  return message.split("\n")[0] ?? message;
-}
+const firstLine = (message: string): string =>
+  message.split("\n")[0] ?? message;
 
 /** Load the page in headless Chromium and return the rendered DOM. */
-export async function renderPage(
+export const renderPage = async (
   url: string,
   options: RenderOptions = {}
-): Promise<RenderOutput> {
-  let playwright: typeof import("playwright");
+): Promise<RenderOutput> => {
+  let playwright: typeof Playwright;
 
   try {
     playwright = await import("playwright");
@@ -58,17 +61,17 @@ export async function renderPage(
     );
   }
 
-  let browser: import("playwright").Browser;
+  let browser: Browser;
 
   try {
     browser = await playwright.chromium.launch({ headless: true });
-  } catch (err) {
+  } catch (error) {
     // No downloaded Playwright browser: fall back to an installed Google Chrome / Edge.
     const fallback = await launchSystemBrowser(playwright);
 
     if (!fallback) {
       throw new RenderUnavailableError(
-        `Could not launch Chromium: ${firstLine((err as Error).message)}. ${RENDER_INSTALL_HINT}`
+        `Could not launch Chromium: ${firstLine(error instanceof Error ? error.message : String(error))}. ${RENDER_INSTALL_HINT}`
       );
     }
 
@@ -100,10 +103,10 @@ export async function renderPage(
         waitUntil: options.waitUntil ?? "networkidle",
         timeout,
       });
-    } catch (err) {
+    } catch (error) {
       // networkidle can time out on pages with long-polling; fall back to whatever has loaded.
-      if (!(err instanceof Error) || !/Timeout/i.test(err.message)) {
-        throw err;
+      if (!(error instanceof Error) || !/Timeout/iu.test(error.message)) {
+        throw error;
       }
     }
 
@@ -112,6 +115,7 @@ export async function renderPage(
 
     return { html, finalUrl: page.url(), consoleErrors };
   } finally {
-    await browser.close().catch(() => undefined);
+    // A browser that fails to close must not replace the page's result or its error.
+    await browser.close().catch(() => null);
   }
-}
+};

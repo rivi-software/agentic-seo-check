@@ -2,7 +2,7 @@ import { normalizeUrl } from "../url.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
 
 const HREFLANG_CODE =
-  /^(x-default|[a-zA-Z]{2,3}(-[a-zA-Z]{4})?(-([a-zA-Z]{2}|\d{3}))?)$/;
+  /^(?:x-default|[a-zA-Z]{2,3}(?:-[a-zA-Z]{4})?(?:-(?:[a-zA-Z]{2}|\d{3}))?)$/u;
 
 export const hreflangRules = [
   defineRule(
@@ -38,7 +38,7 @@ export const hreflangRules = [
       docs: GOOGLE_DOCS.hreflang,
     },
     ({ page }, make) => {
-      const rel = page.hreflang.filter((h) => !/^https?:\/\//i.test(h.href));
+      const rel = page.hreflang.filter((h) => !/^https?:\/\//iu.test(h.href));
 
       return rel.length
         ? make(`${rel.length} hreflang link(s) use relative URLs.`, {
@@ -64,17 +64,14 @@ export const hreflangRules = [
 
       for (const h of page.hreflang) {
         const key = h.lang.toLowerCase();
-
-        if (!seen.has(key)) {
-          seen.set(key, new Set());
-        }
-
-        seen.get(key)!.add(h.url ?? h.href);
+        const urls = seen.get(key) ?? new Set<string>();
+        urls.add(h.url ?? h.href);
+        seen.set(key, urls);
       }
 
-      const dupes = [...seen.entries()]
-        .filter(([, urls]) => urls.size > 1)
-        .map(([lang]) => lang);
+      const dupes = [...seen.entries()].flatMap(([lang, urls]) =>
+        urls.size > 1 ? [lang] : []
+      );
 
       return dupes.length
         ? make(`hreflang codes with conflicting URLs: ${dupes.join(", ")}.`, {

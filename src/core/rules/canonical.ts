@@ -11,7 +11,7 @@ const LOCAL_HOSTS = new Set([
   "[::1]",
 ]);
 
-export function isLocalHost(url: string): boolean {
+export const isLocalHost = (url: string): boolean => {
   const host = hostOf(url);
 
   if (!host) {
@@ -24,7 +24,10 @@ export function isLocalHost(url: string): boolean {
     host.endsWith(".localhost") ||
     host.endsWith(".test")
   );
-}
+};
+
+const stripTrailingSlash = (url: string): string =>
+  url.endsWith("/") && new URL(url).pathname !== "/" ? url.slice(0, -1) : url;
 
 export const canonicalRules = [
   defineRule(
@@ -82,7 +85,7 @@ export const canonicalRules = [
       docs: GOOGLE_DOCS.canonical,
     },
     ({ page }, make) => {
-      const first = page.canonicals[0];
+      const [first] = page.canonicals;
 
       if (first === undefined) {
         return null;
@@ -107,13 +110,13 @@ export const canonicalRules = [
       docs: GOOGLE_DOCS.canonical,
     },
     ({ page }, make) => {
-      const first = page.canonicals[0];
+      const [first] = page.canonicals;
 
       if (!first || !page.canonical) {
         return null;
       }
 
-      return /^https?:\/\//i.test(first)
+      return /^https?:\/\//iu.test(first)
         ? null
         : make(`Canonical href "${first}" is relative.`, {
             selector: SELECTOR,
@@ -191,9 +194,3 @@ export const canonicalRules = [
     }
   ),
 ];
-
-function stripTrailingSlash(url: string): string {
-  return url.endsWith("/") && new URL(url).pathname !== "/"
-    ? url.slice(0, -1)
-    : url;
-}

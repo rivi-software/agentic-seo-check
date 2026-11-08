@@ -28,17 +28,17 @@ describe("url helpers", () => {
   });
 
   it("treats www and non-www as the same site", () => {
-    expect(isSameSite("https://www.example.com/x", "example.com")).toBe(true);
-    expect(isSameSite("https://blog.example.com/x", "example.com")).toBe(false);
-    expect(isSameSite("https://blog.example.com/x", "example.com", true)).toBe(
-      true
-    );
+    expect(isSameSite("https://www.example.com/x", "example.com")).toBeTruthy();
+    expect(isSameSite("https://blog.example.com/x", "example.com")).toBeFalsy();
+    expect(
+      isSameSite("https://blog.example.com/x", "example.com", true)
+    ).toBeTruthy();
   });
 
   it("detects asset URLs", () => {
-    expect(looksLikeHtml("https://a.test/x.pdf")).toBe(false);
-    expect(looksLikeHtml("https://a.test/x")).toBe(true);
-    expect(looksLikeHtml("https://a.test/x.html")).toBe(true);
+    expect(looksLikeHtml("https://a.test/x.pdf")).toBeFalsy();
+    expect(looksLikeHtml("https://a.test/x")).toBeTruthy();
+    expect(looksLikeHtml("https://a.test/x.html")).toBeTruthy();
   });
 
   it("normalizes paths for file comparisons", () => {
@@ -51,6 +51,7 @@ describe("url helpers", () => {
     expect(resolveUrl("../x", "https://a.test/b/c/")).toBe(
       "https://a.test/b/x"
     );
+    // oxlint-disable-next-line eslint/no-script-url -- the test is that a javascript: URL is refused
     expect(resolveUrl("javascript:void(0)", "https://a.test/")).toBeNull();
   });
 });
@@ -61,7 +62,7 @@ describe("sitemap parsing", () => {
       parseSitemap(
         '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://a.test/</loc></url><url><loc>https://a.test/b</loc></url></urlset>'
       )
-    ).toEqual({
+    ).toStrictEqual({
       kind: "urlset",
       locs: ["https://a.test/", "https://a.test/b"],
     });
@@ -69,10 +70,13 @@ describe("sitemap parsing", () => {
       parseSitemap(
         "<sitemapindex><sitemap><loc>https://a.test/s1.xml</loc></sitemap></sitemapindex>"
       )
-    ).toEqual({ kind: "sitemapindex", locs: ["https://a.test/s1.xml"] });
+    ).toStrictEqual({ kind: "sitemapindex", locs: ["https://a.test/s1.xml"] });
     expect(
       parseSitemap("https://a.test/\nhttps://a.test/x\n", "text/plain")
-    ).toEqual({ kind: "text", locs: ["https://a.test/", "https://a.test/x"] });
+    ).toStrictEqual({
+      kind: "text",
+      locs: ["https://a.test/", "https://a.test/x"],
+    });
     expect(parseSitemap("<html><body>nope</body></html>").kind).toBe("unknown");
   });
 });
@@ -81,17 +85,18 @@ describe("text helpers", () => {
   it("counts words and scores readability", () => {
     expect(wordCount("Hello, world! It’s 2026.")).toBe(4);
 
-    const easy = Array(30)
-      .fill("The cat sat on the mat. It was a big cat.")
-      .join(" ");
+    const easy = Array.from(
+      { length: 30 },
+      () => "The cat sat on the mat. It was a big cat."
+    ).join(" ");
 
-    expect(fleschReadingEase(easy)!).toBeGreaterThan(80);
+    expect(fleschReadingEase(easy)).toBeGreaterThan(80);
     expect(fleschReadingEase("too short")).toBeNull();
   });
 
   it("detects generic anchors and near-duplicates", () => {
-    expect(isGenericAnchor("Click here!")).toBe(true);
-    expect(isGenericAnchor("Pricing plans")).toBe(false);
+    expect(isGenericAnchor("Click here!")).toBeTruthy();
+    expect(isGenericAnchor("Pricing plans")).toBeFalsy();
     const a = shingles("one two three four five six seven eight nine ten");
     const b = shingles("one two three four five six seven eight nine eleven");
     expect(jaccard(a, b)).toBeGreaterThan(0.6);

@@ -38,158 +38,7 @@ export interface FetchResult {
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-/** GET a URL, following redirects manually so the chain is recorded. */
-export async function fetchPage(
-  url: string,
-  options: FetchOptions = {},
-  readBody = true
-): Promise<FetchResult> {
-  const timeoutMs = options.timeoutMs ?? 15_000;
-  const maxRedirects = options.maxRedirects ?? 10;
-  const started = performance.now();
-  const chain: RedirectHop[] = [];
-  let current = url;
-
-  for (let hop = 0; hop <= maxRedirects; hop++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const res = await fetch(current, {
-        method: "GET",
-        redirect: "manual",
-        signal: controller.signal,
-        headers: {
-          "user-agent": options.userAgent ?? DEFAULT_USER_AGENT,
-          accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "accept-language": "en,*;q=0.5",
-          ...options.headers,
-        },
-      });
-
-      const headers = pickHeaders(res.headers);
-
-      if (REDIRECT_STATUSES.has(res.status) && headers["location"]) {
-        chain.push({ url: current, status: res.status });
-        let nextUrl: string;
-
-        try {
-          nextUrl = new URL(headers["location"], current).href;
-        } catch {
-          return result(
-            url,
-            current,
-            res.status,
-            headers,
-            null,
-            chain,
-            started,
-            `Invalid Location header: ${headers["location"]}`
-          );
-        }
-
-        await res.body?.cancel().catch(() => undefined);
-
-        if (chain.some((h) => h.url === nextUrl) || nextUrl === current) {
-          return result(
-            url,
-            nextUrl,
-            res.status,
-            headers,
-            null,
-            chain,
-            started,
-            "Redirect loop"
-          );
-        }
-
-        current = nextUrl;
-        continue;
-      }
-
-      let body: string | null = null;
-
-      if (readBody) {
-        body = await readLimited(res, options.maxBodyBytes ?? 5_000_000);
-      } else {
-        await res.body?.cancel().catch(() => undefined);
-      }
-
-      return result(url, current, res.status, headers, body, chain, started);
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.name === "AbortError"
-            ? `Timed out after ${timeoutMs} ms`
-            : err.message
-          : String(err);
-
-      return result(url, current, null, {}, null, chain, started, message);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  return result(
-    url,
-    current,
-    null,
-    {},
-    null,
-    chain,
-    started,
-    `More than ${maxRedirects} redirects`
-  );
-}
-
-/** Status/redirect check without downloading the body. */
-export function probeUrl(
-  url: string,
-  options: FetchOptions = {}
-): Promise<FetchResult> {
-  return fetchPage(url, options, false);
-}
-
-async function readLimited(res: Response, maxBytes: number): Promise<string> {
-  if (!res.body) {
-    return "";
-  }
-
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-
-  for (;;) {
-    const { done, value } = await reader.read();
-
-    if (done) {
-      break;
-    }
-
-    if (value) {
-      chunks.push(value);
-      total += value.byteLength;
-
-      if (total >= maxBytes) {
-        await reader.cancel().catch(() => undefined);
-        break;
-      }
-    }
-  }
-
-  const charset = /charset=([\w-]+)/i.exec(
-    res.headers.get("content-type") ?? ""
-  )?.[1];
-
-  try {
-    return new TextDecoder(charset ?? "utf-8").decode(Buffer.concat(chunks));
-  } catch {
-    return new TextDecoder("utf-8").decode(Buffer.concat(chunks));
-  }
-}
-
-function pickHeaders(headers: Headers): Record<string, string> {
+const pickHeaders = (headers: Headers) => {
   const out: Record<string, string> = {};
 
   for (const name of KEPT_HEADERS) {
@@ -201,9 +50,9 @@ function pickHeaders(headers: Headers): Record<string, string> {
   }
 
   return out;
-}
+};
 
-function result(
+const result = (
   requestedUrl: string,
   finalUrl: string,
   status: number | null,
@@ -212,7 +61,7 @@ function result(
   chain: RedirectHop[],
   started: number,
   error?: string
-): FetchResult {
+): FetchResult => {
   const r: FetchResult = {
     requestedUrl,
     finalUrl,
@@ -229,9 +78,211 @@ function result(
   }
 
   return r;
+};
+
+const readLimited = async (
+  res: Response,
+  maxBytes: number
+): Promise<string> => {
+  if (!res.body) {
+    return "";
+  }
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
+
+  for (;;) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- a stream hands over its chunks one after another
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    if (value) {
+      chunks.push(value);
+      total += value.byteLength;
+
+      if (total >= maxBytes) {
+        truncated = true;
+        break;
+      }
+    }
+  }
+
+  if (truncated) {
+    await reader.cancel().catch(() => null);
+  }
+
+  const charset = /charset=(?<charset>[\w-]+)/iu.exec(
+    res.headers.get("content-type") ?? ""
+  )?.groups?.charset;
+
+  try {
+    return new TextDecoder(charset ?? "utf-8").decode(Buffer.concat(chunks));
+  } catch {
+    return new TextDecoder("utf-8").decode(Buffer.concat(chunks));
+  }
+};
+
+/** What stays the same for every request while one fetch follows its redirects. */
+interface RedirectWalk {
+  url: string;
+  options: FetchOptions;
+  readBody: boolean;
+  timeoutMs: number;
+  started: number;
+  chain: RedirectHop[];
 }
 
-export function toResponseInfo(r: FetchResult): ResponseInfo {
+/** One request of a redirect chain: the final result, or the URL the redirect points to next. */
+type HopOutcome = { done: FetchResult } | { next: string };
+
+const fetchHop = async (
+  walk: RedirectWalk,
+  current: string
+): Promise<HopOutcome> => {
+  const { url, options, readBody, timeoutMs, started, chain } = walk;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(current, {
+      method: "GET",
+      redirect: "manual",
+      signal: controller.signal,
+      headers: {
+        "user-agent": options.userAgent ?? DEFAULT_USER_AGENT,
+        accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "accept-language": "en,*;q=0.5",
+        ...options.headers,
+      },
+    });
+
+    const headers = pickHeaders(res.headers);
+
+    if (REDIRECT_STATUSES.has(res.status) && headers["location"]) {
+      chain.push({ url: current, status: res.status });
+      let nextUrl: string;
+
+      try {
+        nextUrl = new URL(headers["location"], current).href;
+      } catch {
+        return {
+          done: result(
+            url,
+            current,
+            res.status,
+            headers,
+            null,
+            chain,
+            started,
+            `Invalid Location header: ${headers["location"]}`
+          ),
+        };
+      }
+
+      await res.body?.cancel().catch(() => null);
+
+      if (chain.some((h) => h.url === nextUrl) || nextUrl === current) {
+        return {
+          done: result(
+            url,
+            nextUrl,
+            res.status,
+            headers,
+            null,
+            chain,
+            started,
+            "Redirect loop"
+          ),
+        };
+      }
+
+      return { next: nextUrl };
+    }
+
+    let body: string | null = null;
+
+    if (readBody) {
+      body = await readLimited(res, options.maxBodyBytes ?? 5_000_000);
+    } else {
+      await res.body?.cancel().catch(() => null);
+    }
+
+    return {
+      done: result(url, current, res.status, headers, body, chain, started),
+    };
+  } catch (error) {
+    let message = String(error);
+
+    if (error instanceof Error) {
+      message =
+        error.name === "AbortError"
+          ? `Timed out after ${timeoutMs} ms`
+          : error.message;
+    }
+
+    return {
+      done: result(url, current, null, {}, null, chain, started, message),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/** GET a URL, following redirects manually so the chain is recorded. */
+export const fetchPage = async (
+  url: string,
+  options: FetchOptions = {},
+  readBody = true
+): Promise<FetchResult> => {
+  const maxRedirects = options.maxRedirects ?? 10;
+
+  const walk: RedirectWalk = {
+    url,
+    options,
+    readBody,
+    timeoutMs: options.timeoutMs ?? 15_000,
+    started: performance.now(),
+    chain: [],
+  };
+
+  let current = url;
+
+  for (let hop = 0; hop <= maxRedirects; hop += 1) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- each request goes where the one before it redirected
+    const outcome = await fetchHop(walk, current);
+
+    if ("done" in outcome) {
+      return outcome.done;
+    }
+
+    current = outcome.next;
+  }
+
+  return result(
+    url,
+    current,
+    null,
+    {},
+    null,
+    walk.chain,
+    walk.started,
+    `More than ${maxRedirects} redirects`
+  );
+};
+
+/** Status/redirect check without downloading the body. */
+export const probeUrl = (
+  url: string,
+  options: FetchOptions = {}
+): Promise<FetchResult> => fetchPage(url, options, false);
+
+export const toResponseInfo = (r: FetchResult): ResponseInfo => {
   const info: ResponseInfo = {
     status: r.status,
     finalUrl: r.finalUrl,
@@ -246,16 +297,18 @@ export function toResponseInfo(r: FetchResult): ResponseInfo {
   }
 
   return info;
-}
+};
 
-export function isHtmlResponse(r: FetchResult): boolean {
+export const isHtmlResponse = (r: FetchResult): boolean => {
   const ct = r.contentType?.toLowerCase() ?? "";
 
   if (ct) {
     return ct.includes("text/html") || ct.includes("application/xhtml");
   }
 
-  return (
-    typeof r.body === "string" && /<html|<!doctype/i.test(r.body.slice(0, 2000))
-  );
-}
+  if (!r.body) {
+    return false;
+  }
+
+  return /<html|<!doctype/iu.test(r.body.slice(0, 2000));
+};

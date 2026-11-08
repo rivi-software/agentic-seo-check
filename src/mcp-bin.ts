@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { startMcpServer } from "./mcp.js";
 
-startMcpServer().catch((err) => {
+try {
+  await startMcpServer();
+} catch (error) {
   process.stderr.write(
-    `agentic-seo-check MCP server failed to start: ${err instanceof Error ? err.message : String(err)}\n`
+    `agentic-seo-check MCP server failed to start: ${error instanceof Error ? error.message : String(error)}\n`
   );
   process.exit(1);
-});
+}

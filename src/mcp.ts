@@ -70,46 +70,45 @@ const commonOptions = {
   detail,
 };
 
-function toOptions(input: {
+const toOptions = (input: {
   keyword?: string;
   includeInfo?: boolean;
   disableRules?: string[];
   timeoutMs?: number;
   userAgent?: string;
   headers?: Record<string, string>;
-}): CrawlOptions {
-  return {
-    keyword: input.keyword,
-    includeInfo: input.includeInfo,
-    disableRules: input.disableRules,
-    fetch: {
-      timeoutMs: input.timeoutMs,
-      userAgent: input.userAgent,
-      headers: input.headers,
-    },
-  };
-}
+}): CrawlOptions => ({
+  keyword: input.keyword,
+  includeInfo: input.includeInfo,
+  disableRules: input.disableRules,
+  fetch: {
+    timeoutMs: input.timeoutMs,
+    userAgent: input.userAgent,
+    headers: input.headers,
+  },
+});
 
-function respond(
+const respond = (
   audit: Audit,
   fmt: "json" | "markdown",
   det: "full" | "compact"
-) {
-  const shaped = det === "compact" ? compactAudit(audit) : audit;
+) => {
+  const report = det === "compact" ? compactAudit(audit) : audit;
 
   const text =
     fmt === "markdown"
-      ? renderMarkdown(shaped)
-      : JSON.stringify(shaped, null, 2);
+      ? renderMarkdown(report)
+      : JSON.stringify(report, null, 2);
 
   return {
     content: [{ type: "text" as const, text }],
-    structuredContent: shaped as unknown as Record<string, unknown>,
+    structuredContent: { ...report },
   };
-}
+};
 
-function fail(err: unknown) {
-  const message = err instanceof Error ? err.message : String(err);
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
+const fail = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
 
   return {
     isError: true,
@@ -117,9 +116,51 @@ function fail(err: unknown) {
       { type: "text" as const, text: `agentic-seo-check error: ${message}` },
     ],
   };
-}
+};
 
-export function createMcpServer(): McpServer {
+const metricCell = (name: string, value: number | null): string => {
+  if (value === null) {
+    return "—";
+  }
+
+  return name.endsWith("Ms") ? `${Math.round(value)} ms` : String(value);
+};
+
+const lighthouseMarkdown = (
+  payload: PerformanceResult & { findings: Finding[] }
+): string => {
+  const lines = [
+    `# Lighthouse (${payload.formFactor}): ${payload.finalUrl}`,
+    "",
+    "| Metric | Value |",
+    "| --- | --- |",
+  ];
+
+  for (const [name, value] of Object.entries(payload.metrics)) {
+    lines.push(`| ${name} | ${metricCell(name, value)} |`);
+  }
+
+  lines.push("", "## Opportunities", "");
+
+  for (const o of payload.opportunities.slice(0, 10)) {
+    lines.push(
+      `- ${o.title}${o.savingsMs ? ` (~${Math.round(o.savingsMs)} ms)` : ""}${o.savingsBytes ? ` (~${Math.round(o.savingsBytes / 1024)} KiB)` : ""}`
+    );
+  }
+
+  lines.push("", "## Findings", "");
+
+  for (const f of payload.findings) {
+    lines.push(
+      `- **\`${f.rule}\`** ${f.message}`,
+      `  - Fix: ${f.recommendation}`
+    );
+  }
+
+  return lines.join("\n");
+};
+
+export const createMcpServer = (): McpServer => {
   const server = new McpServer({
     name: MCP_SERVER_NAME,
     version: MCP_SERVER_VERSION,
@@ -179,10 +220,6 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       try {
-        if (!input.url && !input.html) {
-          throw new Error("Provide `url` or `html`.");
-        }
-
         const options = {
           ...toOptions(input),
           render: input.render,
@@ -191,18 +228,25 @@ export function createMcpServer(): McpServer {
           baseUrl: input.baseUrl,
         };
 
-        const audit =
-          input.html === undefined
-            ? await auditUrl(input.url!, options)
-            : await auditHtml(
-                input.html,
-                { url: input.baseUrl, source: "html", target: "inline-html" },
-                options
-              );
+        const { html, url } = input;
+        let audit: Audit;
+
+        // `html` wins over `url`; an empty `html` counts only when a `url` came with it.
+        if (html !== undefined && (html || url)) {
+          audit = await auditHtml(
+            html,
+            { url: input.baseUrl, source: "html", target: "inline-html" },
+            options
+          );
+        } else if (url) {
+          audit = await auditUrl(url, options);
+        } else {
+          throw new Error("Provide `url` or `html`.");
+        }
 
         return respond(audit, input.format, input.detail);
-      } catch (err) {
-        return fail(err);
+      } catch (error) {
+        return fail(error);
       }
     }
   );
@@ -294,8 +338,8 @@ export function createMcpServer(): McpServer {
         });
 
         return respond(audit, input.format, input.detail);
-      } catch (err) {
-        return fail(err);
+      } catch (error) {
+        return fail(error);
       }
     }
   );
@@ -349,8 +393,8 @@ export function createMcpServer(): McpServer {
         });
 
         return respond(audit, input.format, input.detail);
-      } catch (err) {
-        return fail(err);
+      } catch (error) {
+        return fail(error);
       }
     }
   );
@@ -394,10 +438,10 @@ export function createMcpServer(): McpServer {
 
         return {
           content: [{ type: "text" as const, text }],
-          structuredContent: payload as unknown as Record<string, unknown>,
+          structuredContent: payload,
         };
-      } catch (err) {
-        return fail(err);
+      } catch (error) {
+        return fail(error);
       }
     }
   );
@@ -423,7 +467,7 @@ export function createMcpServer(): McpServer {
         idempotentHint: true,
       },
     },
-    async (input) => {
+    (input) => {
       const rules = ALL_RULES.filter(
         (r) =>
           (!input.category || r.category === input.category) &&
@@ -442,49 +486,10 @@ export function createMcpServer(): McpServer {
   );
 
   return server;
-}
+};
 
-function lighthouseMarkdown(
-  payload: PerformanceResult & { findings: Finding[] }
-): string {
-  const lines = [
-    `# Lighthouse (${payload.formFactor}): ${payload.finalUrl}`,
-    "",
-    "| Metric | Value |",
-    "| --- | --- |",
-  ];
-
-  for (const [k, v] of Object.entries(payload.metrics) as [
-    string,
-    number | null,
-  ][]) {
-    lines.push(
-      `| ${k} | ${v === null ? "—" : k.endsWith("Ms") ? `${Math.round(v)} ms` : v} |`
-    );
-  }
-
-  lines.push("", "## Opportunities", "");
-
-  for (const o of payload.opportunities.slice(0, 10)) {
-    lines.push(
-      `- ${o.title}${o.savingsMs ? ` (~${Math.round(o.savingsMs)} ms)` : ""}${o.savingsBytes ? ` (~${Math.round(o.savingsBytes / 1024)} KiB)` : ""}`
-    );
-  }
-
-  lines.push("", "## Findings", "");
-
-  for (const f of payload.findings) {
-    lines.push(
-      `- **\`${f.rule}\`** ${f.message}`,
-      `  - Fix: ${f.recommendation}`
-    );
-  }
-
-  return lines.join("\n");
-}
-
-export async function startMcpServer(): Promise<void> {
+export const startMcpServer = async (): Promise<void> => {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-}
+};

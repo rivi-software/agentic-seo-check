@@ -1,10 +1,10 @@
 import { robotsDirectives } from "./rules/indexing.js";
 import type { ExtractedPage, PageSummary, ResponseInfo } from "./types.js";
 
-export function buildSummary(
+export const buildSummary = (
   page: ExtractedPage,
   response?: ResponseInfo
-): PageSummary {
+): PageSummary => {
   const robots = robotsDirectives(page, response);
 
   return {
@@ -35,4 +35,4 @@ export function buildSummary(
     ],
     hreflangCount: page.hreflang.length,
   };
-}
+};

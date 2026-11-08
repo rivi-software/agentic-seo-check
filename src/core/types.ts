@@ -60,6 +60,7 @@ export interface Finding {
   /** CSS selector or location hint for where the problem lives in the HTML. */
   selector?: string;
   /** Current values, counts, offending items (capped lists). */
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- free-form JSON for the reader: each rule records whatever values it found
   evidence?: Record<string, unknown>;
   docs?: string;
 }
@@ -105,6 +106,7 @@ export interface StructuredDataItem {
   source: "json-ld" | "microdata";
   types: string[];
   context: string | null;
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the page's own JSON-LD or microdata, in whatever schema.org shape it has
   data: Record<string, unknown>;
 }
 
@@ -351,16 +353,18 @@ export const DEFAULT_THRESHOLDS: Thresholds = {
   maxKeywordDensityPercent: 3,
 };
 
-export function emptyCounts(): SeverityCounts {
-  return { error: 0, warning: 0, info: 0 };
-}
+export const emptyCounts = (): SeverityCounts => ({
+  error: 0,
+  warning: 0,
+  info: 0,
+});
 
-export function countFindings(findings: Finding[]): SeverityCounts {
+export const countFindings = (findings: Finding[]): SeverityCounts => {
   const counts = emptyCounts();
 
   for (const f of findings) {
-    counts[f.severity]++;
+    counts[f.severity] += 1;
   }
 
   return counts;
-}
+};

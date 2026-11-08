@@ -77,12 +77,21 @@ export const PERFORMANCE_RULES: RuleMeta[] = [
 ];
 
 const byId = new Map(PERFORMANCE_RULES.map((r) => [r.id, r]));
-const m = (id: string): RuleMeta => byId.get(id)!;
 
-export function performanceFindings(result: PerformanceResult): Finding[] {
+const m = (id: string): RuleMeta => {
+  const rule = byId.get(id);
+
+  if (!rule) {
+    throw new Error(`Unknown performance rule: ${id}`);
+  }
+
+  return rule;
+};
+
+/** LCP, CLS and TBT against the Core Web Vitals thresholds. */
+const vitalsFindings = (result: PerformanceResult): Finding[] => {
   const out: Finding[] = [];
-  const url = result.finalUrl || result.requestedUrl;
-  const add = (f: Finding) => out.push({ ...f, url });
+  const add = (f: Finding) => out.push(f);
   const { metrics } = result;
 
   if (metrics.lcpMs !== null && metrics.lcpMs > 2500) {
@@ -127,6 +136,15 @@ export function performanceFindings(result: PerformanceResult): Finding[] {
     );
   }
 
+  return out;
+};
+
+/** FCP, server response time and the overall Lighthouse score. */
+const timingFindings = (result: PerformanceResult): Finding[] => {
+  const out: Finding[] = [];
+  const add = (f: Finding) => out.push(f);
+  const { metrics } = result;
+
   if (metrics.fcpMs !== null && metrics.fcpMs > 1800) {
     add(
       finding(
@@ -164,6 +182,14 @@ export function performanceFindings(result: PerformanceResult): Finding[] {
       )
     );
   }
+
+  return out;
+};
+
+/** Lighthouse opportunities and failed SEO and agentic-browsing audits. */
+const auditFindings = (result: PerformanceResult): Finding[] => {
+  const out: Finding[] = [];
+  const add = (f: Finding) => out.push(f);
 
   for (const opp of result.opportunities.slice(0, 8)) {
     const savings = [
@@ -217,4 +243,14 @@ export function performanceFindings(result: PerformanceResult): Finding[] {
   }
 
   return out;
-}
+};
+
+export const performanceFindings = (result: PerformanceResult): Finding[] => {
+  const url = result.finalUrl || result.requestedUrl;
+
+  return [
+    ...vitalsFindings(result),
+    ...timingFindings(result),
+    ...auditFindings(result),
+  ].map((f) => ({ ...f, url }));
+};
