@@ -1,8 +1,9 @@
-import { load, type CheerioAPI } from 'cheerio';
+import { isTag, isText, hasChildren } from 'domhandler';
 import type { ExtractedPage, HeadingInfo, HreflangInfo, ImageInfo, LinkInfo } from '../types.js';
 import { isSameSite, resolveUrl, hostOf } from '../url.js';
 import { collapseWhitespace, wordCount } from './text.js';
 import { extractStructuredData } from './structured-data.js';
+import { type AnyNode, type Document, attr, parseDocument, queryAll, queryOne, text } from './dom.js';
 
 export interface ExtractOptions {
   /** Absolute URL of the document; relative links are resolved against it (or against <base href>). */
@@ -14,101 +15,94 @@ export interface ExtractOptions {
 }
 
 export function extractPage(html: string, options: ExtractOptions): ExtractedPage {
-  const $ = load(html);
+  const doc = parseDocument(html);
   const hasDoctype = /^\s*<!doctype\s+html/i.test(html);
-  const baseHref = $('base[href]').first().attr('href');
+  const baseEl = queryOne(doc, 'base[href]');
+  const baseHref = baseEl ? attr(baseEl, 'href') : undefined;
   const base = (baseHref && resolveUrl(baseHref, options.url)) || options.url;
   const siteHost = options.siteHost ?? hostOf(options.url) ?? '';
 
-  const titles = $('title')
-    .toArray()
-    .map((el) => collapseWhitespace($(el).text()));
+  const titles = queryAll(doc, 'title').map((el) => collapseWhitespace(text(el)));
 
-  const metaDescriptions = $('meta[name]')
-    .toArray()
-    .filter((el) => ($(el).attr('name') ?? '').trim().toLowerCase() === 'description')
-    .map((el) => collapseWhitespace($(el).attr('content') ?? ''));
+  const metaDescriptions = queryAll(doc, 'meta[name]')
+    .filter((el) => (attr(el, 'name') ?? '').trim().toLowerCase() === 'description')
+    .map((el) => collapseWhitespace(attr(el, 'content') ?? ''));
 
-  const metaRobots = $('meta[name]')
-    .toArray()
-    .filter((el) => ['robots', 'googlebot', 'googlebot-news', 'bingbot'].includes(($(el).attr('name') ?? '').trim().toLowerCase()))
-    .map((el) => collapseWhitespace($(el).attr('content') ?? '').toLowerCase())
+  const metaRobots = queryAll(doc, 'meta[name]')
+    .filter((el) => ['robots', 'googlebot', 'googlebot-news', 'bingbot'].includes((attr(el, 'name') ?? '').trim().toLowerCase()))
+    .map((el) => collapseWhitespace(attr(el, 'content') ?? '').toLowerCase())
     .filter(Boolean);
 
-  const canonicals = $('link[rel]')
-    .toArray()
-    .filter((el) => relList($(el).attr('rel')).includes('canonical'))
-    .map((el) => ($(el).attr('href') ?? '').trim());
+  const canonicals = queryAll(doc, 'link[rel]')
+    .filter((el) => relList(attr(el, 'rel')).includes('canonical'))
+    .map((el) => (attr(el, 'href') ?? '').trim());
 
-  const headings: HeadingInfo[] = $('h1, h2, h3, h4, h5, h6')
-    .toArray()
-    .map((el) => ({ level: Number(el.tagName.slice(1)), text: collapseWhitespace($(el).text()) }));
+  const headings: HeadingInfo[] = queryAll(doc, 'h1, h2, h3, h4, h5, h6').map((el) => ({
+    level: Number(el.name.slice(1)),
+    text: collapseWhitespace(text(el)),
+  }));
 
   const og: Record<string, string> = {};
   const twitter: Record<string, string> = {};
-  $('meta[property], meta[name]').each((_, el) => {
-    const key = ($(el).attr('property') ?? $(el).attr('name') ?? '').trim().toLowerCase();
-    const content = collapseWhitespace($(el).attr('content') ?? '');
-    if (!key) return;
+  for (const el of queryAll(doc, 'meta[property], meta[name]')) {
+    const key = (attr(el, 'property') ?? attr(el, 'name') ?? '').trim().toLowerCase();
+    const content = collapseWhitespace(attr(el, 'content') ?? '');
+    if (!key) continue;
     if (key.startsWith('og:') && !(key in og)) og[key.slice(3)] = content;
     else if (key.startsWith('twitter:') && !(key in twitter)) twitter[key.slice(8)] = content;
+  }
+
+  const images: ImageInfo[] = queryAll(doc, 'img').map((el) => ({
+    src: attr(el, 'src') ?? attr(el, 'data-src') ?? null,
+    alt: attr(el, 'alt') ?? null,
+    width: attr(el, 'width') ?? null,
+    height: attr(el, 'height') ?? null,
+    loading: attr(el, 'loading') ?? null,
+  }));
+
+  const links: LinkInfo[] = queryAll(doc, 'a[href]').map((el) => {
+    const href = (attr(el, 'href') ?? '').trim();
+    // Fragment-only and empty hrefs are not links to other documents.
+    const url = href === '' || href.startsWith('#') ? null : resolveUrl(href, base);
+    const rel = attr(el, 'rel') ?? null;
+    const relTokens = relList(rel);
+    const linkText = collapseWhitespace(text(el));
+    const ariaLabel = collapseWhitespace(attr(el, 'aria-label') ?? '');
+    const title = collapseWhitespace(attr(el, 'title') ?? '');
+    const imgAlt = queryAll(el, 'img[alt]')
+      .map((img) => collapseWhitespace(attr(img, 'alt') ?? ''))
+      .find(Boolean);
+    return {
+      href,
+      url,
+      text: linkText,
+      rel,
+      internal: url ? isSameSite(url, siteHost, options.includeSubdomains) : false,
+      nofollow: relTokens.includes('nofollow'),
+      hasAccessibleName: Boolean(linkText || ariaLabel || title || imgAlt),
+    };
   });
 
-  const images: ImageInfo[] = $('img')
-    .toArray()
-    .map((el) => ({
-      src: $(el).attr('src') ?? $(el).attr('data-src') ?? null,
-      alt: $(el).attr('alt') ?? null,
-      width: $(el).attr('width') ?? null,
-      height: $(el).attr('height') ?? null,
-      loading: $(el).attr('loading') ?? null,
-    }));
-
-  const links: LinkInfo[] = $('a[href]')
-    .toArray()
+  const hreflang: HreflangInfo[] = queryAll(doc, 'link[rel]')
+    .filter((el) => relList(attr(el, 'rel')).includes('alternate') && attr(el, 'hreflang'))
     .map((el) => {
-      const href = ($(el).attr('href') ?? '').trim();
-      // Fragment-only and empty hrefs are not links to other documents.
-      const url = href === '' || href.startsWith('#') ? null : resolveUrl(href, base);
-      const rel = $(el).attr('rel') ?? null;
-      const relTokens = relList(rel);
-      const text = collapseWhitespace($(el).text());
-      const ariaLabel = collapseWhitespace($(el).attr('aria-label') ?? '');
-      const title = collapseWhitespace($(el).attr('title') ?? '');
-      const imgAlt = $(el)
-        .find('img[alt]')
-        .toArray()
-        .map((img) => collapseWhitespace($(img).attr('alt') ?? ''))
-        .find(Boolean);
-      return {
-        href,
-        url,
-        text,
-        rel,
-        internal: url ? isSameSite(url, siteHost, options.includeSubdomains) : false,
-        nofollow: relTokens.includes('nofollow'),
-        hasAccessibleName: Boolean(text || ariaLabel || title || imgAlt),
-      };
+      const href = (attr(el, 'href') ?? '').trim();
+      return { lang: (attr(el, 'hreflang') ?? '').trim(), href, url: resolveUrl(href, base) };
     });
 
-  const hreflang: HreflangInfo[] = $('link[rel]')
-    .toArray()
-    .filter((el) => relList($(el).attr('rel')).includes('alternate') && $(el).attr('hreflang'))
-    .map((el) => {
-      const href = ($(el).attr('href') ?? '').trim();
-      return { lang: ($(el).attr('hreflang') ?? '').trim(), href, url: resolveUrl(href, base) };
-    });
+  const structured = extractStructuredData(doc);
 
-  const structured = extractStructuredData($);
+  const bodyText = visibleText(doc);
 
-  const text = visibleText($);
+  const htmlEl = queryOne(doc, 'html');
+  const viewportEl = queryOne(doc, 'meta[name="viewport" i]');
 
   return {
     url: options.url,
     hasDoctype,
-    lang: attrOrNull($('html').attr('lang')),
-    charset: detectCharset($),
-    viewport: attrOrNull($('meta[name="viewport" i]').first().attr('content')),
+    lang: attrOrNull(htmlEl ? attr(htmlEl, 'lang') : undefined),
+    charset: detectCharset(doc),
+    viewport: attrOrNull(viewportEl ? attr(viewportEl, 'content') : undefined),
     titles,
     title: firstNonEmpty(titles),
     metaDescriptions,
@@ -125,8 +119,8 @@ export function extractPage(html: string, options: ExtractOptions): ExtractedPag
     hreflang,
     structuredData: structured.items,
     structuredDataErrors: structured.errors,
-    text,
-    wordCount: wordCount(text),
+    text: bodyText,
+    wordCount: wordCount(bodyText),
     htmlBytes: Buffer.byteLength(html, 'utf8'),
     hasBaseHref: Boolean(baseHref),
   };
@@ -149,23 +143,37 @@ function firstNonEmpty(values: string[]): string | null {
   return null;
 }
 
-function detectCharset($: CheerioAPI): string | null {
-  const direct = $('meta[charset]').first().attr('charset');
+function detectCharset(doc: Document): string | null {
+  const metaCharset = queryOne(doc, 'meta[charset]');
+  const direct = metaCharset ? attr(metaCharset, 'charset') : undefined;
   if (direct) return direct.trim();
-  const httpEquiv = $('meta[http-equiv]')
-    .toArray()
-    .find((el) => ($(el).attr('http-equiv') ?? '').toLowerCase() === 'content-type');
-  const content = httpEquiv ? $(httpEquiv).attr('content') : undefined;
+  const httpEquiv = queryAll(doc, 'meta[http-equiv]').find((el) => (attr(el, 'http-equiv') ?? '').toLowerCase() === 'content-type');
+  const content = httpEquiv ? attr(httpEquiv, 'content') : undefined;
   const match = content?.match(/charset=([\w-]+)/i);
   return match?.[1] ?? null;
 }
 
-function visibleText($: CheerioAPI): string {
-  const body = $('body').clone();
-  body.find('script, style, noscript, template, svg, iframe, head').remove();
-  // Insert spaces at block boundaries so words don't fuse.
-  body.find('p, div, li, h1, h2, h3, h4, h5, h6, br, tr, td, th, section, article, header, footer, nav, blockquote, pre, dd, dt, figcaption').each((_, el) => {
-    $(el).prepend(' ').append(' ');
-  });
-  return collapseWhitespace(body.text());
+/** Elements whose content is never visible page text. */
+const HIDDEN_ELEMENTS = new Set(['script', 'style', 'noscript', 'template', 'svg', 'iframe', 'head']);
+/** Elements that break words apart; padded with spaces so adjacent words don't fuse. */
+const BLOCK_ELEMENTS = new Set(['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'br', 'tr', 'td', 'th', 'section', 'article', 'header', 'footer', 'nav', 'blockquote', 'pre', 'dd', 'dt', 'figcaption']);
+
+function visibleText(doc: Document): string {
+  const body = queryOne(doc, 'body');
+  if (!body) return '';
+  const parts: string[] = [];
+  const walk = (nodes: AnyNode[]): void => {
+    for (const node of nodes) {
+      if (isText(node)) parts.push(node.data);
+      else if (isTag(node)) {
+        if (HIDDEN_ELEMENTS.has(node.name)) continue;
+        const block = BLOCK_ELEMENTS.has(node.name);
+        if (block) parts.push(' ');
+        walk(node.children);
+        if (block) parts.push(' ');
+      } else if (hasChildren(node)) walk(node.children);
+    }
+  };
+  walk(body.children);
+  return collapseWhitespace(parts.join(''));
 }

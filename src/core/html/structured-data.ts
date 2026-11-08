@@ -1,5 +1,5 @@
-import type { CheerioAPI } from 'cheerio';
-import type { AnyNode, Element } from 'domhandler';
+import { isTag } from 'domhandler';
+import { type Document, type Element, attr, childElements, hasAttr, queryAll, text } from './dom.js';
 import type { StructuredDataError, StructuredDataItem } from '../types.js';
 import { collapseWhitespace } from './text.js';
 
@@ -8,17 +8,17 @@ export interface StructuredDataExtraction {
   errors: StructuredDataError[];
 }
 
-export function extractStructuredData($: CheerioAPI): StructuredDataExtraction {
+export function extractStructuredData(doc: Document): StructuredDataExtraction {
   const items: StructuredDataItem[] = [];
   const errors: StructuredDataError[] = [];
 
-  $('script[type]').each((_, el) => {
-    const type = ($(el).attr('type') ?? '').trim().toLowerCase();
-    if (type !== 'application/ld+json') return;
-    const raw = $(el).text().trim();
+  for (const el of queryAll(doc, 'script[type]')) {
+    const type = (attr(el, 'type') ?? '').trim().toLowerCase();
+    if (type !== 'application/ld+json') continue;
+    const raw = text(el).trim();
     if (!raw) {
       errors.push({ source: 'json-ld', message: 'Empty JSON-LD script block', snippet: '' });
-      return;
+      continue;
     }
     let parsed: unknown;
     try {
@@ -29,12 +29,12 @@ export function extractStructuredData($: CheerioAPI): StructuredDataExtraction {
         message: `Invalid JSON: ${(err as Error).message}`,
         snippet: raw.slice(0, 200),
       });
-      return;
+      continue;
     }
     for (const node of flattenJsonLd(parsed, null)) items.push(node);
-  });
+  }
 
-  for (const item of extractMicrodata($)) items.push(item);
+  for (const item of extractMicrodata(doc)) items.push(item);
 
   return { items, errors };
 }
@@ -95,25 +95,32 @@ export function shortType(type: string): string {
  * Microdata
  * ------------------------------------------------------------------------- */
 
-function extractMicrodata($: CheerioAPI): StructuredDataItem[] {
+function extractMicrodata(doc: Document): StructuredDataItem[] {
   const items: StructuredDataItem[] = [];
-  $('[itemscope]').each((_, el) => {
+  for (const el of queryAll(doc, '[itemscope]')) {
     // Top-level scopes only: nested scopes become property values.
-    if ($(el).parents('[itemscope]').length > 0) return;
-    const data = microdataObject($, el);
+    if (hasItemscopeAncestor(el)) continue;
+    const data = microdataObject(el);
     items.push({
       source: 'microdata',
       types: typesOf(data['@type']),
       context: contextString(data['@context']),
       data,
     });
-  });
+  }
   return items;
 }
 
-function microdataObject($: CheerioAPI, scope: Element): Record<string, unknown> {
+function hasItemscopeAncestor(el: Element): boolean {
+  for (let p = el.parent; p && isTag(p); p = p.parent) {
+    if (hasAttr(p, 'itemscope')) return true;
+  }
+  return false;
+}
+
+function microdataObject(scope: Element): Record<string, unknown> {
   const obj: Record<string, unknown> = {};
-  const itemtype = $(scope).attr('itemtype');
+  const itemtype = attr(scope, 'itemtype');
   if (itemtype) {
     const types = itemtype.split(/\s+/).filter(Boolean);
     obj['@type'] = types.length === 1 ? types[0] : types;
@@ -127,14 +134,14 @@ function microdataObject($: CheerioAPI, scope: Element): Record<string, unknown>
       }
     }
   }
-  const itemid = $(scope).attr('itemid');
+  const itemid = attr(scope, 'itemid');
   if (itemid) obj['@id'] = itemid;
 
   const props: Element[] = [];
-  collectProps($, scope, props);
+  collectProps(scope, props);
   for (const el of props) {
-    const names = ($(el).attr('itemprop') ?? '').split(/\s+/).filter(Boolean);
-    const value = $(el).is('[itemscope]') ? microdataObject($, el) : microdataValue($, el);
+    const names = (attr(el, 'itemprop') ?? '').split(/\s+/).filter(Boolean);
+    const value = hasAttr(el, 'itemscope') ? microdataObject(el) : microdataValue(el);
     for (const name of names) {
       const existing = obj[name];
       if (existing === undefined) obj[name] = value;
@@ -146,21 +153,18 @@ function microdataObject($: CheerioAPI, scope: Element): Record<string, unknown>
 }
 
 /** Walk descendants, stopping at nested itemscopes (they are added as a single property). */
-function collectProps($: CheerioAPI, root: Element, out: Element[]): void {
-  const children = $(root).children().toArray();
-  for (const child of children) {
-    const hasProp = $(child).is('[itemprop]');
-    if (hasProp) out.push(child);
-    if (!$(child).is('[itemscope]')) collectProps($, child, out);
+function collectProps(root: Element, out: Element[]): void {
+  for (const child of childElements(root)) {
+    if (hasAttr(child, 'itemprop')) out.push(child);
+    if (!hasAttr(child, 'itemscope')) collectProps(child, out);
   }
 }
 
-function microdataValue($: CheerioAPI, el: AnyNode): unknown {
-  const $el = $(el);
-  const tag = ((el as Element).tagName ?? '').toLowerCase();
+function microdataValue(el: Element): unknown {
+  const tag = el.name.toLowerCase();
   switch (tag) {
     case 'meta':
-      return $el.attr('content') ?? '';
+      return attr(el, 'content') ?? '';
     case 'img':
     case 'audio':
     case 'embed':
@@ -168,21 +172,21 @@ function microdataValue($: CheerioAPI, el: AnyNode): unknown {
     case 'source':
     case 'track':
     case 'video':
-      return $el.attr('src') ?? '';
+      return attr(el, 'src') ?? '';
     case 'a':
     case 'area':
     case 'link':
-      return $el.attr('href') ?? '';
+      return attr(el, 'href') ?? '';
     case 'object':
-      return $el.attr('data') ?? '';
+      return attr(el, 'data') ?? '';
     case 'data':
     case 'meter':
-      return $el.attr('value') ?? collapseWhitespace($el.text());
+      return attr(el, 'value') ?? collapseWhitespace(text(el));
     case 'time':
-      return $el.attr('datetime') ?? collapseWhitespace($el.text());
+      return attr(el, 'datetime') ?? collapseWhitespace(text(el));
     default: {
-      const content = $el.attr('content');
-      return content !== undefined ? content : collapseWhitespace($el.text());
+      const content = attr(el, 'content');
+      return content !== undefined ? content : collapseWhitespace(text(el));
     }
   }
 }
