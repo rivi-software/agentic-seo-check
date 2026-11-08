@@ -15,9 +15,10 @@ import { performanceFindings } from "./core/performance-rules.js";
 import { renderMarkdown } from "./core/report/markdown.js";
 import { ALL_RULES } from "./core/rules/index.js";
 import type { Audit, Finding, PerformanceResult } from "./core/types.js";
+import { VERSION } from "./version.js";
 
 export const MCP_SERVER_NAME = "agentic-seo-check";
-export const MCP_SERVER_VERSION = "0.1.0";
+export const MCP_SERVER_VERSION = VERSION;
 
 const format = z
   .enum(["json", "markdown"])

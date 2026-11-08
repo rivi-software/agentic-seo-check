@@ -10,8 +10,7 @@ import { ALL_RULES } from "./core/rules/index.js";
 import { SEVERITY_RANK } from "./core/types.js";
 import type { Audit, Severity } from "./core/types.js";
 import { startMcpServer } from "./mcp.js";
-
-const VERSION = "0.1.0";
+import { VERSION } from "./version.js";
 
 const program = new Command();
 
