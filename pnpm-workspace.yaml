@@ -1,2 +1,10 @@
+# Dependency build scripts are blocked unless listed here (pnpm 12).
 allowBuilds:
+  # tsx and vitest take esbuild's binary from an optional platform package; its script only checks it.
   esbuild: true
+  # lefthook's postinstall runs `lefthook install`, which writes the pre-commit hook of lefthook.yml into .git/hooks
+  # (it skips that where CI is set).
+  lefthook: true
+
+# No transitive dependencies from git or tarball URLs.
+blockExoticSubdeps: true
