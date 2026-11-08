@@ -24,4 +24,8 @@ describe("brand", () => {
 
     expect(dark && decoded(dark.src)).toBe(asset("rivi-mark-on-dark.svg"));
   });
+
+  it("keeps assets/icon.svg a copy of the light-theme mark", () => {
+    expect(asset("icon.svg")).toBe(asset("rivi-mark.svg"));
+  });
 });
