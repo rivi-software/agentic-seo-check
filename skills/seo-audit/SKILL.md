@@ -5,7 +5,7 @@ description: Audit and fix SEO for a website or web project with the agentic-seo
 
 # SEO audit workflow
 
-You have `agentic-seo-check` available either as MCP tools (`seo_audit_page`, `seo_crawl_site`, `seo_audit_directory`, `seo_lighthouse`, `seo_list_rules`) or as a CLI (`agentic-seo-check`, or `npx agentic-seo-check`). Both return the same JSON: findings with `rule`, `severity`, `message`, `recommendation`, `selector`, `evidence`, plus a 0-100 `score`.
+You have `agentic-seo-check` available either as MCP tools (`seo_audit_page`, `seo_crawl_site`, `seo_audit_directory`, `seo_lighthouse`, `seo_list_rules`) or as a CLI (`agentic-seo-check`, or `npx @rivi-software/agentic-seo-check`). Both return the same JSON: findings with `rule`, `severity`, `message`, `recommendation`, `selector`, `evidence`, plus a 0-100 `score`.
 
 ## 1. Pick the target
 

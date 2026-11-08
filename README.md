@@ -26,17 +26,17 @@ It audits **URLs** (production, staging, `localhost` dev servers), **static buil
 
 ## Install
 
-Requires Node 22.19 or newer.
+Requires Node 22.19 or newer. Published on npm as [`@rivi-software/agentic-seo-check`](https://www.npmjs.com/package/@rivi-software/agentic-seo-check); the commands it installs are `agentic-seo-check` and `agentic-seo-check-mcp`.
 
 ```bash
-pnpm install
-pnpm build
-node dist/cli.js --help
+npx @rivi-software/agentic-seo-check audit https://example.com   # no install
+npm install -g @rivi-software/agentic-seo-check                  # or pnpm add -D / npm i -D in a project
+agentic-seo-check --help
 ```
 
-Optional, only for `--render` and `--lighthouse`: Google Chrome installed, or `pnpm exec playwright install chromium`. The renderer uses a Playwright-managed Chromium when present and falls back to the installed Google Chrome or Edge.
+Optional, only for `--render` and `--lighthouse`: `playwright` and `lighthouse` (+ `chrome-launcher`) are optional peer dependencies, so install them next to the tool, plus Google Chrome or `npx playwright install chromium`. The renderer uses a Playwright-managed Chromium when present and falls back to the installed Google Chrome or Edge.
 
-Or straight from npm once published: `npx agentic-seo-check audit https://example.com`.
+From source: `pnpm install && pnpm build && node dist/cli.js --help`.
 
 ## CLI
 
@@ -71,20 +71,20 @@ Exit codes: `0` success, `1` findings at or above `--fail-on`, `2` usage or runt
 
 ## MCP server
 
-Add to a project `.mcp.json` (Claude Code reads it automatically; this repo ships one):
+Add to a project `.mcp.json` (Claude Code reads it automatically):
 
 ```json
 {
   "mcpServers": {
     "agentic-seo-check": {
-      "command": "node",
-      "args": ["/absolute/path/to/agentic-seo-check/dist/mcp-bin.js"]
+      "command": "npx",
+      "args": ["-y", "@rivi-software/agentic-seo-check", "mcp"]
     }
   }
 }
 ```
 
-Or `claude mcp add agentic-seo-check -- node /absolute/path/to/agentic-seo-check/dist/mcp-bin.js`. Once published: `npx -y agentic-seo-check mcp`.
+Or `claude mcp add agentic-seo-check -- npx -y @rivi-software/agentic-seo-check mcp`. From a source checkout, use `node /absolute/path/to/agentic-seo-check/dist/mcp-bin.js` instead (this repo's own `.mcp.json` does that).
 
 | Tool | Purpose |
 | --- | --- |
@@ -133,7 +133,7 @@ Site audits add `crawl` stats, `robotsTxt`, `sitemaps`, `siteFindings`, `issues`
 ## Library
 
 ```ts
-import { auditUrl, auditSite, auditDirectory, auditHtml, renderMarkdown } from 'agentic-seo-check';
+import { auditUrl, auditSite, auditDirectory, auditHtml, renderMarkdown } from '@rivi-software/agentic-seo-check';
 
 const page = await auditUrl('https://www.example.com/', { keyword: 'example', render: true });
 const site = await auditSite('https://www.example.com/', { maxPages: 100 });
