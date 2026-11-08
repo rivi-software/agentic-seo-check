@@ -3,31 +3,35 @@
  * of the CLI JSON output and the MCP tool results (`schemaVersion: 1`).
  */
 
-export type Severity = 'error' | 'warning' | 'info';
+export type Severity = "error" | "warning" | "info";
 
-export const SEVERITY_RANK: Record<Severity, number> = { error: 3, warning: 2, info: 1 };
+export const SEVERITY_RANK: Record<Severity, number> = {
+  error: 3,
+  warning: 2,
+  info: 1,
+};
 
 export type Category =
-  | 'title'
-  | 'meta'
-  | 'headings'
-  | 'canonical'
-  | 'indexing'
-  | 'document'
-  | 'social'
-  | 'images'
-  | 'links'
-  | 'international'
-  | 'structured-data'
-  | 'content'
-  | 'keyword'
-  | 'response'
-  | 'rendering'
-  | 'performance'
-  | 'site'
-  | 'tool';
+  | "title"
+  | "meta"
+  | "headings"
+  | "canonical"
+  | "indexing"
+  | "document"
+  | "social"
+  | "images"
+  | "links"
+  | "international"
+  | "structured-data"
+  | "content"
+  | "keyword"
+  | "response"
+  | "rendering"
+  | "performance"
+  | "site"
+  | "tool";
 
-export type Requirement = 'render' | 'lighthouse' | 'crawl' | 'keyword';
+export type Requirement = "render" | "lighthouse" | "crawl" | "keyword";
 
 /** Static description of a rule, exposed through `seo_list_rules` / `agentic-seo-check rules`. */
 export interface RuleMeta {
@@ -98,14 +102,14 @@ export interface HreflangInfo {
 }
 
 export interface StructuredDataItem {
-  source: 'json-ld' | 'microdata';
+  source: "json-ld" | "microdata";
   types: string[];
   context: string | null;
   data: Record<string, unknown>;
 }
 
 export interface StructuredDataError {
-  source: 'json-ld';
+  source: "json-ld";
   message: string;
   snippet: string;
 }
@@ -209,9 +213,9 @@ export interface LighthouseAuditSummary {
 }
 
 export interface PerformanceResult {
-  tool: 'lighthouse';
+  tool: "lighthouse";
   lighthouseVersion: string;
-  formFactor: 'mobile' | 'desktop';
+  formFactor: "mobile" | "desktop";
   requestedUrl: string;
   finalUrl: string;
   metrics: LighthouseMetrics;
@@ -221,7 +225,7 @@ export interface PerformanceResult {
 }
 
 export interface RenderComparison {
-  tool: 'playwright';
+  tool: "playwright";
   renderedUrl: string;
   consoleErrors: string[];
   raw: RenderSnapshot;
@@ -239,11 +243,11 @@ export interface RenderSnapshot {
   structuredDataCount: number;
 }
 
-export type PageSource = 'url' | 'file' | 'html';
+export type PageSource = "url" | "file" | "html";
 
 export interface PageAudit {
   schemaVersion: 1;
-  kind: 'page';
+  kind: "page";
   /** What the caller asked for (URL, path, or "inline-html"). */
   target: string;
   /** Final URL after redirects, or the file path. */
@@ -305,9 +309,9 @@ export interface IssueRollup {
 
 export interface SiteAudit {
   schemaVersion: 1;
-  kind: 'site';
+  kind: "site";
   target: string;
-  source: 'crawl' | 'directory';
+  source: "crawl" | "directory";
   auditedAt: string;
   crawl: CrawlStats;
   robotsTxt: RobotsTxtInfo | null;
@@ -353,6 +357,10 @@ export function emptyCounts(): SeverityCounts {
 
 export function countFindings(findings: Finding[]): SeverityCounts {
   const counts = emptyCounts();
-  for (const f of findings) counts[f.severity]++;
+
+  for (const f of findings) {
+    counts[f.severity]++;
+  }
+
   return counts;
 }
