@@ -1,0 +1,38 @@
+# What RIVI Bot does here (.github/workflows/rivi-bot.yml), read from main: a change to this file takes effect once it
+# merges. The settings and their defaults: https://github.com/rivi-software/tools/tree/main/rivi-bot#configuration
+
+# Every pull request by someone with write access, and any other once a maintainer adds `rivi-bot:review`. The review
+# reads AGENTS.md and CONTRIBUTING.md; `focus` is what costs most here when it slips through.
+review:
+  focus: |
+    - Contract: a rule's id, severity, message and recommendation, the MCP tools' names and input schemas, the CLI's
+      flags and exit codes, and the audit JSON (schemaVersion 1) are what agents and CI depend on. A rename, a removed
+      field or a changed meaning without a breaking changeset is a finding.
+    - False positives: a rule that fires on a valid page costs every agent a fix nobody needed. A new or changed rule
+      without a test that it stays quiet on a good page (test/fixtures/good-page.html) is a finding.
+    - Untrusted pages: every fetched page, header, robots.txt and sitemap is attacker-controlled. A regular expression
+      that can backtrack on long input, a read without a size cap, a loop without a bound, or a value from a page used
+      as a path, a command or code is a finding.
+    - Secrets: headers the user passes (`headers`, `--header`) are meant for the audited origin and never go into a
+      report.
+    - MCP: the server's stdout carries JSON-RPC only; progress and logs go to stderr. Tools stay read-only.
+    - Optional peers: playwright, lighthouse and chrome-launcher load only behind `--render`/`--lighthouse`, through a
+      dynamic import, and never from the package's entry point or its declarations.
+
+# On request only: `@rivi-bot describe`, `@rivi-bot triage`, or a question or a fix in plain words.
+describe:
+  enabled: true
+  auto: "off"
+
+triage:
+  enabled: true
+  auto: "off"
+
+fix:
+  enabled: true
+  instructions: |
+    Keep README.md, skills/seo-audit/SKILL.md and AGENTS.md true to what the fix changes, and add a changeset under
+    .changeset/ when users would notice the change.
+
+ask:
+  enabled: true

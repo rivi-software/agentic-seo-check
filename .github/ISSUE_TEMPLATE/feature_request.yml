@@ -1,0 +1,29 @@
+name: Feature request
+description: A new rule, option, tool or command, or a change to what one does
+type: Feature
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you or your agent is trying to do, and what gets in the way today. For a new rule, what a search engine or crawler does with such a page, with a link to its documentation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: The rule (its id, severity and the fix it would recommend), the option, the MCP tool or the command you have in mind. An example of the output helps.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: Workarounds, or other tools that do this.
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you write the pull request?
+      options:
+        - Yes, once we agree on the approach
+        - Yes, with some help
+        - No

@@ -1,0 +1,48 @@
+name: Bug report
+description: The tool crashes, hangs, or does not do what the README says
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A vulnerability goes in a private report, never here: [SECURITY.md](https://github.com/rivi-software/agentic-seo-check/blob/main/SECURITY.md) says how. A rule that is wrong about a page has its own form: Wrong finding.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`agentic-seo-check --version`, or the commit you run from source."
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: How you ran it
+      options:
+        - CLI
+        - MCP server
+        - Library
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Where it runs
+      description: Node version and OS; for the MCP server, the client (Claude Code, Cursor, Codex …); for `--render` or `--lighthouse`, the browser it used.
+      placeholder: Node 24, macOS 26, Claude Code
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The command or tool call, what you expected, and what happened instead. Paste errors and output as text.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce it
+      description: A public URL, the smallest HTML or site that shows it, and the exact command. If it happens only sometimes, say when you have seen it.
+    validations:
+      required: true
