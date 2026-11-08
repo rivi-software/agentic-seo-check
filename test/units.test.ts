@@ -18,6 +18,7 @@ import {
   normalizeUrl,
   resolveUrl,
 } from "../src/core/url.js";
+import { VERSION } from "../src/version.js";
 
 describe("url helpers", () => {
   it("normalizes tracking params, fragments and ports", () => {
@@ -120,5 +121,8 @@ describe("scoring and reports", () => {
     expect(md).toContain("# SEO audit: https://a.test/");
     expect(md).toContain("`title.missing`");
     expect(md).toContain("Fix:");
+    expect(md.trimEnd().split("\n").at(-1)).toBe(
+      `_Audited with [agentic-seo-check](https://github.com/rivi-software/agentic-seo-check) ${VERSION}, made by [RIVI Software](https://rivi.software)._`
+    );
   });
 });

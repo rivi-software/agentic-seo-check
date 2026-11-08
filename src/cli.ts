@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 
 import { Command, InvalidArgumentError, Option } from "commander";
 
+import { MAKER, MAKER_URL, REPOSITORY_URL } from "./brand.js";
 import { auditTarget, compactAudit } from "./core/audit.js";
 import type { CrawlOptions, ProgressEvent } from "./core/audit.js";
 import { renderMarkdown } from "./core/report/markdown.js";
@@ -20,6 +21,10 @@ program
     "SEO analysis for coding agents. Audits URLs, static build output or raw HTML and prints machine-readable findings."
   )
   .version(VERSION)
+  .addHelpText(
+    "afterAll",
+    `\nMade by ${MAKER} (${MAKER_URL}). Docs and issues: ${REPOSITORY_URL}`
+  )
   .showHelpAfterError();
 
 const intArg = (value: string): number => {

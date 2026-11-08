@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "SEO analysis for coding agents: a CLI and MCP server that audit URLs, static build output or raw HTML and return machine-actionable findings.",
   "license": "MIT",
-  "author": "Rik Visser <rik@rivi.software>",
+  "author": "RIVI Software (https://rivi.software)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/rivi-software/agentic-seo-check.git"

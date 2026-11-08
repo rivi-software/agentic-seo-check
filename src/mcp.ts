@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+import { MAKER, MCP_ICONS, REPOSITORY_URL } from "./brand.js";
 import {
   auditDirectory,
   auditHtml,
@@ -164,7 +165,12 @@ const lighthouseMarkdown = (
 export const createMcpServer = (): McpServer => {
   const server = new McpServer({
     name: MCP_SERVER_NAME,
+    title: `agentic-seo-check by ${MAKER}`,
     version: MCP_SERVER_VERSION,
+    description:
+      "SEO audits for coding agents: pages, sites, build output and raw HTML, with findings an agent can act on.",
+    websiteUrl: REPOSITORY_URL,
+    icons: MCP_ICONS,
   });
 
   server.registerTool(

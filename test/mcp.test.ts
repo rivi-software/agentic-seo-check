@@ -5,6 +5,7 @@ import { assert, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createMcpServer } from "../src/mcp.js";
+import { VERSION } from "../src/version.js";
 
 const connect = async () => {
   const server = createMcpServer();
@@ -41,6 +42,22 @@ const RuleListContent = z.object({
 });
 
 describe("MCP server", () => {
+  it("names itself with its version, its maker and the RIVI mark", async () => {
+    const { client } = await connect();
+    const info = client.getServerVersion();
+
+    expect(info).toMatchObject({
+      name: "agentic-seo-check",
+      title: "agentic-seo-check by RIVI Software",
+      version: VERSION,
+      websiteUrl: "https://github.com/rivi-software/agentic-seo-check",
+    });
+    expect(info?.icons?.map((icon) => icon.theme)).toStrictEqual([
+      "light",
+      "dark",
+    ]);
+  });
+
   it("lists the SEO tools with annotations", async () => {
     const { client } = await connect();
     const { tools } = await client.listTools();

@@ -1,3 +1,5 @@
+import { MAKER, MAKER_URL, REPOSITORY_URL } from "../../brand.js";
+import { VERSION } from "../../version.js";
 import type { Audit, Finding, PageAudit, SiteAudit } from "../types.js";
 
 const cell = (value: string | null | undefined): string => {
@@ -241,5 +243,12 @@ const siteMarkdown = (audit: SiteAudit): string => {
   return lines.join("\n");
 };
 
-export const renderMarkdown = (audit: Audit): string =>
-  audit.kind === "page" ? pageMarkdown(audit) : siteMarkdown(audit);
+/** One line under every report: which tool and version wrote it, and who makes it. */
+const footer = `_Audited with [agentic-seo-check](${REPOSITORY_URL}) ${VERSION}, made by [${MAKER}](${MAKER_URL})._`;
+
+export const renderMarkdown = (audit: Audit): string => {
+  const body =
+    audit.kind === "page" ? pageMarkdown(audit) : siteMarkdown(audit);
+
+  return `${body.trimEnd()}\n\n---\n\n${footer}\n`;
+};
