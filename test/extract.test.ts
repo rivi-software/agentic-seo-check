@@ -122,4 +122,17 @@ describe(extractPage, () => {
       internal: false,
     });
   });
+
+  it("ignores inert <template> content, like a browser DOM", () => {
+    const html = `<!doctype html><title>T</title><body><a href="/real">Real</a>
+      <template><a href="/inert">Inert</a><div itemscope itemtype="https://schema.org/Event"><span itemprop="name">E</span></div></template>
+      <div itemscope itemtype="https://schema.org/Product"><span itemprop="name">P</span></div></body>`;
+
+    const page = extractPage(html, { url: "https://www.example.com/" });
+    expect(page.links.map((l) => l.href)).toStrictEqual(["/real"]);
+    expect(page.structuredData.map((s) => s.types)).toStrictEqual([
+      ["Product"],
+    ]);
+    expect(page.text).toBe("Real P");
+  });
 });

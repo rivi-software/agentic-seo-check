@@ -1,7 +1,8 @@
-import type { CheerioAPI } from "cheerio";
-import type { Element } from "domhandler";
+import { isTag } from "domhandler";
 
 import type { StructuredDataError, StructuredDataItem } from "../types.js";
+import { attr, childElements, hasAttr, queryAll, text } from "./dom.js";
+import type { Document, Element } from "./dom.js";
 import { collapseWhitespace } from "./text.js";
 
 /** A value JSON.parse returns: all that a JSON-LD block or a microdata item can hold. */
@@ -33,8 +34,8 @@ export interface StructuredDataExtraction {
   errors: StructuredDataError[];
 }
 
-const stripCdata = (text: string): string =>
-  text
+const stripCdata = (source: string): string =>
+  source
     .replace(/^\s*<!--/u, "")
     .replace(/-->\s*$/u, "")
     .replace(/^\s*\/\*\s*<!\[CDATA\[\s*\*\//u, "")
@@ -143,41 +144,47 @@ const TEXT_VALUE_ATTRIBUTES = new Map([
   ["time", "datetime"],
 ]);
 
-const microdataValue = ($: CheerioAPI, el: Element): string => {
-  const $el = $(el);
-  const tag = el.tagName.toLowerCase();
+const microdataValue = (el: Element): string => {
+  const tag = el.name.toLowerCase();
   const urlAttribute = URL_VALUE_ATTRIBUTES.get(tag);
 
   if (urlAttribute) {
-    return $el.attr(urlAttribute) ?? "";
+    return attr(el, urlAttribute) ?? "";
   }
 
   return (
-    $el.attr(TEXT_VALUE_ATTRIBUTES.get(tag) ?? "content") ??
-    collapseWhitespace($el.text())
+    attr(el, TEXT_VALUE_ATTRIBUTES.get(tag) ?? "content") ??
+    collapseWhitespace(text(el))
   );
 };
 
 /** Walk descendants, stopping at nested itemscopes (they are added as a single property). */
-const collectProps = ($: CheerioAPI, root: Element, out: Element[]): void => {
-  const children = $(root).children().toArray();
-
-  for (const child of children) {
-    const hasProp = $(child).is("[itemprop]");
-
-    if (hasProp) {
+const collectProps = (root: Element, out: Element[]): void => {
+  for (const child of childElements(root)) {
+    if (hasAttr(child, "itemprop")) {
       out.push(child);
     }
 
-    if (!$(child).is("[itemscope]")) {
-      collectProps($, child, out);
+    if (!hasAttr(child, "itemscope")) {
+      collectProps(child, out);
     }
   }
 };
 
-const microdataObject = ($: CheerioAPI, scope: Element): JsonObject => {
+/** Whether an element sits inside another itemscope, which makes it a property, not an item. */
+const hasItemscopeAncestor = (el: Element): boolean => {
+  for (let p = el.parent; p && isTag(p); p = p.parent) {
+    if (hasAttr(p, "itemscope")) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const microdataObject = (scope: Element): JsonObject => {
   const obj: JsonObject = {};
-  const itemtype = $(scope).attr("itemtype");
+  const itemtype = attr(scope, "itemtype");
 
   if (itemtype) {
     const types = itemtype.split(/\s+/u).filter(Boolean);
@@ -194,21 +201,21 @@ const microdataObject = ($: CheerioAPI, scope: Element): JsonObject => {
     }
   }
 
-  const itemid = $(scope).attr("itemid");
+  const itemid = attr(scope, "itemid");
 
   if (itemid) {
     obj["@id"] = itemid;
   }
 
   const props: Element[] = [];
-  collectProps($, scope, props);
+  collectProps(scope, props);
 
   for (const el of props) {
-    const names = ($(el).attr("itemprop") ?? "").split(/\s+/u).filter(Boolean);
+    const names = (attr(el, "itemprop") ?? "").split(/\s+/u).filter(Boolean);
 
-    const value = $(el).is("[itemscope]")
-      ? microdataObject($, el)
-      : microdataValue($, el);
+    const value = hasAttr(el, "itemscope")
+      ? microdataObject(el)
+      : microdataValue(el);
 
     for (const name of names) {
       const existing = obj[name];
@@ -226,40 +233,41 @@ const microdataObject = ($: CheerioAPI, scope: Element): JsonObject => {
   return obj;
 };
 
-const extractMicrodata = ($: CheerioAPI): StructuredDataItem[] => {
+const extractMicrodata = (doc: Document): StructuredDataItem[] => {
   const items: StructuredDataItem[] = [];
-  $("[itemscope]").each((_, el) => {
+
+  for (const el of queryAll(doc, "[itemscope]")) {
     // Top-level scopes only: nested scopes become property values.
-    if ($(el).parents("[itemscope]").length > 0) {
-      return;
+    if (hasItemscopeAncestor(el)) {
+      continue;
     }
 
-    const data = microdataObject($, el);
+    const data = microdataObject(el);
     items.push({
       source: "microdata",
       types: typesOf(data["@type"]),
       context: contextString(data["@context"]),
       data,
     });
-  });
+  }
 
   return items;
 };
 
 export const extractStructuredData = (
-  $: CheerioAPI
+  doc: Document
 ): StructuredDataExtraction => {
   const items: StructuredDataItem[] = [];
   const errors: StructuredDataError[] = [];
 
-  $("script[type]").each((_, el) => {
-    const type = ($(el).attr("type") ?? "").trim().toLowerCase();
+  for (const el of queryAll(doc, "script[type]")) {
+    const type = (attr(el, "type") ?? "").trim().toLowerCase();
 
     if (type !== "application/ld+json") {
-      return;
+      continue;
     }
 
-    const raw = $(el).text().trim();
+    const raw = text(el).trim();
 
     if (!raw) {
       errors.push({
@@ -268,7 +276,7 @@ export const extractStructuredData = (
         snippet: "",
       });
 
-      return;
+      continue;
     }
 
     let parsed: JsonValue;
@@ -282,15 +290,15 @@ export const extractStructuredData = (
         snippet: raw.slice(0, 200),
       });
 
-      return;
+      continue;
     }
 
     for (const node of flattenJsonLd(parsed, null)) {
       items.push(node);
     }
-  });
+  }
 
-  for (const item of extractMicrodata($)) {
+  for (const item of extractMicrodata(doc)) {
     items.push(item);
   }
 
