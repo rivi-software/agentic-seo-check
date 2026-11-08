@@ -1,0 +1,42 @@
+# agentic-seo-check: agent instructions
+
+agentic-seo-check is an SEO audit for coding agents, published as `@rivi-software/agentic-seo-check`: one core (`src/core/`) behind a CLI (`src/cli.ts`, the `agentic-seo-check` command), an MCP server (`src/mcp.ts`, started by `src/mcp-bin.ts` or `agentic-seo-check mcp`) and a library (`src/index.ts`). It audits a URL, a crawl of a site, a directory of built HTML, or an HTML string, and returns findings with a rule id, severity, message, recommendation, CSS selector and evidence. The README covers what it checks and the interfaces; [CONTRIBUTING.md](CONTRIBUTING.md) the process; `skills/seo-audit/SKILL.md` is the skill that teaches other agents to use the tool. Write plain English in names, comments and docs; a comment says why.
+
+## Commands
+
+- `pnpm install`, then `pnpm run verify`: what CI runs, in order: `format:check` (Oxfmt), `lint` (Oxlint), `check` (`tsc` over `src/`, `test/`, `scripts/` and the configs), `test` (Vitest), `build` (`tsc -p tsconfig.build.json`, `src/` to `dist/`) and `check:package` (`scripts/check-package.ts`: packs the package, runs arethetypeswrong on it, installs the tarball in a clean project, imports it and runs both commands).
+- `pnpm run fix` is Ultracite's fix (Oxlint's autofixes, then Oxfmt). Claude Code's PostToolUse hook (`.claude/settings.json`) runs it on each file you write and answers what is left, and lefthook runs it on staged files before a commit. Fix what it reports; do not turn a rule off in `oxlint.config.ts` to get past it.
+- `pnpm run dev <args>` runs the CLI from source (`pnpm run dev audit https://example.com`); `pnpm run mcp` runs the MCP server from source. `pnpm run build` then `node dist/cli.js` runs the built one, which is what the repository's `.mcp.json` starts.
+- `pnpm changeset` adds a changeset for a change users notice. The release workflow does the rest ([CONTRIBUTING.md](CONTRIBUTING.md#changes-and-releases)); never bump `version` in `package.json` by hand.
+
+## Layout
+
+- `src/core/audit.ts` is the entry for every target: `auditTarget` decides between a URL, a crawl, a directory, a file and stdin; `auditUrl`, `auditSite`, `auditDirectory` and `auditHtml` do the work and `compactAudit` trims the result for agents. `crawl.ts` crawls breadth-first, `static.ts` scans a build directory, `fetch.ts` fetches with a manual redirect walk, a body cap and a timeout, `robots.ts` and `sitemap.ts` read those files, `render.ts` and `lighthouse.ts` drive a browser.
+- `src/core/html/extract.ts` turns HTML into an `ExtractedPage` once (parse5 for WHATWG parsing, css-select for queries, through the small helpers in `dom.ts`); rules read that, never the raw HTML. `structured-data.ts` reads JSON-LD and microdata, `text.ts` the visible text and readability.
+- Page rules are in `src/core/rules/`, one file per category, each made with `defineRule(meta, check)` from `rule.ts` and listed in `rules/index.ts`. Rules that need more than one page are in `site-rules.ts` (crawl and directory), `render-rules.ts` (`--render`) and `performance-rules.ts` (`--lighthouse`); their metadata is listed in `ALL_RULES` too, so `agentic-seo-check rules` and `seo_list_rules` show every rule.
+- `src/core/types.ts` is the shape of an audit (`PageAudit`, `SiteAudit`, `Finding`, `RuleMeta`) and the default thresholds. `score.ts` scores, `summary.ts` builds `summary`, `report/markdown.ts` renders the Markdown report.
+- `src/version.ts` reads `version` from `package.json` at run time, for `--version`, the MCP server's version and the User-Agent.
+- Tests are in `test/`: `test/fixtures/good-page.html` and `bad-page.html`, and `test/helpers/fixture-server.ts`, a local HTTP server that serves a small site with a sitemap, redirects and broken links for the crawl tests. `test/mcp.test.ts` drives the MCP server through the SDK's client.
+
+## What the tool promises
+
+- **The output is a contract.** A rule's id, severity, message and recommendation, the MCP tools' names and input schemas, the CLI's flags and exit codes (`0` ok, `1` findings at or above `--fail-on`, `2` usage or runtime error), and the audit JSON (`schemaVersion: 1`) are what agents and CI depend on. A new rule, option or field is a `minor` changeset; a rename, a removal or a change in meaning is breaking, and needs a maintainer's agreement in an issue first.
+- **The order of an object's keys is the order of the JSON.** `eslint/sort-keys` is off for that reason: an audit starts with `schemaVersion`, `kind`, `url` and `score`, a finding with `rule` and `severity`. Keep new keys where a reader expects them.
+- **A finding names a fix.** A rule's `recommendation` says what to change, and `docs` links to the search engine's own documentation where there is one. Evidence lists go through `cap()`, so a page with 5,000 images does not make a 5 MB finding.
+- **False positives cost the most.** An agent fixes what the tool reports, so a rule that fires on a valid page makes work nobody needed. A new or changed rule gets a test that it fires on a bad page and stays quiet on `good-page.html`.
+- **The MCP server's stdout carries JSON-RPC only.** Progress and logs go to stderr in the CLI; the MCP server logs nothing to stdout. The tools are read-only and say so in their annotations.
+- **Playwright, Lighthouse and chrome-launcher are optional peers.** They load through a dynamic `import()` behind `--render`/`--lighthouse` only, and fail with `RenderUnavailableError`/`LighthouseUnavailableError`, which the audit turns into a finding. Never import them statically, or from a module the package entry imports eagerly; `check:package` installs the tarball without them.
+- **Every page is untrusted.** Pages, headers, robots.txt and sitemaps are written by someone else. Regular expressions run on page text must not backtrack on long input, reads are capped (`maxBodyBytes`, sitemap limits, `maxPages`, `maxLinkChecks`), and nothing from a page becomes a path, a command or code. Text from a page appears in findings on purpose; SECURITY.md tells users to treat a report as untrusted data.
+
+## Gotchas
+
+- Imports name the file the build emits: `./audit.js` for `src/core/audit.ts`. Node and the declaration files need that name; Vitest and tsx resolve it to the source.
+- `src/version.ts` reads `../package.json` relative to its own file, which is one level above both `src/` and `dist/`. Keep `version.ts` directly under `src/`.
+- Playwright wants the Chromium build that matches its version. When it is missing, `render.ts` falls back to an installed Google Chrome or Edge (`channel: "chrome"`/`"msedge"`). The tests never launch a browser; check `--render` and `--lighthouse` by hand against a real page when you change them.
+- `robots-parser` is CommonJS and loads through `createRequire`.
+- pnpm 12 blocks a dependency's build script unless `pnpm-workspace.yaml` lists it under `allowBuilds`. `.npmrc` sets `auto-install-peers=false`, so the optional peers are dev dependencies here and never installed for users.
+- The Markdown report and the CLI's `--help` end with a RIVI Software line; keep it one line, and keep it out of the JSON.
+
+## Before you finish
+
+Run `pnpm run verify`. When what the tool does changes, update the README, `skills/seo-audit/SKILL.md` if an agent would use it differently, and add a changeset.

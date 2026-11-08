@@ -1,8 +1,42 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
+<p align="center">
+  <a href="https://rivi.software">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rivi-software/agentic-seo-check/main/assets/rivi-agentic-seo-check-on-dark.svg">
+      <img src="https://raw.githubusercontent.com/rivi-software/agentic-seo-check/main/assets/rivi-agentic-seo-check.svg" alt="RIVI agentic-seo-check" width="545">
+    </picture>
+  </a>
+</p>
 
-# agentic-seo-check
+<p align="center">
+  SEO analysis built for coding agents: a CLI and an MCP server that audit URLs,<br>
+  static build output or raw HTML, and return findings an agent can act on.<br>
+  Open source, from <a href="https://rivi.software">RIVI Software</a>.
+</p>
 
-SEO analysis built for coding agents. One core, two interfaces:
+<p align="center">
+  <a href="https://github.com/rivi-software/agentic-seo-check/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/rivi-software/agentic-seo-check/ci.yml?branch=main&label=CI" alt="CI status"></a>
+  <a href="https://www.npmjs.com/package/@rivi-software/agentic-seo-check"><img src="https://img.shields.io/npm/v/@rivi-software/agentic-seo-check?color=0b6b3a" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/@rivi-software/agentic-seo-check"><img src="https://img.shields.io/npm/dm/@rivi-software/agentic-seo-check?color=0b6b3a" alt="Monthly npm downloads"></a>
+  <a href="https://github.com/rivi-software/agentic-seo-check/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b6b3a" alt="MIT License"></a>
+</p>
+
+<p align="center">
+  <a href="#install">Install</a>
+  ·
+  <a href="#cli">CLI</a>
+  ·
+  <a href="#mcp-server">MCP server</a>
+  ·
+  <a href="#agent-skill">Agent skill</a>
+  ·
+  <a href="https://github.com/rivi-software/agentic-seo-check/blob/main/CONTRIBUTING.md">Contributing</a>
+  ·
+  <a href="https://rivi.software">rivi.software</a>
+</p>
+
+<br>
+
+agentic-seo-check is one core with two interfaces:
 
 - **CLI** `agentic-seo-check` with JSON (default when piped) or Markdown output and CI-friendly exit codes.
 - **MCP server** exposing five tools for Claude Code, Cursor, Codex and any other MCP client.
@@ -140,22 +174,38 @@ const site = await auditSite('https://www.example.com/', { maxPages: 100 });
 console.log(renderMarkdown(site));
 ```
 
-## Development
-
-```bash
-pnpm test        # vitest: extractor, rules, crawler against a local fixture server, directory scan, MCP client
-pnpm typecheck
-pnpm dev audit https://example.com   # run from source with tsx
-```
-
 ## Scope of this first version
 
 - Crawls are breadth-first, same-site, HTML only, and obey robots.txt by default. `--render`/`--lighthouse` apply to the start page only during a crawl.
 - Scores are indicative. Thresholds (title 30-60 chars, description 70-160, thin content 300 words, slow response 2 s, deep page depth 3) are configurable through the library `thresholds` option.
 - Not included yet: gzip sitemaps, rendering every page in a crawl, field (CrUX) data, rank tracking, backlink data, AI-generated copy suggestions.
 
+## Contributing
+
+Bug reports, wrong findings, new rules and fixes are welcome from anyone. With Node 24 and pnpm 12:
+
+```bash
+pnpm install
+pnpm run verify
+```
+
+`verify` runs what CI runs: format, lint, typecheck, tests, build and a check of the packed package. `pnpm run dev audit https://example.com` runs the CLI from source. [CONTRIBUTING.md](https://github.com/rivi-software/agentic-seo-check/blob/main/CONTRIBUTING.md) covers proposing a change, what a pull request needs and how releases reach npm, and [AGENTS.md](https://github.com/rivi-software/agentic-seo-check/blob/main/AGENTS.md) is the brief for coding agents working on the tool itself. Everyone who takes part follows the [code of conduct](https://github.com/rivi-software/agentic-seo-check/blob/main/CODE_OF_CONDUCT.md). [SECURITY.md](https://github.com/rivi-software/agentic-seo-check/blob/main/SECURITY.md) says how to report a vulnerability privately.
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Licensed under the [MIT License](https://github.com/rivi-software/agentic-seo-check/blob/main/LICENSE). Copyright © 2026 RIVI Software.
 
-Created in [T3 Code](https://t3.codes).
+<br>
+
+<p align="center">
+  <a href="https://rivi.software">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rivi-software/agentic-seo-check/main/assets/rivi-mark-on-dark.svg">
+      <img src="https://raw.githubusercontent.com/rivi-software/agentic-seo-check/main/assets/rivi-mark.svg" alt="RIVI Software" width="36" height="36">
+    </picture>
+  </a>
+</p>
+
+<p align="center">
+  <sub>RIVI agentic-seo-check is made by <a href="https://rivi.software">RIVI Software</a>, which builds software for radio stations. Created in <a href="https://t3.codes">T3 Code</a>.</sub>
+</p>
