@@ -6,7 +6,7 @@ import vitest from "ultracite/oxlint/vitest";
 export default defineConfig({
   env: core.env,
   extends: [core, vitest, antiSlop],
-  ignorePatterns: [...core.ignorePatterns, "test/fixtures/**"],
+  ignorePatterns: [...(core.ignorePatterns ?? []), "test/fixtures/**"],
   rules: {
     // The order of an object's keys is the order of the JSON an audit prints, which agents and
     // people read top down: schemaVersion and kind first, a finding's rule and severity before its
