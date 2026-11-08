@@ -1,6 +1,7 @@
+import { VERSION } from '../version.js';
 import type { RedirectHop, ResponseInfo } from './types.js';
 
-export const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; agentic-seo-check/0.1; +https://github.com/rivi-software/agentic-seo-check)';
+export const DEFAULT_USER_AGENT = `Mozilla/5.0 (compatible; agentic-seo-check/${VERSION}; +https://github.com/rivi-software/agentic-seo-check)`;
 
 const KEPT_HEADERS = ['content-type', 'x-robots-tag', 'link', 'content-language', 'cache-control', 'last-modified', 'location', 'content-length', 'vary'];
 
