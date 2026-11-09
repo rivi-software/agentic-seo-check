@@ -1243,6 +1243,104 @@ describe("site.duplicate-content", () => {
   });
 });
 
+/** A live page that names itself as canonical, with `title` as its title, H1 and description. */
+const titled = (url: string, title: string, head = "", body = "<p>x</p>") => ({
+  ...record(url),
+  page: extractPage(html(title, body, head, url), { url }),
+});
+
+describe("duplicate titles, descriptions and H1s of language versions", () => {
+  const contact = `${ORIGIN}/contact`;
+  const nlContact = `${ORIGIN}/nl/contact`;
+  const contactUs = `${ORIGIN}/contact-us`;
+  const contactLinks = `${alt("en", "contact")}${alt("nl", "nl/contact")}${alt("x-default", "contact")}`;
+  const openSource = `${ORIGIN}/open-source`;
+  const nlOpenSource = `${ORIGIN}/nl/open-source`;
+  const help = `${ORIGIN}/help`;
+  const support = `${ORIGIN}/support`;
+
+  const findings = runSiteRules(
+    context({
+      pages: [
+        // Translations whose title is the same word in both languages, and whose text is not.
+        titled(contact, "Contact", contactLinks, `<p>${words("contact")}</p>`),
+        titled(
+          nlContact,
+          "Contact",
+          contactLinks,
+          `<p>${words("contact")}</p>`
+        ),
+        // Not a version of the contact page: it shares the title with both.
+        titled(contactUs, "Contact"),
+        // en and de do not name each other, but both are versions of the nl page.
+        titled(
+          `${ORIGIN}/authors/ada`,
+          "Ada Lovelace",
+          `${alt("en", "authors/ada")}${alt("nl", "nl/authors/ada")}`
+        ),
+        titled(
+          `${ORIGIN}/nl/authors/ada`,
+          "Ada Lovelace",
+          `${alt("en", "authors/ada")}${alt("nl", "nl/authors/ada")}${alt("de", "de/authors/ada")}`
+        ),
+        titled(
+          `${ORIGIN}/de/authors/ada`,
+          "Ada Lovelace",
+          `${alt("nl", "nl/authors/ada")}${alt("de", "de/authors/ada")}`
+        ),
+        // The nl page does not link back, so Google ignores the pair.
+        titled(
+          openSource,
+          "Open source",
+          `${alt("en", "open-source")}${alt("nl", "nl/open-source")}`
+        ),
+        titled(nlOpenSource, "Open source", alt("nl", "nl/open-source")),
+        // Both call each other en: one language twice, not two versions.
+        titled(help, "Help", `${alt("en", "help")}${alt("en", "support")}`),
+        titled(support, "Help", `${alt("en", "help")}${alt("en", "support")}`),
+      ],
+    })
+  );
+
+  const groupsOf = (rule: string) =>
+    findings.find((f) => f.rule === rule)?.evidence?.["groups"];
+
+  it("does not group a page with its language versions", () => {
+    const groups = [
+      { pages: [contact, nlContact, contactUs], count: 3 },
+      { pages: [openSource, nlOpenSource], count: 2 },
+      { pages: [help, support], count: 2 },
+    ];
+
+    expect(
+      findings.find((f) => f.rule === "site.duplicate-titles")?.message
+    ).toBe("3 title(s) are shared by 7 pages.");
+    expect(groupsOf("site.duplicate-titles")).toStrictEqual([
+      { value: "Contact", ...groups[0] },
+      { value: "Open source", ...groups[1] },
+      { value: "Help", ...groups[2] },
+    ]);
+    expect(groupsOf("site.duplicate-h1")).toMatchObject(groups);
+    expect(groupsOf("site.duplicate-descriptions")).toMatchObject(groups);
+  });
+
+  it("retitles the pages that are no version of the first, and not the versions", () => {
+    expect(fixOf(findings, "site.duplicate-titles")).toMatchObject([
+      { url: contactUs, current: "<title>Contact</title>" },
+      { url: nlOpenSource, current: "<title>Open source</title>" },
+      { url: support, current: "<title>Help</title>" },
+    ]);
+  });
+
+  it("still reports language versions whose text is left untranslated", () => {
+    expect(
+      findings.find((f) => f.rule === "site.duplicate-content")?.evidence?.[
+        "groups"
+      ]
+    ).toStrictEqual([{ pages: [contact, nlContact], similarity: 1 }]);
+  });
+});
+
 describe("robots.txt line endings", () => {
   it("numbers lines as robots-parser does when a lone CR ends them", () => {
     const text = "User-agent: *\rAllow: /public/\rDisallow: /\r";
