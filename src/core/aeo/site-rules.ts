@@ -52,7 +52,7 @@ export const AEO_SITE_RULES: RuleMeta[] = [
     "aeo.robots-blocks-search-crawler",
     "error",
     "robots.txt blocks a search crawler whose index AI answers draw on: Googlebot (AI Overviews, AI Mode), Bingbot (Copilot) or Applebot (Siri, Spotlight).",
-    "Allow these crawlers in robots.txt: remove the Disallow lines that match the audited pages in their groups, or in `User-agent: *` when they have no group of their own.",
+    "Allow these crawlers in robots.txt: remove the Disallow lines that match the audited pages in their groups, or in `User-agent: *` when they have no group of their own. Applebot follows the Googlebot group when no group names Applebot.",
     "https://developers.google.com/search/docs/appearance/ai-features"
   ),
   meta(
@@ -192,7 +192,7 @@ const robotsFindings = (
 
     const where = (b: AiBotAccess) =>
       b.allowed
-        ? `${b.blockedPages} of ${pageCount} audited pages`
+        ? `${b.blockedPages} of ${pageCount} audited pages, which other crawlers may fetch`
         : "the audited page";
 
     out.push({

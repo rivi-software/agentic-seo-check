@@ -393,11 +393,18 @@ export interface AiBotAccess {
   operator: string;
   purpose: AiBotPurpose;
   usedFor: string;
-  /** "named" when a robots.txt group names the bot, "wildcard" when only `User-agent: *` applies, "none" when nothing does. */
-  robotsGroup: "named" | "wildcard" | "none";
+  /**
+   * The robots.txt group the bot follows: "named" when a group names it, "googlebot" for Applebot
+   * following the Googlebot group (Apple's documented fallback), "wildcard" when only
+   * `User-agent: *` applies, "none" when nothing does.
+   */
+  robotsGroup: "named" | "googlebot" | "wildcard" | "none";
   /** robots.txt lets the bot fetch the audited page (the start page of a crawl or directory). */
   allowed: boolean;
-  /** Audited pages robots.txt keeps the bot from. */
+  /**
+   * Audited pages robots.txt keeps this bot from while `User-agent: *` lets crawlers fetch them.
+   * Paths disallowed for every crawler are left to the SEO audit's `site.robots-blocked-pages`.
+   */
   blockedPages: number;
   probe?: BotProbe;
 }

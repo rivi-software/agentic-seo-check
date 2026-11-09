@@ -323,9 +323,14 @@ export const crawlerAccess = (
   const bots = AI_BOTS.map((bot): AiBotAccess => {
     const token = productToken(bot.name);
     let robotsGroup: AiBotAccess["robotsGroup"] = "none";
+    let agent = bot.name;
 
     if (groups?.named.has(token)) {
       robotsGroup = "named";
+    } else if (token === "applebot" && groups?.named.has("googlebot")) {
+      // Apple: without an Applebot group, Applebot follows the Googlebot group.
+      robotsGroup = "googlebot";
+      agent = "Googlebot";
     } else if (groups?.named.has("*")) {
       robotsGroup = "wildcard";
     }
@@ -348,9 +353,11 @@ export const crawlerAccess = (
       purpose: bot.purpose,
       usedFor: bot.usedFor,
       robotsGroup,
-      allowed: allows ? allows(startUrl, bot.name) : true,
+      allowed: allows ? allows(startUrl, agent) : true,
+      // A path `User-agent: *` keeps every crawler from is a site-wide choice, which the SEO
+      // audit reports; only a page this bot may not fetch while other crawlers may counts here.
       blockedPages: allows
-        ? urls.filter((u) => !allows(u, bot.name)).length
+        ? urls.filter((u) => !allows(u, agent) && allows(u, "*")).length
         : 0,
     };
   });

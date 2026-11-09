@@ -374,6 +374,74 @@ describe("AI crawler access", () => {
     ]);
   });
 
+  it("leaves a path that User-agent: * disallows for every crawler to the SEO audit", () => {
+    const text = "User-agent: *\nDisallow: /admin/\n";
+
+    const site = crawlerAccess(
+      robotsAt(text),
+      text,
+      "https://www.example.com/",
+      ["https://www.example.com/", "https://www.example.com/admin/"]
+    );
+
+    expect(
+      site.bots.every((b) => b.allowed && b.blockedPages === 0)
+    ).toBeTruthy();
+    expect(siteRules(site, 2)).toStrictEqual([]);
+  });
+
+  it("matches Applebot against the Googlebot group when no group names it", () => {
+    const onlyGoogle =
+      "User-agent: Googlebot\nAllow: /\n\nUser-agent: *\nDisallow: /\n";
+
+    const allowed = crawlerAccess(
+      robotsAt(onlyGoogle),
+      onlyGoogle,
+      "https://www.example.com/",
+      []
+    );
+
+    expect(botIn(allowed, "Applebot")).toMatchObject({
+      robotsGroup: "googlebot",
+      allowed: true,
+    });
+
+    const privateForGoogle =
+      "User-agent: Googlebot\nDisallow: /private/\n\nUser-agent: *\nAllow: /\n";
+
+    const partial = crawlerAccess(
+      robotsAt(privateForGoogle),
+      privateForGoogle,
+      "https://www.example.com/",
+      ["https://www.example.com/", "https://www.example.com/private/a"]
+    );
+
+    expect(botIn(partial, "Applebot")).toMatchObject({
+      robotsGroup: "googlebot",
+      allowed: true,
+      blockedPages: 1,
+    });
+  });
+
+  it("reports only the search crawlers robots.txt really blocks", () => {
+    const onlyGoogle =
+      "User-agent: Googlebot\nAllow: /\n\nUser-agent: *\nDisallow: /\n";
+
+    const [search] = aeoSiteFindings({
+      crawlers: crawlerAccess(
+        robotsAt(onlyGoogle),
+        onlyGoogle,
+        "https://www.example.com/",
+        []
+      ),
+      llmsTxt: null,
+      pageCount: 1,
+    });
+
+    expect(search?.rule).toBe("aeo.robots-blocks-search-crawler");
+    expect(search?.message).toBe("robots.txt blocks Bingbot.");
+  });
+
   it("does not read User-agent: * as the shared training preference", () => {
     const text = "User-agent: *\nDisallow: /\n";
 
@@ -625,6 +693,31 @@ describe("AEO audits of build output", () => {
     expect(
       JSON.stringify(findingOf(audit, "aeo.robots-blocks-answer-bot")?.evidence)
     ).toContain("1 of 2 audited pages");
+  });
+
+  it("reports no AI bot block for a file every crawler is kept from", async () => {
+    const admin = await mkdtemp(path.join(os.tmpdir(), "agentic-seo-aeo-"));
+
+    try {
+      await mkdir(path.join(admin, "admin"), { recursive: true });
+      await writeFile(path.join(admin, "index.html"), goodHtml);
+      await writeFile(path.join(admin, "admin", "index.html"), goodHtml);
+      await writeFile(
+        path.join(admin, "robots.txt"),
+        "User-agent: *\nDisallow: /admin/\n"
+      );
+
+      const result = await auditAeoDirectory(admin, {
+        baseUrl: "https://www.example.com/",
+      });
+
+      expect(
+        rulesOf(result.findings).filter((r) => r.startsWith("aeo.robots-"))
+      ).toStrictEqual([]);
+      expect(result.summary.searchCrawlersBlocked).toStrictEqual([]);
+    } finally {
+      await rm(admin, { recursive: true, force: true });
+    }
   });
 
   it("compacts without changing the score", () => {
