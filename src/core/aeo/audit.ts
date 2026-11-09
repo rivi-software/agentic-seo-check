@@ -29,6 +29,7 @@ import {
   runPageRules,
   sortFindings,
 } from "../rules/index.js";
+import { robotsDirectives } from "../rules/indexing.js";
 import { pageScore, siteScore } from "../score.js";
 import type { PageRecord } from "../site-rules.js";
 import { scanDirectory } from "../static.js";
@@ -441,6 +442,25 @@ const recheck = (
   });
 };
 
+/** A build's error page (404.html, 500.html, 404/index.html, _not-found.html): never a page to list. */
+const ERROR_PAGE_FILE =
+  /(?:^|[/\\])(?:[45]\d{2}|_?not-found|_error)(?:[/\\]index)?\.html?$/iu;
+
+/**
+ * The pages an llms.txt fix may link to: those that answered below 400, are not set to noindex,
+ * and are not a build's error page. A crawl records the HTML of a 404 or 500 page too.
+ */
+const listablePages = (
+  records: PageRecord[]
+): { url: string; title: string | null }[] =>
+  records.flatMap((r) =>
+    (r.response?.status ?? 200) < 400 &&
+    !robotsDirectives(r.page, r.response).noindex &&
+    !(r.file && ERROR_PAGE_FILE.test(r.file))
+      ? [{ url: r.url, title: r.page.title }]
+      : []
+  );
+
 const buildAudit = async (
   c: Collected,
   options: AeoOptions
@@ -468,6 +488,7 @@ const buildAudit = async (
     aeoSiteFindings({
       crawlers,
       llmsTxt: c.llmsTxt,
+      pages: listablePages(c.records),
       pageCount: pages.length,
       probeSkipped,
     }),

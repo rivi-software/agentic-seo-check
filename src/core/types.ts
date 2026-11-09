@@ -237,8 +237,12 @@ export interface QuestionHeading {
 
 /** What an answer engine needs from a page beyond classic SEO, read once by the extractor. */
 export interface AnswerSignals {
-  /** Content of each robots meta tag by name (robots, googlebot, bingbot, ...), lower-cased. */
-  robotsMeta: { name: string; content: string }[];
+  /**
+   * Content of each robots meta tag by name (robots, googlebot, bingbot, ...), lower-cased. `index`
+   * is the tag's place among the robots meta tags, empty ones included: its quote is
+   * `markup.metaRobots[index]`.
+   */
+  robotsMeta: { name: string; content: string; index: number }[];
   questions: QuestionHeading[];
   /** Lists with two or more items outside navigation, header, footer and aside. */
   lists: number;
@@ -248,8 +252,12 @@ export interface AnswerSignals {
   nosnippetElements: number;
   nosnippetWords: number;
   nosnippetSelectors: string[];
+  /** The start tag of each element in `nosnippetSelectors`, as the HTML writes it; empty when the HTML was not given. */
+  nosnippetTags: string[];
   /** Selector of an empty JavaScript app root (`#root`, `#__next`, ...), when the page has one. */
   emptyAppRoot: string | null;
+  /** The empty app root element as the HTML writes it (`<div id="root"></div>`), when the HTML was given. */
+  emptyAppRootTag: string | null;
   /** A `<noscript>` element mentions JavaScript ("please enable JavaScript"). */
   noscriptAsksForJavaScript: boolean;
   /** `<time>` elements in the body. */

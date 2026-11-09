@@ -26,8 +26,11 @@ export interface Rule {
 export interface FindingExtras {
   severity?: Severity;
   recommendation?: string;
-  /** The edits that resolve this finding here. */
-  fix?: FixEdit[];
+  /**
+   * The edits that resolve this finding here. Required, so no rule can report a problem without
+   * its fix; an empty list only for a finding about the audit itself rather than the site.
+   */
+  fix: FixEdit[];
   /**
    * What this finding is about, when a rule can report more than one per page (a JSON-LD type, a
    * sitemap URL). It goes into the finding's id only, so two findings of one rule keep apart. It
@@ -51,7 +54,7 @@ export const findingKey = (f: Finding): string | undefined =>
 export const finding = (
   meta: RuleMeta,
   message: string,
-  extras: FindingExtras = {}
+  extras: FindingExtras
 ): Finding => {
   const f: Finding = {
     rule: meta.id,
@@ -61,7 +64,7 @@ export const finding = (
     recommendation: extras.recommendation ?? meta.recommendation,
   };
 
-  if (extras.fix?.length) {
+  if (extras.fix.length) {
     f.fix = cap(extras.fix);
   }
 
@@ -88,7 +91,7 @@ export const defineRule = (
   meta: RuleMeta,
   check: (
     ctx: PageContext,
-    make: (message: string, extras?: FindingExtras) => Finding
+    make: (message: string, extras: FindingExtras) => Finding
   ) => Finding[] | Finding | null | undefined
 ): Rule => ({
   meta,
