@@ -19,6 +19,7 @@ import { metaRules } from "./meta.js";
 import { responseRules } from "./response.js";
 import type { PageContext, Rule } from "./rule.js";
 import { socialRules } from "./social.js";
+import { structuredDataValueRules } from "./structured-data-values.js";
 import { structuredDataRules } from "./structured-data.js";
 import { titleRules } from "./title.js";
 import { urlRules } from "./urls.js";
@@ -41,6 +42,7 @@ export const PAGE_RULES: Rule[] = [
   ...loadingRules,
   ...hreflangRules,
   ...structuredDataRules,
+  ...structuredDataValueRules,
   ...contentRules,
   ...keywordRules,
   ...responseRules,

@@ -2,6 +2,7 @@ import { isJsonObject, isString, typesOf } from "../html/structured-data.js";
 import type { JsonObject, JsonValue } from "../html/structured-data.js";
 import type { StructuredDataItem } from "../types.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
+import { RETIRED_RICH_RESULTS } from "./structured-data-values.js";
 
 interface SchemaSpec {
   required: string[];
@@ -50,7 +51,7 @@ export const SCHEMA_SPECS: Record<string, SchemaSpec> = {
   WebSite: {
     required: ["name", "url"],
     recommended: [],
-    docs: `${G}sitelinks-searchbox`,
+    docs: "https://developers.google.com/search/docs/appearance/site-names",
   },
   WebPage: { required: [], recommended: ["name"] },
   BreadcrumbList: {
@@ -69,12 +70,14 @@ export const SCHEMA_SPECS: Record<string, SchemaSpec> = {
     docs: `${G}carousel`,
   },
   FAQPage: { required: ["mainEntity"], recommended: [], docs: `${G}faqpage` },
+  // A Q&A page's question may have only suggested answers.
   Question: {
-    required: ["name", "acceptedAnswer"],
+    required: ["name"],
     recommended: [],
-    docs: `${G}faqpage`,
+    oneOf: [["acceptedAnswer", "suggestedAnswer"]],
+    docs: `${G}qapage`,
   },
-  Answer: { required: ["text"], recommended: [], docs: `${G}faqpage` },
+  Answer: { required: ["text"], recommended: [], docs: `${G}qapage` },
   LocalBusiness: {
     required: ["name", "address"],
     recommended: [
@@ -253,6 +256,18 @@ const missingProperties = (obj: JsonObject, spec: SchemaSpec) => {
   return { required, recommended };
 };
 
+/** Types that exist only as parts of a retired rich result (FAQ and How-to answers and steps). */
+const RETIRED_PART_TYPES = new Set([
+  "Question",
+  "Answer",
+  "HowToStep",
+  "HowToSection",
+  "HowToSupply",
+  "HowToTool",
+  "HowToDirection",
+  "HowToTip",
+]);
+
 /** Walk one structured-data item (and nested typed objects) collecting spec violations. */
 export const validateItem = (item: StructuredDataItem): ItemValidation => {
   const required: Issue[] = [];
@@ -261,10 +276,38 @@ export const validateItem = (item: StructuredDataItem): ItemValidation => {
   const unknownTypes: string[] = [];
   const visited = new Set<JsonObject | JsonValue[]>();
 
+  const checkSpecs = (node: JsonObject, types: string[], path: string) => {
+    for (const type of types) {
+      const spec = SCHEMA_SPECS[type];
+
+      if (!spec) {
+        unknownTypes.push(type);
+        continue;
+      }
+
+      const missing = missingProperties(node, spec);
+
+      // A review nested in a Recipe or Product reviews that item; only a standalone one names it.
+      if (type === "Review" && path !== "") {
+        missing.required = missing.required.filter((p) => p !== "itemReviewed");
+      }
+
+      if (missing.required.length) {
+        required.push({ type, missing: missing.required, path });
+      }
+
+      if (missing.recommended.length) {
+        recommended.push({ type, missing: missing.recommended, path });
+      }
+    }
+  };
+
+  // Below a retired rich result type, missing properties no longer cost anything in Google.
   const walk = (
     node: JsonValue | undefined,
     path: string,
-    depth: number
+    depth: number,
+    retired = false
   ): void => {
     if (
       depth > 6 ||
@@ -278,30 +321,31 @@ export const validateItem = (item: StructuredDataItem): ItemValidation => {
 
     if (Array.isArray(node)) {
       for (const [i, n] of node.entries()) {
-        walk(n, `${path}[${i}]`, depth);
+        walk(n, `${path}[${i}]`, depth, retired);
       }
 
       return;
     }
 
-    for (const type of typesOf(node["@type"])) {
-      const spec = SCHEMA_SPECS[type];
+    const types = typesOf(node["@type"]);
 
-      if (!spec) {
-        unknownTypes.push(type);
-        continue;
-      }
+    // A node co-typed ["WebPage", "FAQPage"] still has its WebPage checked; below a retired type,
+    // only the types that exist for it (Question, HowToStep, ...) go unchecked.
+    checkSpecs(
+      node,
+      types.filter(
+        (t) =>
+          !RETIRED_RICH_RESULTS.has(t) &&
+          !(retired && RETIRED_PART_TYPES.has(t))
+      ),
+      path
+    );
 
-      const missing = missingProperties(node, spec);
-
-      if (missing.required.length) {
-        required.push({ type, missing: missing.required, path });
-      }
-
-      if (missing.recommended.length) {
-        recommended.push({ type, missing: missing.recommended, path });
-      }
-    }
+    // Untyped objects (every() holds for no types) and the retired types' own parts pass the skip
+    // down; a live type such as a BreadcrumbList or VideoObject below FAQPage or HowTo is checked.
+    const underRetired =
+      types.some((t) => RETIRED_RICH_RESULTS.has(t)) ||
+      (retired && types.every((t) => RETIRED_PART_TYPES.has(t)));
 
     for (const [key, value] of Object.entries(node)) {
       if (
@@ -313,7 +357,7 @@ export const validateItem = (item: StructuredDataItem): ItemValidation => {
       }
 
       if (Array.isArray(value) || isJsonObject(value)) {
-        walk(value, path ? `${path}.${key}` : key, depth + 1);
+        walk(value, path ? `${path}.${key}` : key, depth + 1, underRetired);
       }
     }
   };
@@ -351,7 +395,7 @@ export const structuredDataRules = [
       severity: "info",
       description: "The page has no structured data (JSON-LD or microdata).",
       recommendation:
-        "Add JSON-LD for the page type (Article, Product, Organization, BreadcrumbList, FAQPage, ...) to qualify for rich results.",
+        "Add JSON-LD for the page type (Article, Product, Organization, BreadcrumbList, Event, Recipe, ...) to qualify for rich results.",
       docs: GOOGLE_DOCS.structuredData,
     },
     ({ page }, make) =>
