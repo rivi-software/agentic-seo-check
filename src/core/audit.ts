@@ -268,7 +268,9 @@ const auditRecord = (
   return audit;
 };
 
-export const rollupIssues = (pages: PageAudit[]): IssueRollup[] => {
+export const rollupIssues = (
+  pages: Pick<PageAudit, "url" | "findings">[]
+): IssueRollup[] => {
   const map = new Map<string, IssueRollup & { urls: Set<string> }>();
 
   for (const page of pages) {
@@ -406,16 +408,6 @@ const applyPageDetail = (site: SiteAudit, options: CrawlOptions): SiteAudit => {
   }
 
   return site;
-};
-
-const readStdin = async (): Promise<string> => {
-  const chunks: Buffer[] = [];
-
-  for await (const chunk of process.stdin) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-
-  return Buffer.concat(chunks).toString("utf-8");
 };
 
 /** Audit an HTML string. `url` is used to resolve links and for display. */
@@ -584,37 +576,35 @@ export const auditDirectory = async (
   return applyPageDetail(site, options);
 };
 
-/**
- * Auto-detect the target type: http(s) URL, directory, .html file, or "-" for stdin.
- * `crawl` forces a site crawl for URLs.
- */
-export const auditTarget = async (
-  target: string,
-  options: CrawlOptions & { crawl?: boolean; stdinHtml?: string } = {}
-): Promise<Audit> => {
-  if (target === "-" || options.stdinHtml !== undefined) {
-    const html = options.stdinHtml ?? (await readStdin());
+export type ResolvedTarget =
+  | { kind: "stdin" }
+  | { kind: "url"; url: string }
+  | { kind: "directory"; path: string }
+  | { kind: "file"; path: string };
 
-    return auditHtml(
-      html,
-      { url: options.baseUrl, source: "html", target: "stdin" },
-      options
-    );
+/**
+ * What a target names: "-" for stdin, an http(s) URL, a bare host such as `example.com/page` or
+ * `localhost:3000`, a directory or a file.
+ */
+export const resolveTarget = async (
+  target: string
+): Promise<ResolvedTarget> => {
+  if (target === "-") {
+    return { kind: "stdin" };
   }
 
   if (isHttpUrl(target)) {
-    return options.crawl
-      ? auditSite(target, options)
-      : auditUrl(target, options);
+    return { kind: "url", url: target };
   }
 
   if (
     /^localhost(?::\d+)?(?:\/|$)/iu.test(target) ||
     /^[\w.-]+\.[a-z]{2,}(?:\/|$)/iu.test(target)
   ) {
-    const url = `http${/^localhost/iu.test(target) ? "" : "s"}://${target}`;
-
-    return options.crawl ? auditSite(url, options) : auditUrl(url, options);
+    return {
+      kind: "url",
+      url: `http${/^localhost/iu.test(target) ? "" : "s"}://${target}`,
+    };
   }
 
   const stat = await fs.stat(target).catch(() => null);
@@ -623,15 +613,64 @@ export const auditTarget = async (
     throw new Error(`Target "${target}" is not a URL, file or directory.`);
   }
 
-  if (stat.isDirectory()) {
-    return auditDirectory(target, options);
+  return stat.isDirectory()
+    ? { kind: "directory", path: target }
+    : { kind: "file", path: target };
+};
+
+/** HTML piped to the process. */
+export const readStdin = async (): Promise<string> => {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
-  return auditFile(target, options);
+  return Buffer.concat(chunks).toString("utf-8");
+};
+
+/**
+ * Auto-detect the target type: http(s) URL, directory, .html file, or "-" for stdin.
+ * `crawl` forces a site crawl for URLs.
+ */
+export const auditTarget = async (
+  target: string,
+  options: CrawlOptions & { crawl?: boolean; stdinHtml?: string } = {}
+): Promise<Audit> => {
+  const resolved: ResolvedTarget =
+    options.stdinHtml === undefined
+      ? await resolveTarget(target)
+      : { kind: "stdin" };
+
+  switch (resolved.kind) {
+    case "stdin": {
+      const html = options.stdinHtml ?? (await readStdin());
+
+      return auditHtml(
+        html,
+        { url: options.baseUrl, source: "html", target: "stdin" },
+        options
+      );
+    }
+
+    case "url": {
+      return options.crawl
+        ? auditSite(resolved.url, options)
+        : auditUrl(resolved.url, options);
+    }
+
+    case "directory": {
+      return auditDirectory(resolved.path, options);
+    }
+
+    default: {
+      return auditFile(resolved.path, options);
+    }
+  }
 };
 
 /** Keeps the first three items of every evidence list. */
-const trimFinding = (f: Finding): Finding => {
+export const trimFinding = (f: Finding): Finding => {
   if (!f.evidence) {
     return f;
   }

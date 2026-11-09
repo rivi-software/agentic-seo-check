@@ -63,6 +63,7 @@ describe("MCP server", () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).toSorted();
     expect(names).toStrictEqual([
+      "seo_aeo_audit",
       "seo_audit_directory",
       "seo_audit_page",
       "seo_crawl_site",
@@ -123,6 +124,43 @@ describe("MCP server", () => {
     const structured = RuleListContent.parse(result.structuredContent);
     expect(structured.count).toBe(1);
     expect(structured.rules[0]?.id).toBe("title.missing");
+  });
+
+  it("runs an AEO audit of inline HTML", async () => {
+    const { client } = await connect();
+
+    const result = await client.callTool({
+      name: "seo_aeo_audit",
+      arguments: {
+        html: '<html><head><meta name="robots" content="nosnippet"></head><body><div id="root"></div></body></html>',
+        baseUrl: "https://a.test/page",
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const structured = PageAuditContent.parse(result.structuredContent);
+    expect(structured.kind).toBe("aeo");
+    expect(structured.findings.map((f) => f.rule)).toStrictEqual([
+      "aeo.nosnippet",
+      "aeo.text-needs-javascript",
+    ]);
+  });
+
+  it("asks for exactly one AEO target", async () => {
+    const { client } = await connect();
+
+    const none = await client.callTool({
+      name: "seo_aeo_audit",
+      arguments: {},
+    });
+
+    const both = await client.callTool({
+      name: "seo_aeo_audit",
+      arguments: { html: "<p>x</p>", dir: "." },
+    });
+
+    expect(none.isError).toBeTruthy();
+    expect(both.isError).toBeTruthy();
   });
 
   it("reports errors as isError results", async () => {

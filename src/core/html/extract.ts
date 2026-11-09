@@ -1,5 +1,3 @@
-import { isTag, isText, hasChildren } from "domhandler";
-
 import type {
   ExtractedPage,
   HeadingInfo,
@@ -8,8 +6,16 @@ import type {
   LinkInfo,
 } from "../types.js";
 import { isSameSite, resolveUrl, hostOf } from "../url.js";
-import { attr, parseDocument, queryAll, queryOne, text } from "./dom.js";
-import type { AnyNode, Document } from "./dom.js";
+import { extractAnswerSignals } from "./answer.js";
+import {
+  attr,
+  parseDocument,
+  queryAll,
+  queryOne,
+  text,
+  visibleText,
+} from "./dom.js";
+import type { Document } from "./dom.js";
 import { extractStructuredData } from "./structured-data.js";
 import { collapseWhitespace, wordCount } from "./text.js";
 
@@ -54,84 +60,6 @@ const detectCharset = (doc: Document): string | null => {
   const match = content?.match(/charset=(?<charset>[\w-]+)/iu);
 
   return match?.groups?.charset ?? null;
-};
-
-/** Elements whose content is never visible page text. */
-const HIDDEN_ELEMENTS = new Set([
-  "script",
-  "style",
-  "noscript",
-  "template",
-  "svg",
-  "iframe",
-  "head",
-]);
-
-/** Elements that break words apart; padded with spaces so adjacent words don't fuse. */
-const BLOCK_ELEMENTS = new Set([
-  "p",
-  "div",
-  "li",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "br",
-  "tr",
-  "td",
-  "th",
-  "section",
-  "article",
-  "header",
-  "footer",
-  "nav",
-  "blockquote",
-  "pre",
-  "dd",
-  "dt",
-  "figcaption",
-]);
-
-const visibleText = (doc: Document): string => {
-  const body = queryOne(doc, "body");
-
-  if (!body) {
-    return "";
-  }
-
-  const parts: string[] = [];
-
-  const walk = (nodes: AnyNode[]): void => {
-    for (const node of nodes) {
-      if (isText(node)) {
-        parts.push(node.data);
-      } else if (isTag(node)) {
-        if (HIDDEN_ELEMENTS.has(node.name)) {
-          continue;
-        }
-
-        const block = BLOCK_ELEMENTS.has(node.name);
-
-        if (block) {
-          parts.push(" ");
-        }
-
-        walk(node.children);
-
-        if (block) {
-          parts.push(" ");
-        }
-      } else if (hasChildren(node)) {
-        walk(node.children);
-      }
-    }
-  };
-
-  walk(body.children);
-
-  return collapseWhitespace(parts.join(""));
 };
 
 export const extractPage = (
@@ -251,7 +179,8 @@ export const extractPage = (
 
   const structured = extractStructuredData(doc);
 
-  const bodyText = visibleText(doc);
+  const body = queryOne(doc, "body");
+  const bodyText = body ? visibleText(body) : "";
 
   const htmlEl = queryOne(doc, "html");
   const viewportEl = queryOne(doc, 'meta[name="viewport" i]');
@@ -282,5 +211,6 @@ export const extractPage = (
     wordCount: wordCount(bodyText),
     htmlBytes: Buffer.byteLength(html, "utf-8"),
     hasBaseHref: Boolean(baseHref),
+    answer: extractAnswerSignals(doc, bodyText),
   };
 };

@@ -35,7 +35,9 @@ export interface ProgressEvent {
     | "probes"
     | "rules"
     | "render"
-    | "lighthouse";
+    | "lighthouse"
+    | "llms-txt"
+    | "ai-bots";
   message: string;
   crawled?: number;
   discovered?: number;
@@ -55,6 +57,8 @@ export interface CrawlOptions {
   excludePatterns: RegExp[];
   fetch: FetchOptions;
   onProgress?: (event: ProgressEvent) => void;
+  /** Fetch sitemaps and probe soft 404s and host redirects (default true); the AEO audit needs neither. */
+  siteChecks?: boolean;
 }
 
 export interface CrawlResult {
@@ -65,6 +69,8 @@ export interface CrawlResult {
   externalChecks?: Map<string, LinkCheck>;
   externalSources?: Map<string, Set<string>>;
   robots: RobotsTxtInfo | null;
+  /** The robots.txt text up to 500 KiB (`robots.text` stops at 20,000 characters), for checks per user agent. */
+  robotsText?: string | null;
   robotsAllows: ((url: string) => boolean) | null;
   blockedByRobots: string[];
   sitemaps: SitemapInfo;
@@ -212,13 +218,27 @@ export const crawlSite = async (
   const robots = await loadRobotsTxt(origin, userAgent, options.fetch);
   const allows = options.respectRobots ? robots.allows : () => true;
 
-  progress({ phase: "sitemap", message: "Fetching sitemaps" });
+  const siteChecks = options.siteChecks ?? true;
 
-  const sitemapCandidates = [
-    ...new Set([...robots.info.sitemaps, new URL("/sitemap.xml", origin).href]),
-  ];
+  let sitemaps: SitemapInfo = {
+    sources: [],
+    urls: [],
+    urlCount: 0,
+    errors: [],
+  };
 
-  const sitemaps = await loadSitemaps(sitemapCandidates, options.fetch);
+  if (siteChecks) {
+    progress({ phase: "sitemap", message: "Fetching sitemaps" });
+
+    const sitemapCandidates = [
+      ...new Set([
+        ...robots.info.sitemaps,
+        new URL("/sitemap.xml", origin).href,
+      ]),
+    ];
+
+    sitemaps = await loadSitemaps(sitemapCandidates, options.fetch);
+  }
 
   const visited = new Set<string>([startUrl]);
   const discovered = new Set<string>([startUrl]);
@@ -476,8 +496,15 @@ export const crawlSite = async (
     );
   }
 
-  progress({ phase: "probes", message: "Probing soft-404 and host redirects" });
-  const probes = await runProbes(startUrl, options.fetch);
+  let probes: ProbeResults = {};
+
+  if (siteChecks) {
+    progress({
+      phase: "probes",
+      message: "Probing soft-404 and host redirects",
+    });
+    probes = await runProbes(startUrl, options.fetch);
+  }
 
   const stats: CrawlStats = {
     pagesCrawled: records.length,
@@ -498,6 +525,7 @@ export const crawlSite = async (
     externalChecks,
     externalSources: options.checkExternalLinks ? externalSources : undefined,
     robots: robots.info,
+    robotsText: robots.text,
     robotsAllows: robots.info.found ? robots.allows : null,
     blockedByRobots: blocked,
     sitemaps,

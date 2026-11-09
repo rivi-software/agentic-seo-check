@@ -4,12 +4,14 @@ import { promises as fs } from "node:fs";
 import { Command, InvalidArgumentError, Option } from "commander";
 
 import { MAKER, MAKER_URL, REPOSITORY_URL } from "./brand.js";
+import { auditAeoTarget, compactAeoAudit } from "./core/aeo/audit.js";
 import { auditTarget, compactAudit } from "./core/audit.js";
 import type { CrawlOptions, ProgressEvent } from "./core/audit.js";
-import { renderMarkdown } from "./core/report/markdown.js";
+import type { FetchOptions } from "./core/fetch.js";
+import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 import { ALL_RULES } from "./core/rules/index.js";
 import { SEVERITY_RANK } from "./core/types.js";
-import type { Audit, Severity } from "./core/types.js";
+import type { AeoAudit, Audit, Severity } from "./core/types.js";
 import { startMcpServer } from "./mcp.js";
 import { VERSION } from "./version.js";
 
@@ -18,7 +20,7 @@ const program = new Command();
 program
   .name("agentic-seo-check")
   .description(
-    "SEO analysis for coding agents. Audits URLs, static build output or raw HTML and prints machine-readable findings."
+    "SEO and AEO analysis for coding agents. Audits URLs, static build output or raw HTML for search engines (audit, crawl) and AI answer engines (aeo), and prints machine-readable findings."
   )
   .version(VERSION)
   .addHelpText(
@@ -38,15 +40,18 @@ const intArg = (value: string): number => {
   return n;
 };
 
-const addAuditOptions = (cmd: Command, crawlDefault: boolean): Command => {
-  if (!crawlDefault) {
+/** Which command the options are for: the SEO audit of a target, of a whole site, or the AEO audit. */
+type Mode = "audit" | "crawl" | "aeo";
+
+const addAuditOptions = (cmd: Command, mode: Mode): Command => {
+  if (mode !== "crawl") {
     cmd.option(
       "--crawl",
       "Crawl the whole site starting at the URL instead of auditing one page"
     );
   }
 
-  return cmd
+  cmd
     .option("--max-pages <n>", "Maximum pages to crawl", intArg, 50)
     .option(
       "--max-depth <n>",
@@ -55,21 +60,32 @@ const addAuditOptions = (cmd: Command, crawlDefault: boolean): Command => {
       3
     )
     .option("--concurrency <n>", "Parallel requests while crawling", intArg, 5)
-    .option("--delay <ms>", "Delay between requests per worker", intArg, 0)
-    .option("-k, --keyword <keyword>", "Target keyword for keyword.* checks")
-    .option(
-      "--render",
-      "Render with headless Chromium (Playwright) and compare with the server HTML"
-    )
-    .option(
-      "--lighthouse",
-      "Run Lighthouse for Core Web Vitals and Lighthouse SEO audits (slow)"
-    )
-    .addOption(
-      new Option("--form-factor <type>", "Lighthouse device emulation")
-        .choices(["mobile", "desktop"])
-        .default("mobile")
-    )
+    .option("--delay <ms>", "Delay between requests per worker", intArg, 0);
+
+  if (mode === "aeo") {
+    cmd.option(
+      "--ai-bots",
+      "Also request the page with each AI bot's User-Agent to catch CDN or firewall blocks"
+    );
+  } else {
+    cmd
+      .option("-k, --keyword <keyword>", "Target keyword for keyword.* checks")
+      .option(
+        "--render",
+        "Render with headless Chromium (Playwright) and compare with the server HTML"
+      )
+      .option(
+        "--lighthouse",
+        "Run Lighthouse for Core Web Vitals and Lighthouse SEO audits (slow)"
+      )
+      .addOption(
+        new Option("--form-factor <type>", "Lighthouse device emulation")
+          .choices(["mobile", "desktop"])
+          .default("mobile")
+      );
+  }
+
+  cmd
     .option(
       "--base-url <url>",
       "Origin used for directories, files and stdin HTML (default http://localhost/)"
@@ -78,11 +94,16 @@ const addAuditOptions = (cmd: Command, crawlDefault: boolean): Command => {
     .option(
       "--include-subdomains",
       "Treat subdomains as internal when crawling"
-    )
-    .option(
+    );
+
+  if (mode !== "aeo") {
+    cmd.option(
       "--check-external",
       "Probe external links for 4xx/5xx while crawling"
-    )
+    );
+  }
+
+  return cmd
     .option("--include <regex...>", "Only crawl URLs matching these patterns")
     .option("--exclude <regex...>", "Skip URLs matching these patterns")
     .addOption(
@@ -129,7 +150,8 @@ interface CliOptions {
   keyword?: string;
   render?: boolean;
   lighthouse?: boolean;
-  formFactor: "mobile" | "desktop";
+  formFactor?: "mobile" | "desktop";
+  aiBots?: boolean;
   baseUrl?: string;
   ignoreRobots?: boolean;
   includeSubdomains?: boolean;
@@ -162,14 +184,11 @@ const formatOf = (opts: CliOptions): "json" | "md" => {
   return process.stdout.isTTY ? "md" : "json";
 };
 
-const runAudit = async (
-  target: string,
-  opts: CliOptions,
-  forceCrawl: boolean
-): Promise<void> => {
-  const headers: Record<string, string> = {};
+/** `-H "Name: value"` flags as request headers. */
+const parseHeaders = (values: string[] = []) => {
+  const headers: NonNullable<FetchOptions["headers"]> = {};
 
-  for (const h of opts.header ?? []) {
+  for (const h of values) {
     const idx = h.indexOf(":");
 
     if (idx === -1) {
@@ -179,9 +198,13 @@ const runAudit = async (
     headers[h.slice(0, idx).trim()] = h.slice(idx + 1).trim();
   }
 
+  return headers;
+};
+
+const progressPrinter = (opts: CliOptions) => {
   const showProgress = !opts.quiet && process.stderr.isTTY;
 
-  const onProgress = (e: ProgressEvent): void => {
+  return (e: ProgressEvent): void => {
     if (!showProgress) {
       return;
     }
@@ -193,9 +216,18 @@ const runAudit = async (
       `\u001B[2m${e.phase}${counter}: ${e.message}\u001B[0m\n`
     );
   };
+};
+
+/** Runs the audit the command asks for, and renders it in the format asked for. */
+const auditFor = async (
+  target: string,
+  opts: CliOptions,
+  mode: Mode
+): Promise<{ counts: Audit["counts"]; output: string }> => {
+  const headers = parseHeaders(opts.header);
 
   const options: CrawlOptions & { crawl?: boolean } = {
-    crawl: forceCrawl || Boolean(opts.crawl),
+    crawl: mode === "crawl" || Boolean(opts.crawl),
     maxPages: opts.maxPages,
     maxDepth: opts.maxDepth,
     concurrency: opts.concurrency,
@@ -218,8 +250,27 @@ const runAudit = async (
       userAgent: opts.userAgent,
       headers: Object.keys(headers).length ? headers : undefined,
     },
-    onProgress,
+    onProgress: progressPrinter(opts),
   };
+
+  const format = formatOf(opts);
+
+  if (mode === "aeo") {
+    let aeo: AeoAudit = await auditAeoTarget(target, {
+      ...options,
+      aiBots: opts.aiBots,
+    });
+
+    if (opts.compact) {
+      aeo = compactAeoAudit(aeo);
+    }
+
+    return {
+      counts: aeo.counts,
+      output:
+        format === "md" ? renderAeoMarkdown(aeo) : JSON.stringify(aeo, null, 2),
+    };
+  }
 
   let audit: Audit = await auditTarget(target, options);
 
@@ -227,10 +278,19 @@ const runAudit = async (
     audit = compactAudit(audit);
   }
 
-  const format = formatOf(opts);
+  return {
+    counts: audit.counts,
+    output:
+      format === "md" ? renderMarkdown(audit) : JSON.stringify(audit, null, 2),
+  };
+};
 
-  const output =
-    format === "md" ? renderMarkdown(audit) : JSON.stringify(audit, null, 2);
+const runAudit = async (
+  target: string,
+  opts: CliOptions,
+  mode: Mode
+): Promise<void> => {
+  const { counts, output } = await auditFor(target, opts, mode);
 
   if (opts.out) {
     await fs.writeFile(opts.out, `${output}\n`, "utf-8");
@@ -244,7 +304,6 @@ const runAudit = async (
 
   if (opts.failOn !== "none") {
     const threshold = SEVERITY_RANK[opts.failOn];
-    const { counts } = audit;
 
     const hits = (["error", "warning", "info"] as const)
       .filter((s) => SEVERITY_RANK[s] >= threshold)
@@ -272,9 +331,9 @@ addAuditOptions(
     .description(
       "Audit a page, a site (--crawl), a build directory or raw HTML"
     ),
-  false
+  "audit"
 ).action(async (target: string, opts: CliOptions) => {
-  await runAudit(target, opts, false);
+  await runAudit(target, opts, "audit");
 });
 
 addAuditOptions(
@@ -282,9 +341,24 @@ addAuditOptions(
     .command("crawl")
     .argument("<url>", "Start URL")
     .description('Crawl a site and audit every page (same as "audit --crawl")'),
-  true
+  "crawl"
 ).action(async (url: string, opts: CliOptions) => {
-  await runAudit(url, opts, true);
+  await runAudit(url, opts, "crawl");
+});
+
+addAuditOptions(
+  program
+    .command("aeo")
+    .argument(
+      "<target>",
+      'URL, directory of HTML files, .html file, or "-" for HTML on stdin'
+    )
+    .description(
+      "Answer engine optimization audit: AI crawler access (robots.txt, llms.txt), snippet and AI opt-outs, answer-ready content, entities and freshness, with its own score"
+    ),
+  "aeo"
+).action(async (target: string, opts: CliOptions) => {
+  await runAudit(target, opts, "aeo");
 });
 
 program

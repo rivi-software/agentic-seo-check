@@ -1,7 +1,9 @@
+import { AEO_SITE_RULES } from "../aeo/site-rules.js";
 import { PERFORMANCE_RULES } from "../performance-rules.js";
 import { RENDER_RULES } from "../render-rules.js";
 import { SITE_RULES } from "../site-rules.js";
 import type { Finding, RuleMeta } from "../types.js";
+import { aeoRules } from "./aeo.js";
 import { canonicalRules } from "./canonical.js";
 import { contentRules } from "./content.js";
 import { documentRules } from "./document.js";
@@ -38,17 +40,24 @@ export const PAGE_RULES: Rule[] = [
   ...responseRules,
 ];
 
+/** Rules the AEO audit evaluates against each page; the SEO audit never runs them. */
+export const AEO_PAGE_RULES: Rule[] = aeoRules;
+
 /** Metadata for every rule the tool can emit, including rules implemented outside the page-rule loop. */
 export const ALL_RULES: RuleMeta[] = [
   ...PAGE_RULES.map((r) => r.meta),
   ...RENDER_RULES,
   ...PERFORMANCE_RULES,
   ...SITE_RULES,
+  ...AEO_PAGE_RULES.map((r) => r.meta),
+  ...AEO_SITE_RULES,
 ];
 
 export interface RunRulesOptions {
   /** Rule ids to skip. */
   disable?: Set<string>;
+  /** The rules to run (default: the SEO page rules). */
+  rules?: Rule[];
 }
 
 export const sortFindings = (findings: Finding[]): Finding[] => {
@@ -66,7 +75,7 @@ export const runPageRules = (
 ): Finding[] => {
   const findings: Finding[] = [];
 
-  for (const rule of PAGE_RULES) {
+  for (const rule of options.rules ?? PAGE_RULES) {
     if (options.disable?.has(rule.meta.id)) {
       continue;
     }

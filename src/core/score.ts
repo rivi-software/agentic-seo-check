@@ -1,4 +1,4 @@
-import type { Finding, PageAudit, SeverityCounts } from "./types.js";
+import type { Finding, SeverityCounts } from "./types.js";
 
 const PAGE_WEIGHTS = { error: 15, warning: 5, info: 1 } as const;
 const SITE_WEIGHTS = { error: 10, warning: 3, info: 0.5 } as const;
@@ -15,7 +15,7 @@ export const pageScore = (counts: SeverityCounts): number => {
 };
 
 export const siteScore = (
-  pages: PageAudit[],
+  pages: { score: number }[],
   siteFindings: Finding[]
 ): number => {
   const avg = pages.length

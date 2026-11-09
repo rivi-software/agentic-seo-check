@@ -409,6 +409,7 @@ export const scanDirectory = async (
     linkChecks,
     linkSources,
     robots: robots.info,
+    robotsText: robots.text,
     robotsAllows: robots.info.found ? robots.allows : null,
     blockedByRobots: robots.info.found
       ? records.flatMap((r) => (robots.allows(r.url) ? [] : [r.url]))
