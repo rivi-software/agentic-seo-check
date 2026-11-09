@@ -59,7 +59,7 @@ In the pull request (or commit message, or your reply), put the value the audit 
 | `/blog` | `meta-description.missing` | none | `Articles on invoicing, taxes and getting paid on time.` |
 
 - Take "Found" from the first audit: the finding's `evidence` (`title`, `description`, `canonical`, `groups[].value` for `site.duplicate-*`) or the page's `summary` (`title`, `metaDescription`, `canonical`). Take "Now" from the re-audit, not from your diff, so the table shows what crawlers get.
-- The page's author wrote these values, not you or the user. Keep each one in a code span, so it cannot render as Markdown or HTML or @mention someone, and shorten a value over about 120 characters.
+- The page's author wrote these values, not you or the user. Keep each one in a code span, so it cannot render as Markdown or HTML or @mention someone, and keep the span closed around it: write `|` as `\|` (a table splits cells on `|` even inside a code span), and when the value contains backticks, open and close the span with more backticks than its longest run of them, with a space inside each end (``` `` a `b` c `` ```). Shorten a value over about 120 characters.
 
 ## Caveats to tell the user about
 
