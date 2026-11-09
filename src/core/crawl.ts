@@ -198,6 +198,30 @@ const runProbes = async (
   return probes;
 };
 
+/** Same-site URLs the crawled pages name as canonical or as hreflang alternates, normalized. */
+const metadataTargets = (
+  records: PageRecord[],
+  startHost: string,
+  includeSubdomains: boolean
+): string[] => {
+  const out = new Set<string>();
+
+  for (const r of records) {
+    for (const url of [
+      r.page.canonical,
+      ...r.page.hreflang.map((h) => h.url),
+    ]) {
+      const target = url ? normalizeUrl(url) : null;
+
+      if (target && isSameSite(target, startHost, includeSubdomains)) {
+        out.add(target);
+      }
+    }
+  }
+
+  return [...out];
+};
+
 /** The progress callback of a caller that does not listen for progress. */
 const ignoreProgress = (): void => {
   // Nobody to tell.
@@ -441,6 +465,24 @@ export const crawlSite = async (
     )
     .slice(0, Math.max(0, options.maxLinkChecks - toCheck.length));
 
+  // Canonical and hreflang targets no link led to: the site rules check where they point.
+  const metadataExtra = metadataTargets(
+    records,
+    startHost,
+    options.includeSubdomains
+  )
+    .filter(
+      (u) =>
+        !linkChecks.has(u) &&
+        !toCheck.includes(u) &&
+        !sitemapExtra.includes(u) &&
+        allows(u)
+    )
+    .slice(
+      0,
+      Math.max(0, options.maxLinkChecks - toCheck.length - sitemapExtra.length)
+    );
+
   for (const target of [...linkSources.keys()].filter((u) => !allows(u))) {
     if (!blocked.includes(target)) {
       blocked.push(target);
@@ -448,7 +490,7 @@ export const crawlSite = async (
   }
 
   await mapConcurrent(
-    [...toCheck, ...sitemapExtra],
+    [...toCheck, ...sitemapExtra, ...metadataExtra],
     options.concurrency,
     async (u) => {
       const res = await probeUrl(u, options.fetch);

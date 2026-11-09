@@ -212,6 +212,48 @@ export const SITE_RULES: RuleMeta[] = [
     GOOGLE_DOCS.links
   ),
   meta(
+    "site.canonical-target-broken",
+    "error",
+    "Pages name a canonical URL that answers 4xx/5xx or does not load, so search engines cannot use it.",
+    "Point the canonical at the live URL of the preferred page, usually the page itself. Canonicals built from a route pattern often miss a trailing slash or a locale prefix.",
+    GOOGLE_DOCS.canonical
+  ),
+  meta(
+    "site.canonical-target-redirects",
+    "warning",
+    "Pages name a canonical URL that redirects; the canonical should be the final URL.",
+    "Write the URL the redirect ends at in the canonical: the same scheme, host, trailing slash and case the server answers with.",
+    GOOGLE_DOCS.canonical
+  ),
+  meta(
+    "site.canonical-target-noindex",
+    "warning",
+    "Pages name as canonical a page that is set to noindex, so the page meant to be indexed is kept out of the index.",
+    "Remove noindex from the canonical page, or point the canonical somewhere indexable. If both pages should stay out of search results, use noindex on both and drop the canonical.",
+    GOOGLE_DOCS.canonical
+  ),
+  meta(
+    "site.canonical-chain",
+    "warning",
+    "A page's canonical points to a page whose own canonical points somewhere else (A to B to C).",
+    "Point every page's canonical straight at the final preferred URL.",
+    GOOGLE_DOCS.canonical
+  ),
+  meta(
+    "site.links-to-noindex",
+    "info",
+    "Pages set to noindex are linked from other pages of the site. A noindex page that much of the site links to is often noindex by mistake. Cart, search, login and account pages are left out.",
+    "Check that each listed page should stay out of search results. If the noindex is deliberate (login, cart, internal search), leave it; otherwise remove the noindex.",
+    GOOGLE_DOCS.robotsMeta
+  ),
+  meta(
+    "site.hreflang-target-invalid",
+    "warning",
+    "hreflang alternates point to URLs that are broken, redirect, are noindex or name another URL as canonical, so the annotation is ignored.",
+    "List only the canonical, indexable URL of each language version in hreflang: the final URL, not one that redirects.",
+    GOOGLE_DOCS.hreflang
+  ),
+  meta(
     "site.crawl-limit-reached",
     "info",
     "The crawl stopped at the page limit, so site-wide checks (orphans, duplicates, sitemap coverage) are partial.",
@@ -978,6 +1020,221 @@ const hreflangFindings = ({ ctx, key, pagesByKey }: SiteScope): Finding[] => {
   return out;
 };
 
+interface TargetProblem {
+  kind: "broken" | "redirects" | "noindex" | "canonical";
+  detail: string;
+}
+
+interface CanonicalIssue {
+  page: string;
+  canonical: string;
+  problem: string;
+}
+
+/** What is wrong with a URL that metadata (a canonical, an hreflang link) points to, or null. */
+const targetProblem = (
+  { key, pagesByKey, checksByKey, isIndexable }: SiteScope,
+  url: string
+): TargetProblem | null => {
+  const check = checksByKey.get(key(url));
+
+  if (check && (check.error || (check.status ?? 0) >= 400)) {
+    return {
+      kind: "broken",
+      detail: check.error ?? `HTTP ${check.status}`,
+    };
+  }
+
+  if (check && check.redirectChain.length > 0) {
+    return { kind: "redirects", detail: `redirects to ${check.finalUrl}` };
+  }
+
+  const target = pagesByKey.get(key(url));
+
+  if (!target) {
+    return null;
+  }
+
+  if (!isIndexable(target)) {
+    return { kind: "noindex", detail: "is noindex" };
+  }
+
+  const { canonical } = target.page;
+
+  return canonical && key(canonical) !== key(target.url)
+    ? { kind: "canonical", detail: `names ${canonical} as canonical` }
+    : null;
+};
+
+/** Canonicals that point at broken, redirecting, noindex or re-canonicalized URLs. */
+const canonicalGraphFindings = (scope: SiteScope): Finding[] => {
+  const { key, okPages, isIndexable } = scope;
+
+  const groups: Record<TargetProblem["kind"], CanonicalIssue[]> = {
+    broken: [],
+    redirects: [],
+    noindex: [],
+    canonical: [],
+  };
+
+  for (const p of okPages) {
+    const { canonical } = p.page;
+
+    // A noindex page's canonical carries no weight; the noindex wins.
+    if (!canonical || key(canonical) === key(p.url) || !isIndexable(p)) {
+      continue;
+    }
+
+    const problem = targetProblem(scope, canonical);
+
+    if (problem) {
+      groups[problem.kind].push({
+        page: p.url,
+        canonical,
+        problem: problem.detail,
+      });
+    }
+  }
+
+  const rules = [
+    [
+      "broken",
+      "site.canonical-target-broken",
+      "name a canonical URL that is broken",
+    ],
+    [
+      "redirects",
+      "site.canonical-target-redirects",
+      "name a canonical URL that redirects",
+    ],
+    [
+      "noindex",
+      "site.canonical-target-noindex",
+      "name a noindex page as canonical",
+    ],
+    [
+      "canonical",
+      "site.canonical-chain",
+      "name a canonical whose own canonical points elsewhere",
+    ],
+  ] as const;
+
+  return rules.flatMap(([kind, id, label]) => {
+    const list = groups[kind];
+
+    return list.length > 0
+      ? [
+          finding(m(id), `${list.length} page(s) ${label}.`, {
+            evidence: { count: list.length, examples: cap(list) },
+          }),
+        ]
+      : [];
+  });
+};
+
+/** Pages a site keeps out of search results on purpose: cart, checkout, search, login, account. */
+const UTILITY_PATH =
+  /(?:^|\/)(?:cart|bag|basket|checkout|winkelwagen|search|zoeken|suche|login|log-in|signin|sign-in|logout|inloggen|account|my-account|register|signup|sign-up|wishlist|favorites|favourites)(?:[/.?]|$)/iu;
+
+const isUtilityPage = (url: string): boolean => {
+  try {
+    return UTILITY_PATH.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+};
+
+/** Noindex pages that other pages of the site link to, most linked first. */
+const noindexLinkFindings = ({
+  ctx,
+  key,
+  okPages,
+  isIndexable,
+}: SiteScope): Finding[] => {
+  const linkedFrom = new Map<string, Set<string>>();
+
+  for (const [target, sources] of ctx.linkSources) {
+    const k = key(target);
+    const set = linkedFrom.get(k) ?? new Set<string>();
+
+    for (const source of sources) {
+      if (key(source) !== k) {
+        set.add(source);
+      }
+    }
+
+    linkedFrom.set(k, set);
+  }
+
+  const linked = okPages
+    .filter((p) => !isIndexable(p) && !isUtilityPage(p.url))
+    .map((p) => ({
+      url: p.url,
+      linkedFrom: linkedFrom.get(key(p.url))?.size ?? 0,
+    }))
+    .filter((p) => p.linkedFrom > 0)
+    .toSorted((a, b) => b.linkedFrom - a.linkedFrom);
+
+  return linked.length > 0
+    ? [
+        finding(
+          m("site.links-to-noindex"),
+          `${linked.length} noindex page(s) are linked from other pages; the most linked: ${linked[0]?.url} (${linked[0]?.linkedFrom} pages).`,
+          { evidence: { count: linked.length, pages: cap(linked) } }
+        ),
+      ]
+    : [];
+};
+
+/** hreflang alternates that are broken, redirect, are noindex or canonicalize elsewhere. */
+const hreflangTargetFindings = (scope: SiteScope): Finding[] => {
+  const { key, okPages } = scope;
+
+  const invalid: {
+    page: string;
+    hreflang: string;
+    alternate: string;
+    problem: string;
+  }[] = [];
+
+  const seen = new Set<string>();
+
+  for (const p of okPages) {
+    for (const alt of p.page.hreflang) {
+      if (!alt.url || key(alt.url) === key(p.url)) {
+        continue;
+      }
+
+      const problem = targetProblem(scope, alt.url);
+      const id = `${key(p.url)} ${key(alt.url)}`;
+
+      // Google documents x-default for a page that redirects each visitor to their language.
+      const languageRedirect =
+        alt.lang.toLowerCase() === "x-default" && problem?.kind === "redirects";
+
+      if (problem && !languageRedirect && !seen.has(id)) {
+        seen.add(id);
+        invalid.push({
+          page: p.url,
+          hreflang: alt.lang,
+          alternate: alt.url,
+          problem: problem.detail,
+        });
+      }
+    }
+  }
+
+  return invalid.length > 0
+    ? [
+        finding(
+          m("site.hreflang-target-invalid"),
+          `${invalid.length} hreflang alternate(s) point to URLs that are broken, redirect, are noindex or are not canonical.`,
+          { evidence: { count: invalid.length, examples: cap(invalid) } }
+        ),
+      ]
+    : [];
+};
+
 export const runSiteRules = (ctx: SiteContext): Finding[] => {
   const key = (url: string): string =>
     ctx.pathOnly ? pathKey(url) : (normalizeUrl(url) ?? url);
@@ -1014,6 +1271,9 @@ export const runSiteRules = (ctx: SiteContext): Finding[] => {
     ...unreachedFindings(ctx),
     ...duplicateFindings(scope),
     ...architectureFindings(scope),
+    ...canonicalGraphFindings(scope),
+    ...noindexLinkFindings(scope),
+    ...hreflangTargetFindings(scope),
     ...hreflangFindings(scope),
   ];
 };
