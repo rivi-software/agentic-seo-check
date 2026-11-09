@@ -222,6 +222,39 @@ const splitStreamed = (
   streamedInBody: items.flatMap((m) => (m.streamed ? [m.described] : [])),
 });
 
+/** Types that make a <script> run as JavaScript; anything else (JSON, templates) never blocks. */
+const isJavaScriptType = (type: string | undefined): boolean => {
+  const t = (type ?? "").trim().toLowerCase();
+
+  return t === "" || t.endsWith("javascript") || t.endsWith("ecmascript");
+};
+
+/**
+ * Scripts in <head> the parser waits for: external, classic, neither async nor defer. A nomodule
+ * script is a fallback for old browsers, which current ones neither download nor run.
+ */
+const blockingScripts = (doc: Document): string[] =>
+  queryAll(doc, "head script[src]")
+    .filter(
+      (el) =>
+        isJavaScriptType(attr(el, "type")) &&
+        attr(el, "async") === undefined &&
+        attr(el, "defer") === undefined &&
+        attr(el, "nomodule") === undefined
+    )
+    .map((el) => (attr(el, "src") ?? "").trim());
+
+const ICON_RELS = new Set([
+  "icon",
+  "apple-touch-icon",
+  "apple-touch-icon-precomposed",
+]);
+
+const iconLinks = (doc: Document): string[] =>
+  queryAll(doc, "link[rel][href]")
+    .filter((el) => relTokens(el).some((rel) => ICON_RELS.has(rel)))
+    .map((el) => (attr(el, "href") ?? "").trim());
+
 export const extractHeadSignals = (
   html: string,
   doc: Document
@@ -245,6 +278,8 @@ export const extractHeadSignals = (
       ...splitStreamed(metadataInBody),
       refresh,
       charsetEndByte: null,
+      blockingScripts: blockingScripts(doc),
+      icons: iconLinks(doc),
     };
   }
 
@@ -263,5 +298,7 @@ export const extractHeadSignals = (
     ...splitStreamed(metadataInBody.slice(browser.afterClose.length)),
     refresh,
     charsetEndByte: charsetEnd(browser.doc, prefix),
+    blockingScripts: blockingScripts(doc),
+    icons: iconLinks(doc),
   };
 };

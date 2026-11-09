@@ -5,7 +5,7 @@ import { textContent } from "domutils";
 import { parse } from "parse5";
 import { adapter } from "parse5-htmlparser2-tree-adapter";
 
-import { collapseWhitespace } from "./text.js";
+import { collapseWhitespace, wordCount } from "./text.js";
 
 export type { AnyNode, Document, Element } from "domhandler";
 
@@ -80,6 +80,32 @@ export const visibleText = (root: AnyNode): string => {
   walk(hasChildren(root) ? root.children : [root]);
 
   return collapseWhitespace(parts.join(""));
+};
+
+/** For each <img> under `root`, the number of visible words that come before it in the document. */
+export const wordsBeforeImages = (root: AnyNode): Map<Element, number> => {
+  const out = new Map<Element, number>();
+  let words = 0;
+
+  const walk = (nodes: AnyNode[]): void => {
+    for (const node of nodes) {
+      if (isText(node)) {
+        words += wordCount(node.data);
+      } else if (isTag(node)) {
+        if (node.name === "img") {
+          out.set(node, words);
+        } else if (!HIDDEN_ELEMENTS.has(node.name)) {
+          walk(node.children);
+        }
+      } else if (hasChildren(node)) {
+        walk(node.children);
+      }
+    }
+  };
+
+  walk(hasChildren(root) ? root.children : [root]);
+
+  return out;
 };
 
 /** Parse a full HTML document with the WHATWG algorithm (parse5), scripting enabled like a browser. */
