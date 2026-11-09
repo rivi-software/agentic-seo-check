@@ -111,6 +111,31 @@ describe("page rules", () => {
     expect(f?.url).toBe("https://a.test/");
   });
 
+  // An agent quotes these values in its pull request, so a reviewer sees the mistake it fixed.
+  it("title and meta description findings carry the text they are about", async () => {
+    const audit = await auditHtml(
+      '<!DOCTYPE html><html lang="en"><head><title>Pricing</title><meta name="description" content="pricing"></head><body><h1>Pricing</h1></body></html>',
+      { url: "https://a.test/pricing" },
+      { keyword: "blue widgets" }
+    );
+
+    const evidenceOf = (rule: string) =>
+      audit.findings.find((f) => f.rule === rule)?.evidence;
+
+    expect(evidenceOf("title.too-short")).toMatchObject({ title: "Pricing" });
+    expect(evidenceOf("meta-description.too-short")).toMatchObject({
+      description: "pricing",
+    });
+    expect(evidenceOf("meta-description.same-as-title")).toStrictEqual({
+      title: "Pricing",
+      description: "pricing",
+    });
+    expect(evidenceOf("keyword.not-in-description")).toStrictEqual({
+      description: "pricing",
+      keyword: "blue widgets",
+    });
+  });
+
   it("reads X-Robots-Tag from the response", async () => {
     const audit = await auditHtml(
       "<!DOCTYPE html><html><head><title>Some descriptive title here</title></head><body></body></html>",

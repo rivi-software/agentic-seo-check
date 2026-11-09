@@ -111,7 +111,10 @@ export const metaRules = [
         normalizeForComparison(page.title)
         ? make("Meta description repeats the title verbatim.", {
             selector: SELECTOR,
-            evidence: { title: page.title },
+            evidence: {
+              title: page.title,
+              description: page.metaDescription,
+            },
           })
         : null
   ),

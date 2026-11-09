@@ -159,7 +159,7 @@ All tools are read-only. Results are returned both as text (JSON or Markdown) an
 
 ## Agent skill
 
-`skills/seo-audit/SKILL.md` teaches an agent the audit → fix → re-audit loop, how to map rule ids to framework code (Next.js, Astro, Nuxt, SvelteKit, Remix, TanStack Start), and the caveats (preview-host noindex, localhost limits). Copy it to `.claude/skills/seo-audit/` in a project or `~/.claude/skills/` to make it available; this repo links it under `.claude/skills/`.
+`skills/seo-audit/SKILL.md` teaches an agent the audit → fix → re-audit loop, how to map rule ids to framework code (Next.js, Astro, Nuxt, SvelteKit, Remix, TanStack Start), and the caveats (preview-host noindex, localhost limits). It also has the agent put the title, description or canonical the audit found next to the fixed one in its pull request, so a reviewer sees each mistake without opening the site. Copy it to `.claude/skills/seo-audit/` in a project or `~/.claude/skills/` to make it available; this repo links it under `.claude/skills/`.
 
 ## Output shape
 
