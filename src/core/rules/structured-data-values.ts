@@ -66,9 +66,12 @@ const eachObject = (
       return;
     }
 
-    // Past the limits, objects go unvisited; a rule that needs all of them can tell.
+    // Past the limits, objects go unvisited; a rule that needs all of them can tell. A string or
+    // a number there is no object, so it costs nothing.
     if (depth > 8 || visited >= MAX_OBJECTS) {
-      complete = false;
+      if (Array.isArray(value) || isJsonObject(value)) {
+        complete = false;
+      }
 
       return;
     }
@@ -399,6 +402,11 @@ export const structuredDataValueRules = [
 
       const host = hostOf(page.url);
 
+      // mainEntityOfPage: {"@id": <this page>} names the page being audited, which is valid.
+      const self = new Set(
+        [page.url, page.canonical].flatMap((u) => (u ? [resolve(u)] : []))
+      );
+
       const walked = eachObject(page.structuredData, (node, path) => {
         const id = node["@id"];
 
@@ -410,7 +418,11 @@ export const structuredDataValueRules = [
 
         // An @id on another host names an outside entity (a Wikidata item), not one this page defines.
         if (isReference(node)) {
-          if (hostOf(resolved) === host && !referenced.has(resolved)) {
+          if (
+            hostOf(resolved) === host &&
+            !self.has(resolved) &&
+            !referenced.has(resolved)
+          ) {
             referenced.set(resolved, path || "(root)");
           }
         } else {

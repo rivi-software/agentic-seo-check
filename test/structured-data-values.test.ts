@@ -112,6 +112,34 @@ describe("structured data values", () => {
     ).toStrictEqual([]);
   });
 
+  it("still checks live types co-typed with or nested in a retired one", async () => {
+    const result = await auditHtml(
+      withJsonLd(
+        {
+          "@context": CONTEXT,
+          "@type": ["WebPage", "FAQPage"],
+          name: "Widget FAQ",
+          breadcrumb: { "@type": "BreadcrumbList" },
+          mainEntity: [{ "@type": "Question", name: "Which widget?" }],
+        },
+        {
+          "@context": CONTEXT,
+          "@type": "HowTo",
+          name: "Mount a widget",
+          video: { "@type": "VideoObject", name: "Mounting" },
+          step: [{ "@type": "HowToStep" }],
+        }
+      ),
+      { url: URL_, source: "url" }
+    );
+
+    const missing = result.findings
+      .filter((f) => f.rule === "structured-data.missing-required")
+      .map((f) => f.evidence?.["type"]);
+
+    expect(missing).toStrictEqual(["BreadcrumbList", "VideoObject"]);
+  });
+
   it("a review nested in a recipe needs no itemReviewed", async () => {
     const review = {
       "@type": "Review",
@@ -285,6 +313,32 @@ describe("structured data values", () => {
     });
   });
 
+  it("structured-data.dangling-id still runs when only strings sit past the depth limit", async () => {
+    let deep: JsonObject = { "@type": "PropertyValue", value: "leaf" };
+
+    // Eight nested objects reach depth 8; only the string "leaf" sits at depth 9.
+    for (let i = 0; i < 7; i += 1) {
+      deep = { "@type": "PropertyValue", value: deep };
+    }
+
+    const [f] = await findingsOf(
+      "structured-data.dangling-id",
+      withJsonLd({
+        "@context": CONTEXT,
+        "@type": "Article",
+        headline: "Blue widgets",
+        author: { "@id": "https://www.example.com/#missing-person" },
+        additionalProperty: deep,
+      })
+    );
+
+    expect(f?.evidence).toStrictEqual({
+      references: [
+        { id: "https://www.example.com/#missing-person", path: "author" },
+      ],
+    });
+  });
+
   it("structured-data.dangling-id resolves ids against the page and across @graph", async () => {
     const [f] = await findingsOf(
       "structured-data.dangling-id",
@@ -296,6 +350,7 @@ describe("structured data values", () => {
           author: { "@id": "https://www.example.com/#/schema/person/1" },
           publisher: { "@id": "#org" },
           about: { "@id": "https://www.wikidata.org/wiki/Q1234" },
+          mainEntityOfPage: { "@id": URL_ },
         },
         {
           "@context": CONTEXT,

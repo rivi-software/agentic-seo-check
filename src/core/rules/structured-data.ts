@@ -256,6 +256,18 @@ const missingProperties = (obj: JsonObject, spec: SchemaSpec) => {
   return { required, recommended };
 };
 
+/** Types that exist only as parts of a retired rich result (FAQ and How-to answers and steps). */
+const RETIRED_PART_TYPES = new Set([
+  "Question",
+  "Answer",
+  "HowToStep",
+  "HowToSection",
+  "HowToSupply",
+  "HowToTool",
+  "HowToDirection",
+  "HowToTip",
+]);
+
 /** Walk one structured-data item (and nested typed objects) collecting spec violations. */
 export const validateItem = (item: StructuredDataItem): ItemValidation => {
   const required: Issue[] = [];
@@ -317,12 +329,23 @@ export const validateItem = (item: StructuredDataItem): ItemValidation => {
 
     const types = typesOf(node["@type"]);
 
-    const underRetired =
-      retired || types.some((t) => RETIRED_RICH_RESULTS.has(t));
+    // A node co-typed ["WebPage", "FAQPage"] still has its WebPage checked; below a retired type,
+    // only the types that exist for it (Question, HowToStep, ...) go unchecked.
+    checkSpecs(
+      node,
+      types.filter(
+        (t) =>
+          !RETIRED_RICH_RESULTS.has(t) &&
+          !(retired && RETIRED_PART_TYPES.has(t))
+      ),
+      path
+    );
 
-    if (!underRetired) {
-      checkSpecs(node, types, path);
-    }
+    // Untyped objects (every() holds for no types) and the retired types' own parts pass the skip
+    // down; a live type such as a BreadcrumbList or VideoObject below FAQPage or HowTo is checked.
+    const underRetired =
+      types.some((t) => RETIRED_RICH_RESULTS.has(t)) ||
+      (retired && types.every((t) => RETIRED_PART_TYPES.has(t)));
 
     for (const [key, value] of Object.entries(node)) {
       if (
