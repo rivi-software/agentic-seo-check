@@ -156,6 +156,24 @@ export interface AnswerSignals {
   mentionsDate: boolean;
 }
 
+/** A subresource the page requests: a script, stylesheet, frame, image or media file. */
+export interface ResourceInfo {
+  /**
+   * What browsers do with it on an https page: they upgrade `image` and `media` to https and block
+   * the rest, including a `responsive-image` (an image with srcset or in a <picture>).
+   */
+  kind:
+    | "script"
+    | "stylesheet"
+    | "frame"
+    | "object"
+    | "image"
+    | "responsive-image"
+    | "media";
+  /** Absolute http(s) URL. */
+  url: string;
+}
+
 /** A `<meta http-equiv="refresh">`: reload or redirect after a number of seconds. */
 export interface MetaRefresh {
   /** Seconds before it acts, or null when the content does not start with a number. */
@@ -211,6 +229,12 @@ export interface ExtractedPage {
   images: ImageInfo[];
   links: LinkInfo[];
   hreflang: HreflangInfo[];
+  /** Scripts, stylesheets, frames, images and media the page requests. */
+  resources: ResourceInfo[];
+  /** A Content-Security-Policy meta tag tells browsers to upgrade the page's http:// requests to https. */
+  upgradesInsecureRequests: boolean;
+  /** `href="#name"` values with no element on the page whose id (or `<a name>`) is that name. */
+  missingFragments: string[];
   structuredData: StructuredDataItem[];
   structuredDataErrors: StructuredDataError[];
   /** Visible text of <body> with scripts/styles removed and whitespace collapsed. */

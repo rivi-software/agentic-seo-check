@@ -13,6 +13,7 @@ const KEPT_HEADERS = [
   "location",
   "content-length",
   "vary",
+  "content-security-policy",
 ];
 
 export interface FetchOptions {

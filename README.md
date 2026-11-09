@@ -49,12 +49,13 @@ Two audits share that core: the **SEO audit** (`audit`, `crawl`) for search engi
 
 ### SEO audit
 
-| Area | Examples (130 rules, `agentic-seo-check rules` lists them) |
+| Area | Examples (137 rules, `agentic-seo-check rules` lists them) |
 | --- | --- |
 | On-page basics | title missing/long/short/placeholder ("React App"), meta description, H1 and heading outline, canonical (missing, conflicting, relative, pointing elsewhere), robots meta and `X-Robots-Tag`, `lang`, viewport, charset, doctype |
 | Head and indexing | an element that ends `<head>` early (a pixel `<img>`, an `<iframe>`, stray text) so Google ignores the metadata after it, canonical, description or hreflang in `<body>`, meta refresh redirects, a charset declared past the first 1024 bytes, contradicting (`index` and `noindex`) or misspelled (`no-index`) robots directives, an HTTP `Link` canonical that disagrees with the HTML one |
 | Social | Open Graph completeness, absolute `og:image`, `og:url` vs canonical, Twitter card |
 | Images and links | alt text, filename-style alt, missing dimensions (CLS), empty or generic anchor text, `href="#"`/`javascript:` anchors, http links on https pages, internal nofollow |
+| URLs | uppercase letters or underscores in the page's path (locale segments such as `en-US` aside), session ids in the URL or internal links, campaign parameters (`utm_*`, `gclid`) on internal links, canonical, `og:image`, images or scripts on `localhost` or a private address, same-page `#links` to ids the page lacks, mixed content (blocked scripts, stylesheets and frames apart from images browsers upgrade) |
 | International | hreflang syntax, absolute URLs, self reference, x-default, return links (crawl) |
 | Structured data | JSON-LD parse errors, `@context`/`@type`, required and recommended properties for Article, Product, Offer, Organization, WebSite, BreadcrumbList, FAQPage, LocalBusiness, Event, Recipe, VideoObject, JobPosting, HowTo, Review, SoftwareApplication and more, ISO 8601 dates; microdata too |
 | Content | empty or thin content, "lorem ipsum", readability, keyword presence in title/H1/body/description/URL and density |

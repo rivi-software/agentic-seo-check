@@ -20,6 +20,7 @@ import type { PageContext, Rule } from "./rule.js";
 import { socialRules } from "./social.js";
 import { structuredDataRules } from "./structured-data.js";
 import { titleRules } from "./title.js";
+import { urlRules } from "./urls.js";
 
 export type { PageContext, Rule } from "./rule.js";
 
@@ -35,6 +36,7 @@ export const PAGE_RULES: Rule[] = [
   ...socialRules,
   ...imageRules,
   ...linkRules,
+  ...urlRules,
   ...hreflangRules,
   ...structuredDataRules,
   ...contentRules,
