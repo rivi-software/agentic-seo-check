@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { setTimeout as wait } from "node:timers/promises";
 
 export interface Route {
   status?: number;
@@ -9,6 +10,8 @@ export interface Route {
   body?: string | Buffer;
   /** Answer 403 to a request whose User-Agent contains one of these, as a CDN that blocks bots does. */
   blockUserAgents?: string[];
+  /** Milliseconds to wait before answering the first, second, ... request to this path, to order races. */
+  delaysMs?: number[];
 }
 
 /** The site a fixture server serves, by path; a test may add a route once the server listens. */
@@ -20,6 +23,8 @@ export interface FixtureServer {
   requests: string[];
   /** The User-Agent of each request, in the order of `requests`. */
   userAgents: string[];
+  /** The headers of each request, in the order of `requests`. */
+  requestHeaders: http.IncomingHttpHeaders[];
 }
 
 const page = (title: string, body: string, extraHead = "") =>
@@ -89,14 +94,22 @@ export const startFixtureServer = async (
 ): Promise<FixtureServer> => {
   const requests: string[] = [];
   const userAgents: string[] = [];
+  const requestHeaders: http.IncomingHttpHeaders[] = [];
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const userAgent = req.headers["user-agent"] ?? "";
+    const earlier = requests.filter((p) => p === url.pathname).length;
     requests.push(url.pathname);
     userAgents.push(userAgent);
+    requestHeaders.push(req.headers);
     const route = routes[url.pathname];
     const origin = originOf(server);
+    const delay = route?.delaysMs?.[earlier] ?? 0;
+
+    if (delay > 0) {
+      await wait(delay);
+    }
 
     if (route?.blockUserAgents?.some((bot) => userAgent.includes(bot))) {
       res.writeHead(403, { "content-type": "text/html" });
@@ -142,6 +155,7 @@ export const startFixtureServer = async (
     origin: originOf(server),
     requests,
     userAgents,
+    requestHeaders,
     close: () => server[Symbol.asyncDispose](),
   };
 };

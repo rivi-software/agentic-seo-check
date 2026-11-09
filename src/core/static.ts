@@ -7,6 +7,7 @@ import { extractPage } from "./html/extract.js";
 import { buildRobots } from "./robots.js";
 import type { RobotsResult } from "./robots.js";
 import { isLocalHost } from "./rules/canonical.js";
+import { imageSourcesOf } from "./site-probes.js";
 import type { LinkCheck, PageRecord } from "./site-rules.js";
 import {
   emptySitemapProblems,
@@ -256,6 +257,48 @@ const checkMetadataTargets = async (
   }
 };
 
+/**
+ * Image URLs a server or CDN makes at request time (next/image, Vercel, Netlify, Cloudflare,
+ * Nuxt Image, Astro), which are never files in the build output.
+ */
+const IMAGE_OPTIMIZER_PATH =
+  /^\/(?:_next\/image|_vercel\/image|\.netlify\/images|cdn-cgi\/image|_ipx|_image)(?:[/?]|$)/u;
+
+const isServedImage = (url: string): boolean => {
+  const { pathname, search } = new URL(url);
+
+  return search !== "" || IMAGE_OPTIMIZER_PATH.test(pathname);
+};
+
+/**
+ * Images on the site's own host, looked up as files. Images on other hosts (a CDN) cannot be
+ * checked without a request, which a directory audit does not make.
+ */
+const checkImageFiles = async (
+  root: string,
+  records: PageRecord[],
+  base: URL
+): Promise<{
+  imageChecks: Map<string, LinkCheck>;
+  imageSources: Map<string, Set<string>>;
+}> => {
+  const imageSources = new Map(
+    [...imageSourcesOf(records)].filter(
+      ([url]) => hostOf(url) === base.hostname && !isServedImage(url)
+    )
+  );
+
+  const imageChecks = new Map<string, LinkCheck>();
+
+  for (const url of imageSources.keys()) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- one file at a time, like the links: a build can hold thousands of images
+    const exists = await fileExists(root, new URL(url).pathname);
+    imageChecks.set(url, fileCheck(url, url, exists));
+  }
+
+  return { imageChecks, imageSources };
+};
+
 /** Depth via breadth-first search from the root index (if present); returns the start page. */
 const assignDepths = (
   records: PageRecord[],
@@ -493,6 +536,7 @@ export const scanDirectory = async (
   );
 
   await checkMetadataTargets(root, records, base, fileByPathKey, linkChecks);
+  const images = await checkImageFiles(root, records, base);
 
   const start = assignDepths(records, recordByKey);
 
@@ -552,5 +596,7 @@ export const scanDirectory = async (
       respectedRobots: false,
     },
     unlinkedPages,
+    imageChecks: images.imageChecks,
+    imageSources: images.imageSources,
   };
 };

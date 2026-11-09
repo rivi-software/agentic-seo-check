@@ -2,6 +2,7 @@ import { normalizeForComparison, shingles, jaccard } from "./html/text.js";
 import { agentMatcher } from "./robots.js";
 import { robotsDirectives } from "./rules/indexing.js";
 import { finding, GOOGLE_DOCS, cap } from "./rules/rule.js";
+import { MIN_COMPARABLE_WORDS, SAME_TEXT } from "./site-probes.js";
 import type {
   ExtractedPage,
   Finding,
@@ -12,7 +13,7 @@ import type {
   Thresholds,
   CrawlStats,
 } from "./types.js";
-import { normalizeUrl, normalizePath } from "./url.js";
+import { normalizeUrl, normalizePath, trimTrailingSlashes } from "./url.js";
 
 const meta = (
   id: string,
@@ -311,6 +312,27 @@ export const SITE_RULES: RuleMeta[] = [
     GOOGLE_DOCS.hreflang
   ),
   meta(
+    "site.url-variant-duplicate",
+    "warning",
+    "A page also answers 200 at its URL with the trailing slash added or removed, or with the path in another case, without redirecting or naming the page as canonical. Google treats each spelling as a separate URL.",
+    "Redirect (301) the other spelling to the page's URL in the server, framework or CDN (trailingSlash in Next.js, Nuxt and Astro configs; a lowercase rewrite on case-insensitive servers), or at least give every spelling a canonical to the one URL.",
+    GOOGLE_DOCS.urlStructure
+  ),
+  meta(
+    "site.parameter-duplicates",
+    "warning",
+    "Crawled URLs that differ only in their query string show the same text, and none names one of them as canonical.",
+    "Give the parameter versions a canonical to the URL without the parameter (or the one you want indexed), and link to that URL. Parameters that change nothing visible (session, sort order of one item, view=) should not reach links at all.",
+    GOOGLE_DOCS.canonical
+  ),
+  meta(
+    "site.broken-images",
+    "warning",
+    "Images on the pages point to URLs that answer 4xx/5xx or do not load.",
+    "Fix the image URLs listed in evidence, or upload the missing files. Each entry names the pages that show the image.",
+    GOOGLE_DOCS.images
+  ),
+  meta(
     "site.crawl-limit-reached",
     "info",
     "The crawl stopped at the page limit, so site-wide checks (orphans, duplicates, sitemap coverage) are partial.",
@@ -349,6 +371,19 @@ export interface LinkCheck {
   error?: string;
 }
 
+/** A crawled page requested again with its trailing slash toggled, or with its path in uppercase. */
+export interface UrlVariantProbe {
+  kind: "trailing-slash" | "case";
+  /** The crawled page. */
+  url: string;
+  variant: string;
+  status: number | null;
+  /** The canonical the variant names, when it answered with a page. */
+  canonical: string | null;
+  /** The variant answered 200 itself and names no canonical that points back to the page. */
+  duplicate: boolean;
+}
+
 export interface ProbeResults {
   soft404?: { url: string; status: number | null } | null;
   httpRedirect?: {
@@ -363,6 +398,7 @@ export interface ProbeResults {
     finalUrl: string | null;
     redirectsToMain: boolean;
   } | null;
+  urlVariants?: UrlVariantProbe[];
 }
 
 export interface SiteContext {
@@ -389,6 +425,9 @@ export interface SiteContext {
   externalSources?: Map<string, Set<string>>;
   /** Directory audits: HTML files nobody links to. */
   unlinkedPages?: string[];
+  /** Image URLs the pages show that were requested (or looked up as files), keyed by URL. */
+  imageChecks?: Map<string, LinkCheck>;
+  imageSources?: Map<string, Set<string>>;
 }
 
 /** Appends `value` to the list under `k`, starting the list when there is none. */
@@ -1144,11 +1183,20 @@ const unreachedFindings = (ctx: SiteContext): Finding[] => {
   return out;
 };
 
-const duplicateFindings = ({ okPages, isIndexable }: SiteScope): Finding[] => {
+const duplicateFindings = ({
+  key,
+  okPages,
+  isIndexable,
+}: SiteScope): Finding[] => {
   const out: Finding[] = [];
 
-  /* duplicates */
-  const indexable = okPages.filter(isIndexable);
+  // Pages that name another URL as canonical are consolidated already; only the canonical ones compete.
+  const indexable = okPages.filter(
+    (p) =>
+      isIndexable(p) &&
+      (!p.page.canonical || key(p.page.canonical) === key(p.url))
+  );
+
   pushDuplicates(
     out,
     m("site.duplicate-titles"),
@@ -1520,6 +1568,232 @@ const hreflangTargetFindings = (scope: SiteScope): Finding[] => {
     : [];
 };
 
+/** The URL with its path lower-cased and trailing slashes dropped: one key for every spelling. */
+const spellingKey = (url: string): string => {
+  try {
+    const u = new URL(url);
+    const pathname = trimTrailingSlashes(u.pathname.toLowerCase()) || "/";
+
+    return `${u.origin}${pathname}${u.search}`;
+  } catch {
+    return url;
+  }
+};
+
+const pathnameOf = (url: string): string => {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+};
+
+/** How two spellings of one URL differ: only in the path's trailing slash, or in its letter case. */
+const spellingDifference = (a: string, b: string): UrlVariantProbe["kind"] =>
+  trimTrailingSlashes(pathnameOf(a)) === trimTrailingSlashes(pathnameOf(b))
+    ? "trailing-slash"
+    : "case";
+
+/** Pages the crawl reached under two spellings of one URL, both answering as a canonical page. */
+const crawledVariants = ({
+  ctx,
+  key,
+  okPages,
+  isIndexable,
+}: SiteScope): UrlVariantProbe[] => {
+  if (ctx.pathOnly) {
+    return [];
+  }
+
+  const groups = new Map<string, PageRecord[]>();
+
+  for (const p of okPages) {
+    if (
+      isIndexable(p) &&
+      p.page.wordCount >= MIN_COMPARABLE_WORDS &&
+      (!p.page.canonical || key(p.page.canonical) === key(p.url))
+    ) {
+      const k = spellingKey(p.url);
+      groups.set(k, [...(groups.get(k) ?? []), p]);
+    }
+  }
+
+  return [...groups.values()].flatMap(([first, ...rest]) =>
+    first
+      ? rest
+          .filter(
+            (other) =>
+              jaccard(shingles(first.page.text), shingles(other.page.text)) >=
+              SAME_TEXT
+          )
+          .map((other) => ({
+            kind: spellingDifference(first.url, other.url),
+            url: first.url,
+            variant: other.url,
+            status: other.response?.status ?? null,
+            canonical: other.page.canonical,
+            duplicate: true,
+          }))
+      : []
+  );
+};
+
+/** Slash and case variants of crawled pages that the server answers as pages of their own. */
+const urlVariantFindings = (scope: SiteScope): Finding[] => {
+  const probed = (scope.ctx.probes.urlVariants ?? []).filter(
+    (v) => v.duplicate
+  );
+
+  const seen = new Set(probed.map((v) => spellingKey(v.variant)));
+
+  const duplicates = [
+    ...probed,
+    ...crawledVariants(scope).filter((v) => !seen.has(spellingKey(v.variant))),
+  ];
+
+  if (duplicates.length === 0) {
+    return [];
+  }
+
+  const kinds = [...new Set(duplicates.map((d) => d.kind))];
+
+  return [
+    finding(
+      m("site.url-variant-duplicate"),
+      `${duplicates.length} page(s) also answer at a ${kinds.join(" and a ")} variant of their URL.`,
+      {
+        evidence: {
+          count: duplicates.length,
+          examples: cap(
+            duplicates.map(({ kind, url, variant, canonical }) => ({
+              kind,
+              url,
+              variant,
+              canonical,
+            }))
+          ),
+        },
+      }
+    ),
+  ];
+};
+
+const withoutQuery = (url: string): string => {
+  try {
+    const u = new URL(url);
+
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return url;
+  }
+};
+
+/** Pages that differ only in their query string, show the same text and do not consolidate. */
+const parameterDuplicateFindings = ({
+  key,
+  okPages,
+  isIndexable,
+}: SiteScope): Finding[] => {
+  const byPath = new Map<string, PageRecord[]>();
+
+  for (const p of okPages) {
+    const { canonical } = p.page;
+
+    // A page whose canonical points elsewhere has already said which URL to index, and a page
+    // with almost no text in its HTML (rendered by JavaScript) gives nothing to compare.
+    if (
+      !isIndexable(p) ||
+      (canonical && key(canonical) !== key(p.url)) ||
+      p.page.wordCount < MIN_COMPARABLE_WORDS
+    ) {
+      continue;
+    }
+
+    const path = withoutQuery(p.url);
+    byPath.set(path, [...(byPath.get(path) ?? []), p]);
+  }
+
+  const groups: { path: string; urls: string[]; similarity: number }[] = [];
+
+  for (const [path, pages] of byPath) {
+    if (pages.length < 2 || !pages.some((p) => p.url.includes("?"))) {
+      continue;
+    }
+
+    const [first, ...rest] = pages;
+
+    if (!first) {
+      continue;
+    }
+
+    const base = shingles(first.page.text);
+
+    const same = rest.flatMap((p) => {
+      const similarity = jaccard(base, shingles(p.page.text));
+
+      return similarity >= SAME_TEXT ? [{ url: p.url, similarity }] : [];
+    });
+
+    if (same.length > 0) {
+      groups.push({
+        path,
+        urls: [first.url, ...same.map((s) => s.url)].toSorted(),
+        similarity: Number(
+          Math.min(...same.map((s) => s.similarity)).toFixed(2)
+        ),
+      });
+    }
+  }
+
+  return groups.length > 0
+    ? [
+        finding(
+          m("site.parameter-duplicates"),
+          `${groups.length} path(s) are crawled under several query strings with the same text.`,
+          { evidence: { count: groups.length, groups: cap(groups) } }
+        ),
+      ]
+    : [];
+};
+
+interface BrokenImage {
+  url: string;
+  status: number | null;
+  shownOn: string[];
+  error?: string;
+}
+
+/** Images that answer 4xx/5xx or do not load, with the pages that show them. */
+const brokenImageFindings = (ctx: SiteContext): Finding[] => {
+  const broken: BrokenImage[] = [];
+
+  for (const [url, check] of ctx.imageChecks ?? []) {
+    if (check.error || (check.status ?? 0) >= 400) {
+      const entry: BrokenImage = {
+        url,
+        status: check.status,
+        shownOn: cap([...(ctx.imageSources?.get(url) ?? [])], 3),
+      };
+
+      if (check.error) {
+        entry.error = check.error;
+      }
+
+      broken.push(entry);
+    }
+  }
+
+  return broken.length > 0
+    ? [
+        finding(
+          m("site.broken-images"),
+          `${broken.length} image URL(s) are broken.`,
+          { evidence: { count: broken.length, examples: cap(broken, 20) } }
+        ),
+      ]
+    : [];
+};
+
 export const runSiteRules = (ctx: SiteContext): Finding[] => {
   const key = (url: string): string =>
     ctx.pathOnly ? pathKey(url) : (normalizeUrl(url) ?? url);
@@ -1559,6 +1833,9 @@ export const runSiteRules = (ctx: SiteContext): Finding[] => {
     ...unreachedFindings(ctx),
     ...duplicateFindings(scope),
     ...architectureFindings(scope),
+    ...urlVariantFindings(scope),
+    ...parameterDuplicateFindings(scope),
+    ...brokenImageFindings(ctx),
     ...canonicalGraphFindings(scope),
     ...noindexLinkFindings(scope),
     ...hreflangTargetFindings(scope),

@@ -10,6 +10,8 @@ import type { FetchOptions, FetchResult } from "./fetch.js";
 import { extractPage } from "./html/extract.js";
 import { loadRobotsTxt } from "./robots.js";
 import { isLocalHost } from "./rules/canonical.js";
+import { checkImages, probeUrlVariants } from "./site-probes.js";
+import type { ImageCheckResult } from "./site-probes.js";
 import type { LinkCheck, PageRecord, ProbeResults } from "./site-rules.js";
 import { emptySitemapProblems, loadSitemaps } from "./sitemap.js";
 import type {
@@ -77,7 +79,12 @@ export interface CrawlResult {
   probes: ProbeResults;
   stats: CrawlStats;
   unlinkedPages?: string[];
+  imageChecks?: Map<string, LinkCheck>;
+  imageSources?: Map<string, Set<string>>;
 }
+
+/** Image URLs a crawl requests at most, the ones shown on most pages first. */
+const MAX_IMAGE_CHECKS = 100;
 
 interface QueueItem {
   url: string;
@@ -274,6 +281,8 @@ export const crawlSite = async (
   const linkSources = new Map<string, Set<string>>();
   const externalSources = new Map<string, Set<string>>();
   const records: PageRecord[] = [];
+  /** Final URLs with a record. A redirect and a link can lead to the same page at once. */
+  const recorded = new Set<string>();
   const blocked: string[] = [];
   let limitSkips = 0;
 
@@ -380,6 +389,12 @@ export const crawlSite = async (
       return;
     }
 
+    if (recorded.has(finalKey)) {
+      return;
+    }
+
+    recorded.add(finalKey);
+
     const page = extractPage(res.body ?? "", {
       url: res.finalUrl,
       siteHost: startHost,
@@ -431,6 +446,14 @@ export const crawlSite = async (
 
       return;
     }
+
+    // Nothing awaits between the fetch ending and this check, so two requests that end at the
+    // same page cannot both pass it.
+    if (recorded.has(finalKey)) {
+      return;
+    }
+
+    recorded.add(finalKey);
 
     const page = extractPage(res.body, {
       url: res.finalUrl,
@@ -543,13 +566,36 @@ export const crawlSite = async (
   }
 
   let probes: ProbeResults = {};
+  let images: ImageCheckResult | undefined;
 
   if (siteChecks) {
+    const probeOptions = {
+      fetch: options.fetch,
+      concurrency: options.concurrency,
+      delayMs: options.delayMs,
+      allows,
+      startUrl,
+      includeSubdomains: options.includeSubdomains,
+      checkExternal: options.checkExternalLinks,
+    };
+
+    progress({ phase: "links", message: "Checking images" });
+    images = await checkImages(
+      records,
+      Math.min(MAX_IMAGE_CHECKS, options.maxLinkChecks),
+      probeOptions
+    );
+
     progress({
       phase: "probes",
-      message: "Probing soft-404 and host redirects",
+      message: "Probing soft-404, host redirects and URL variants",
     });
     probes = await runProbes(startUrl, options.fetch);
+    probes.urlVariants = await probeUrlVariants(
+      records,
+      startUrl,
+      probeOptions
+    );
   }
 
   const stats: CrawlStats = {
@@ -577,5 +623,7 @@ export const crawlSite = async (
     sitemaps,
     probes,
     stats,
+    imageChecks: images?.imageChecks,
+    imageSources: images?.imageSources,
   };
 };
