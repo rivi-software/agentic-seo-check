@@ -477,11 +477,7 @@ export interface SiteContext {
 }
 
 /** Appends `value` to the list under `k`, starting the list when there is none. */
-const pushTo = (
-  groups: Map<string, string[]>,
-  k: string,
-  value: string
-): void => {
+const pushTo = <T>(groups: Map<string, T[]>, k: string, value: T): void => {
   const list = groups.get(k);
 
   if (list) {
@@ -511,17 +507,115 @@ const spellingKey = (url: string): string => {
   }
 };
 
+/**
+ * Language versions of one page: pages that name each other as hreflang alternates under different
+ * codes, and the pages joined to them that way. "Contact" or a person's name is the same word in
+ * English and Dutch, and Google counts localized versions as duplicates only when their main
+ * content is left untranslated. Gives a page's URL the key of the first page of its set (its own
+ * key for a page in none): two pages are versions of one page when their keys match.
+ */
+const languageVersions = (
+  pages: PageRecord[],
+  key: (url: string) => string
+): ((url: string) => string) => {
+  // For each page, the codes its hreflang links give each URL they name, all by key.
+  const codes = new Map<string, Map<string, Set<string>>>();
+
+  for (const p of pages) {
+    const named = new Map<string, Set<string>>();
+
+    for (const alt of p.page.hreflang) {
+      if (alt.url) {
+        const k = key(alt.url);
+
+        named.set(k, (named.get(k) ?? new Set()).add(alt.lang.toLowerCase()));
+      }
+    }
+
+    codes.set(key(p.url), named);
+  }
+
+  const alternates = new Map<string, string[]>();
+
+  for (const [a, named] of codes) {
+    for (const [b, given] of named) {
+      const back = codes.get(b)?.get(a);
+
+      // A link one way only is ignored by Google, and two pages that call each other by one code
+      // are one language twice.
+      if (a !== b && back && ![...given].some((code) => back.has(code))) {
+        pushTo(alternates, a, b);
+      }
+    }
+  }
+
+  const first = new Map<string, string>();
+
+  for (const start of alternates.keys()) {
+    if (first.has(start)) {
+      continue;
+    }
+
+    first.set(start, start);
+
+    const versions = [start];
+
+    // `versions` grows while it is read, and for...of reads what is pushed: a breadth-first walk.
+    for (const k of versions) {
+      for (const next of alternates.get(k) ?? []) {
+        if (!first.has(next)) {
+          first.set(next, start);
+          versions.push(next);
+        }
+      }
+    }
+  }
+
+  return (url) => first.get(key(url)) ?? key(url);
+};
+
+/**
+ * The pages of a group that get a value of their own. The page with the most language versions in
+ * the group keeps the value, with those versions: a page that shares a title with its translations
+ * is retitled, not the translations. On a tie the first page keeps it, the shallowest the crawl
+ * reached.
+ */
+const pagesToChange = (
+  group: PageRecord[],
+  versionOf: (url: string) => string
+): PageRecord[] => {
+  const counts = new Map<string, number>();
+
+  for (const p of group) {
+    const v = versionOf(p.url);
+
+    counts.set(v, (counts.get(v) ?? 0) + 1);
+  }
+
+  // A Map iterates in insertion order, so on a tie the first page's version stays.
+  let kept = "";
+  let most = 0;
+
+  for (const [v, n] of counts) {
+    if (n > most) {
+      kept = v;
+      most = n;
+    }
+  }
+
+  return group.filter((p) => versionOf(p.url) !== kept);
+};
+
 const pushDuplicates = (
   out: Finding[],
   rule: RuleMeta,
   pages: PageRecord[],
+  versionOf: (url: string) => string,
   pick: (p: PageRecord) => string | null,
   label: string,
   fixFor: (p: PageRecord) => FixEdit | null
 ): void => {
-  const groups = new Map<string, string[]>();
-  // Every page but the first of a group gets a value of its own; the first keeps what it has.
-  const others: PageRecord[] = [];
+  const groups = new Map<string, PageRecord[]>();
   // Pages are grouped by a lowercased key, but the evidence quotes the value as the first page
   // wrote it, so a report or pull request shows the text a reviewer would find on the site.
   const written = new Map<string, string>();
@@ -535,34 +629,41 @@ const pushDuplicates = (
 
     const k = normalizeForComparison(value);
 
-    pushTo(groups, k, p.url);
-
-    if (written.has(k)) {
-      others.push(p);
-    } else {
+    if (!groups.has(k)) {
       written.set(k, value);
     }
+
+    pushTo(groups, k, p);
   }
 
-  const dupes = [...groups.entries()].filter(([, urls]) => urls.length > 1);
+  // The versions of one page may share a value: a group needs two different pages.
+  const dupes = [...groups.entries()].filter(
+    ([, group]) => new Set(group.map((p) => versionOf(p.url))).size > 1
+  );
 
   if (!dupes.length) {
     return;
   }
 
-  const pagesAffected = dupes.reduce((n, [, urls]) => n + urls.length, 0);
+  const pagesAffected = dupes.reduce((n, [, group]) => n + group.length, 0);
   out.push(
     finding(
       rule,
       `${dupes.length} ${label}(s) are shared by ${pagesAffected} pages.`,
       {
-        fix: others.flatMap((p) => fixFor(p) ?? []).slice(0, MAX_EDITS),
+        fix: dupes
+          .flatMap(([, group]) => pagesToChange(group, versionOf))
+          .flatMap((p) => fixFor(p) ?? [])
+          .slice(0, MAX_EDITS),
         evidence: {
           groups: cap(
-            dupes.map(([k, urls]) => ({
+            dupes.map(([k, group]) => ({
               value: (written.get(k) ?? k).slice(0, 120),
-              pages: cap(urls, 5),
-              count: urls.length,
+              pages: cap(
+                group.map((p) => p.url),
+                5
+              ),
+              count: group.length,
             }))
           ),
         },
@@ -1663,10 +1764,13 @@ const duplicateFindings = ({
       (!p.page.canonical || key(p.page.canonical) === key(p.url))
   );
 
+  const versionOf = languageVersions(indexable, key);
+
   pushDuplicates(
     out,
     m("site.duplicate-titles"),
     indexable,
+    versionOf,
     (p) => p.page.title,
     "title",
     retitleEdit
@@ -1675,6 +1779,7 @@ const duplicateFindings = ({
     out,
     m("site.duplicate-descriptions"),
     indexable,
+    versionOf,
     (p) => p.page.metaDescription,
     "meta description",
     redescribeEdit
@@ -1683,10 +1788,12 @@ const duplicateFindings = ({
     out,
     m("site.duplicate-h1"),
     indexable,
+    versionOf,
     (p) => p.page.h1s[0] ?? null,
     "H1",
     reheadEdit
   );
+  // Language versions stay in: Google counts them as duplicates when the text is left untranslated.
   pushDuplicateContent(out, indexable);
 
   return out;
