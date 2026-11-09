@@ -2,6 +2,7 @@ import { isJsonObject, isString, typesOf } from "../html/structured-data.js";
 import type { JsonObject, JsonValue } from "../html/structured-data.js";
 import type { StructuredDataItem } from "../types.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
+import { RETIRED_RICH_RESULTS } from "./structured-data-values.js";
 
 interface SchemaSpec {
   required: string[];
@@ -50,7 +51,7 @@ export const SCHEMA_SPECS: Record<string, SchemaSpec> = {
   WebSite: {
     required: ["name", "url"],
     recommended: [],
-    docs: `${G}sitelinks-searchbox`,
+    docs: "https://developers.google.com/search/docs/appearance/site-names",
   },
   WebPage: { required: [], recommended: ["name"] },
   BreadcrumbList: {
@@ -69,12 +70,14 @@ export const SCHEMA_SPECS: Record<string, SchemaSpec> = {
     docs: `${G}carousel`,
   },
   FAQPage: { required: ["mainEntity"], recommended: [], docs: `${G}faqpage` },
+  // A Q&A page's question may have only suggested answers.
   Question: {
-    required: ["name", "acceptedAnswer"],
+    required: ["name"],
     recommended: [],
-    docs: `${G}faqpage`,
+    oneOf: [["acceptedAnswer", "suggestedAnswer"]],
+    docs: `${G}qapage`,
   },
-  Answer: { required: ["text"], recommended: [], docs: `${G}faqpage` },
+  Answer: { required: ["text"], recommended: [], docs: `${G}qapage` },
   LocalBusiness: {
     required: ["name", "address"],
     recommended: [
@@ -261,10 +264,38 @@ export const validateItem = (item: StructuredDataItem): ItemValidation => {
   const unknownTypes: string[] = [];
   const visited = new Set<JsonObject | JsonValue[]>();
 
+  const checkSpecs = (node: JsonObject, types: string[], path: string) => {
+    for (const type of types) {
+      const spec = SCHEMA_SPECS[type];
+
+      if (!spec) {
+        unknownTypes.push(type);
+        continue;
+      }
+
+      const missing = missingProperties(node, spec);
+
+      // A review nested in a Recipe or Product reviews that item; only a standalone one names it.
+      if (type === "Review" && path !== "") {
+        missing.required = missing.required.filter((p) => p !== "itemReviewed");
+      }
+
+      if (missing.required.length) {
+        required.push({ type, missing: missing.required, path });
+      }
+
+      if (missing.recommended.length) {
+        recommended.push({ type, missing: missing.recommended, path });
+      }
+    }
+  };
+
+  // Below a retired rich result type, missing properties no longer cost anything in Google.
   const walk = (
     node: JsonValue | undefined,
     path: string,
-    depth: number
+    depth: number,
+    retired = false
   ): void => {
     if (
       depth > 6 ||
@@ -278,29 +309,19 @@ export const validateItem = (item: StructuredDataItem): ItemValidation => {
 
     if (Array.isArray(node)) {
       for (const [i, n] of node.entries()) {
-        walk(n, `${path}[${i}]`, depth);
+        walk(n, `${path}[${i}]`, depth, retired);
       }
 
       return;
     }
 
-    for (const type of typesOf(node["@type"])) {
-      const spec = SCHEMA_SPECS[type];
+    const types = typesOf(node["@type"]);
 
-      if (!spec) {
-        unknownTypes.push(type);
-        continue;
-      }
+    const underRetired =
+      retired || types.some((t) => RETIRED_RICH_RESULTS.has(t));
 
-      const missing = missingProperties(node, spec);
-
-      if (missing.required.length) {
-        required.push({ type, missing: missing.required, path });
-      }
-
-      if (missing.recommended.length) {
-        recommended.push({ type, missing: missing.recommended, path });
-      }
+    if (!underRetired) {
+      checkSpecs(node, types, path);
     }
 
     for (const [key, value] of Object.entries(node)) {
@@ -313,7 +334,7 @@ export const validateItem = (item: StructuredDataItem): ItemValidation => {
       }
 
       if (Array.isArray(value) || isJsonObject(value)) {
-        walk(value, path ? `${path}.${key}` : key, depth + 1);
+        walk(value, path ? `${path}.${key}` : key, depth + 1, underRetired);
       }
     }
   };
@@ -351,7 +372,7 @@ export const structuredDataRules = [
       severity: "info",
       description: "The page has no structured data (JSON-LD or microdata).",
       recommendation:
-        "Add JSON-LD for the page type (Article, Product, Organization, BreadcrumbList, FAQPage, ...) to qualify for rich results.",
+        "Add JSON-LD for the page type (Article, Product, Organization, BreadcrumbList, Event, Recipe, ...) to qualify for rich results.",
       docs: GOOGLE_DOCS.structuredData,
     },
     ({ page }, make) =>

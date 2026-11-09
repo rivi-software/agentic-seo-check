@@ -23,6 +23,10 @@ export interface JsonObject {
 export const isString = (value: JsonValue | undefined): value is string =>
   typeof value === "string";
 
+/** Whether a structured-data value is a JSON number. */
+export const isNumber = (value: JsonValue | undefined): value is number =>
+  typeof value === "number";
+
 /** Whether a structured-data value is an object with properties, rather than a list or a scalar. */
 export const isJsonObject = (
   value: JsonValue | undefined

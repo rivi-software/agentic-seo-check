@@ -52,6 +52,7 @@ Run the same audit again. Report before/after score and the remaining findings. 
 
 - `robots.noindex` on a preview/staging host is often added by the hosting platform (X-Robots-Tag); check production before "fixing" it.
 - A localhost audit cannot verify https, www redirects or the production robots.txt/sitemap; run a crawl against the deployed site for those.
+- `structured-data.retired-type` says Google no longer shows that rich result; it is not a request to delete the markup. Keep FAQPage markup the AEO audit relies on, and ask before removing any.
 - Scores are indicative (100 minus weighted deductions), not a ranking prediction.
 - Lighthouse numbers are lab measurements from this machine; field data (CrUX) may differ.
 - The AEO audit has its own score, separate from the SEO score. Blocked training bots (GPTBot, ClaudeBot, CCBot, ...) and a `__usage_ai-training` opt-out are info: opting out of training is the site owner's choice and does not keep the site out of AI answers. Ask before you "fix" one. Google-Extended blocks both Gemini training and Gemini Apps grounding; there is no token for one without the other.
