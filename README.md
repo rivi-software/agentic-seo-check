@@ -49,7 +49,7 @@ Two audits share that core: the **SEO audit** (`audit`, `crawl`) for search engi
 
 ### SEO audit
 
-| Area | Examples (146 rules, `agentic-seo-check rules` lists them) |
+| Area | Examples (152 rules, `agentic-seo-check rules` lists them) |
 | --- | --- |
 | On-page basics | title missing/long/short/placeholder ("React App"), meta description, H1 and heading outline, canonical (missing, conflicting, relative, pointing elsewhere), robots meta and `X-Robots-Tag`, `lang`, viewport, charset, doctype |
 | Head and indexing | an element that ends `<head>` early (a pixel `<img>`, an `<iframe>`, stray text) so Google ignores the metadata after it, canonical, description or hreflang in `<body>`, meta refresh redirects, a charset declared past the first 1024 bytes, contradicting (`index` and `noindex`) or misspelled (`no-index`) robots directives, an HTTP `Link` canonical that disagrees with the HTML one |
@@ -61,7 +61,7 @@ Two audits share that core: the **SEO audit** (`audit`, `crawl`) for search engi
 | Content | empty or thin content, "lorem ipsum", readability, keyword presence in title/H1/body/description/URL and density |
 | Response | 4xx/5xx, redirects and chains, slow HTML response, non-HTML content type, http instead of https |
 | Loading (no browser needed) | HTML sent without gzip or Brotli, scripts in `<head>` without `async`/`defer`, `loading="lazy"` on the first large image (or with `fetchpriority="high"`), wide images without `srcset`, a home page without an icon link for Google's search results |
-| Site-level (crawl or directory) | robots.txt (missing, blocking, disallowed pages), sitemap (missing, invalid, noindex/non-canonical/broken/redirecting URLs, pages not in sitemap, orphan pages), broken internal links with their sources, redirected links and chains, duplicate titles/descriptions/H1s/content, deep pages, soft 404, http→https and www redirects, hreflang return links |
+| Site-level (crawl or directory) | robots.txt (missing, blocking, disallowed pages), sitemap (missing, invalid, noindex/non-canonical/broken/redirecting URLs, pages not in sitemap, orphan pages), broken internal links with their sources, redirected links and chains, duplicate titles/descriptions/H1s/content, deep pages, soft 404, http→https and www redirects, hreflang return links; canonicals that point to a broken, redirecting or noindex URL or to a page that names another canonical, hreflang alternates that are broken, redirect, noindex or not canonical, noindex pages the site links to |
 | Rendering (`--render`, Playwright) | title/description/canonical/H1/content/links/structured data that only exist after JavaScript runs; noindex injected or removed by JavaScript; console errors |
 | Performance (`--lighthouse`, Chrome) | LCP, CLS, TBT, FCP, Speed Index, TTFB with Core Web Vitals thresholds, Lighthouse opportunities with estimated savings, failed Lighthouse SEO and agentic-browsing audits |
 

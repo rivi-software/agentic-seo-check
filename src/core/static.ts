@@ -9,7 +9,7 @@ import type { RobotsResult } from "./robots.js";
 import type { LinkCheck, PageRecord } from "./site-rules.js";
 import { parseSitemap } from "./sitemap.js";
 import type { SitemapInfo } from "./types.js";
-import { normalizePath, normalizeUrl } from "./url.js";
+import { hostOf, normalizePath, normalizeUrl } from "./url.js";
 
 export interface DirectoryOptions {
   /** Base URL used to build page URLs and resolve links. Defaults to http://localhost/ */
@@ -194,6 +194,44 @@ const checkLinks = async (
   return { linkChecks, linkSources };
 };
 
+/**
+ * Canonical and hreflang targets on the site's own host, checked against the files like links are.
+ * With the default base URL (localhost) a production canonical is on another host and is skipped.
+ */
+const checkMetadataTargets = async (
+  root: string,
+  records: PageRecord[],
+  base: URL,
+  fileByPathKey: Map<string, string>,
+  linkChecks: Map<string, LinkCheck>
+): Promise<void> => {
+  for (const record of records) {
+    for (const url of [
+      record.page.canonical,
+      ...record.page.hreflang.map((h) => h.url),
+    ]) {
+      const target = url ? normalizeUrl(url) : null;
+
+      if (
+        !target ||
+        linkChecks.has(target) ||
+        hostOf(target) !== base.hostname
+      ) {
+        continue;
+      }
+
+      const { pathname } = new URL(target);
+
+      const exists =
+        fileByPathKey.has(normalizePath(pathname)) ||
+        // oxlint-disable-next-line eslint/no-await-in-loop -- a target is checked once, so the next page naming it must see this check
+        (await fileExists(root, pathname));
+
+      linkChecks.set(target, fileCheck(target, target, exists));
+    }
+  }
+};
+
 /** Depth via breadth-first search from the root index (if present); returns the start page. */
 const assignDepths = (
   records: PageRecord[],
@@ -374,6 +412,8 @@ export const scanDirectory = async (
     records,
     fileByPathKey
   );
+
+  await checkMetadataTargets(root, records, base, fileByPathKey, linkChecks);
 
   const start = assignDepths(records, recordByKey);
 
