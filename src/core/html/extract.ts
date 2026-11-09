@@ -147,7 +147,7 @@ export const extractPage = (
     inPicture:
       el.parent !== null && isTag(el.parent) && el.parent.name === "picture",
     fetchpriority: attr(el, "fetchpriority")?.trim().toLowerCase() ?? null,
-    wordsBefore: position.get(el) ?? 0,
+    wordsBefore: position.get(el) ?? null,
   }));
 
   const links: LinkInfo[] = queryAll(doc, "a[href]").map((el) => {

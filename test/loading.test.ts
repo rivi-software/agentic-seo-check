@@ -134,6 +134,26 @@ describe("loading signals", () => {
     ).resolves.toStrictEqual([]);
   });
 
+  it("img.lazy-above-fold skips an image inside <template> and checks the real first image", async () => {
+    const [f] = await findingsOf(
+      "img.lazy-above-fold",
+      page(
+        `<template><img src="/card.jpg" width="600" height="400" alt="Card" loading="lazy"></template><h1>Blue widgets</h1><img src="/hero.jpg" alt="Hero" loading="lazy">${words(50)}`
+      )
+    );
+
+    expect(f?.evidence).toStrictEqual({ src: "/hero.jpg", wordsBefore: 2 });
+
+    await expect(
+      findingsOf(
+        "img.lazy-above-fold",
+        page(
+          `<template><img src="/card.jpg" width="600" height="400" alt="Card" loading="lazy"></template><h1>Blue widgets</h1>${words(150)}`
+        )
+      )
+    ).resolves.toStrictEqual([]);
+  });
+
   it("img.lazy-above-fold warns about fetchpriority=high with loading=lazy anywhere", async () => {
     const [f] = await findingsOf(
       "img.lazy-above-fold",

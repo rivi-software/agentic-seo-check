@@ -126,16 +126,23 @@ export const loadingRules = [
         );
       }
 
+      // An image in a <template> is not on the page until a script stamps it out.
       const first = page.images.find(
-        (i) => i.src && !isVector(i.src) && !isSmall(i)
+        (i) =>
+          i.src && i.wordsBefore !== null && !isVector(i.src) && !isSmall(i)
       );
 
-      return first && isLazy(first) && first.wordsBefore < ABOVE_FOLD_WORDS
+      const wordsBefore = first?.wordsBefore ?? null;
+
+      return first &&
+        wordsBefore !== null &&
+        isLazy(first) &&
+        wordsBefore < ABOVE_FOLD_WORDS
         ? make(
-            `The first image (${first.src}) comes after ${first.wordsBefore} words of text and has loading="lazy".`,
+            `The first image (${first.src}) comes after ${wordsBefore} words of text and has loading="lazy".`,
             {
               selector: 'img[loading="lazy"]',
-              evidence: { src: first.src, wordsBefore: first.wordsBefore },
+              evidence: { src: first.src, wordsBefore },
             }
           )
         : null;

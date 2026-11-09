@@ -92,8 +92,11 @@ export interface ImageInfo {
   /** The image sits in a <picture>, whose <source> elements offer other sizes or formats. */
   inPicture: boolean;
   fetchpriority: string | null;
-  /** Words of visible text before the image, a rough measure of how far down the page it is. */
-  wordsBefore: number;
+  /**
+   * Words of visible text before the image, a rough measure of how far down the page it is; null
+   * for an image that does not render where it is written (inside <template>, <noscript>, <svg>).
+   */
+  wordsBefore: number | null;
 }
 
 export interface LinkInfo {
