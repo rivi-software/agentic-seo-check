@@ -1,5 +1,22 @@
 # @rivi-software/agentic-seo-check
 
+## 0.5.0
+
+### Minor Changes
+
+- 65e3119: Findings now carry a `fix`: the exact edits that resolve them on this page, each saying where (`html`, `http`, `robots.txt`, `sitemap`, `llms.txt` or `asset`), what to do (`add`, `replace`, `remove`), the code there now as the server sent it and the code to write instead, with `{{…}}` slots for words only the author can write. The title and meta description rules have theirs; the other rules follow.
+  
+  Every finding also has a stable `id`, and the audits take two new options for checking a fix: `--rule` / `rules` runs only the named rules, and `--baseline` (an earlier audit's JSON) / `baseline` (its finding ids) adds `baseline` to the result with the findings since fixed, still open and new. A finding counts as fixed only when its rule ran again on its page. The Markdown report shows each edit and a Re-check section.
+- b1b4fbf: Every AEO rule now carries a `fix`. robots.txt fixes quote the lines that block a bot and give it its own group, without touching a training bot that shares the group (when only AI bots share it, the fix quotes the group's user-agent lines whole, so the answer and training fixes applied together cannot leave its rules without a user-agent line); training opt-outs, Content-Signal and `__usage_ai-training` fixes say it is the site owner's choice. Opt-out fixes rewrite the robots meta tag or `X-Robots-Tag` without the directive, llms.txt fixes give the file with a link line per audited page, and answer-ready fixes add the paragraph under a question heading or the JSON-LD author and dates. `aeo.bot-probe-inconclusive` has no fix: it is about the audit.
+- 9c6c328: Every page rule's finding now carries a `fix`: canonical, document, head, headings, hreflang, images, indexing, links, URL, loading, social, structured data, content, keyword and response rules, and `response.fetch-failed`. Edits quote the tag as the page writes it and give the rewritten tag: an absolute canonical or hreflang URL, `defer` on the blocking script, an `<h1>` turned into an `<h2>`, a price written as `19.99` with `priceCurrency`, a `301` in place of a meta refresh. Where a finding has two ways out, the fix takes the one that cannot hurt: it never deletes content, and indexing fixes say to keep a noindex that is deliberate. `structured-data.retired-type` has no fix, since the markup stays.
+- aed5248: Every crawl and directory rule (`site.*`), every `--render` rule (`rendering.*`) and every `--lighthouse` rule now carries a `fix`. Site fixes name the file or response they change with `url`: the robots.txt line that blocks a page, the sitemap `<loc>` to remove or repoint, the `<a>` tag on the linking page with the final URL of a redirect, the response a redirect hop should send. A page blocked by robots.txt is taken out of the sitemap rather than unblocked, and a noindex page out of the sitemap rather than made indexable. Render fixes quote the tag the rendered page has, to send from the server; Lighthouse fixes name the LCP image, the unsized images and the blocking resources Lighthouse found. A file to rebuild (a script to split, an image to re-encode) is an `asset` replace at `whole file`, with no `current` and the size or time to aim for in `write`. `site.crawl-limit-reached` has no fix: it is about the audit.
+  
+  `performance` (with `--lighthouse`) now also lists what those fixes are built from: `lcpElement`, `unsizedImages`, `layoutShifts`, `renderBlocking`, `scripts`, and up to 10 `items` per opportunity and failed audit.
+  
+  `site.hreflang-no-return-link` no longer reports a page whose canonical names another URL (a parameter variant is folded into that URL, so nothing should link back to it), and counts a page whose `en` and `x-default` links name the same alternate once.
+  
+  A crawl now keeps its pages in the order a one-at-a-time breadth-first crawl reaches them, whatever order parallel requests finish in, so `site.url-variant-duplicate` and the duplicate rules call the same URL the page (and the other the variant) on every run.
+
 ## 0.4.0
 
 ### Minor Changes
