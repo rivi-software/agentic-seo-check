@@ -1,7 +1,24 @@
-import type { ExtractedPage, PageSource } from "../types.js";
+import type { ExtractedPage, FixEdit, PageSource } from "../types.js";
 import { hostOf, resolveUrl } from "../url.js";
 import { isLocalHost } from "./canonical.js";
+import {
+  addEdit,
+  addHtml,
+  escapeAttribute,
+  replaceHtml,
+  setAttributeEdit,
+  slot,
+} from "./fix.js";
+import {
+  ORIGIN_SLOT_WRITE,
+  permanentRedirect,
+  withoutParameters,
+} from "./page-fixes.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
+
+/** A CSS attribute value in double quotes. */
+const cssString = (value: string): string =>
+  `"${value.replaceAll("\\", "\\\\").replaceAll('"', String.raw`\"`)}"`;
 
 /** Query parameters that only tell analytics where a click came from. */
 const TRACKING_PARAMETERS = new Set([
@@ -102,6 +119,82 @@ const pathWithoutLocales = (path: string): string =>
     .filter((segment) => !LOCALE_SEGMENT.test(segment))
     .join("/");
 
+/**
+ * The page's URL with each path segment respelled (locale segments as they are), as the page names
+ * itself: absolute on a live site, a path for files and dev servers.
+ */
+const respelled = (
+  page: ExtractedPage,
+  source: PageSource,
+  respell: (segment: string) => string
+): { variant: string; target: string } | null => {
+  let url: URL;
+
+  try {
+    url = new URL(page.url);
+  } catch {
+    return null;
+  }
+
+  const path = url.pathname
+    .split("/")
+    .map((segment) =>
+      LOCALE_SEGMENT.test(segment) ? segment : respell(segment)
+    )
+    .join("/");
+
+  const absolute = source === "url" && !isLocalHost(page.url);
+  const variant = `${absolute ? url.origin : ""}${path}${url.search}`;
+  const target = `${absolute ? url.origin : ""}${url.pathname}${url.search}`;
+
+  return { variant, target };
+};
+
+/**
+ * The redirect that sends another spelling of the page's path to the page. The page keeps its URL:
+ * renaming an indexed URL costs more than the spelling.
+ */
+const spellingRedirect = (
+  page: ExtractedPage,
+  source: PageSource,
+  respell: (segment: string) => string,
+  write: string
+): FixEdit[] => {
+  const spelling = respelled(page, source, respell);
+
+  return spelling
+    ? [
+        addEdit("http", "status line", permanentRedirect(spelling.target), {
+          url: spelling.variant,
+          write,
+        }),
+      ]
+    : [];
+};
+
+/** A path segment in lowercase, its percent-escapes kept uppercase as they are written. */
+const lowercaseSegment = (segment: string): string =>
+  segment.toLowerCase().replaceAll(/%[\da-f]{2}/gu, (m) => m.toUpperCase());
+
+/** A path segment with hyphens where underscores join words. */
+const hyphenatedSegment = (segment: string): string =>
+  segment.replaceAll(/(?<=[\p{L}\p{N}])_(?=[\p{L}\p{N}])/gu, "-");
+
+/** The edit that rewrites a link's href without the parameters `drop` selects. */
+const cleanLinkEdit = (
+  page: ExtractedPage,
+  link: ExtractedPage["links"][number],
+  drop: (name: string) => boolean,
+  write?: string
+): FixEdit =>
+  setAttributeEdit(
+    link.tag,
+    `a[href=${cssString(link.href)}]`,
+    "href",
+    escapeAttribute(withoutParameters(link.href, page.url, drop)),
+    write
+  );
+
 const KEEP_EXISTING_URLS =
   "Do not rename URLs that are already indexed or linked to only for this: a rename needs a 301 redirect from every old URL and resets what search engines know about the page. Apply it to new URLs.";
 
@@ -153,6 +246,150 @@ const urlsOnPage = (page: ExtractedPage): { url: string; where: string }[] => {
   return [...out].map(([url, where]) => ({ url, where }));
 };
 
+/** The origin of a development-host URL, to swap for the production one. */
+const devOrigin = (raw: string): string | null => {
+  const match = /^(?:https?:)?\/\/[^/?#]+/iu.exec(raw.trim());
+
+  return match ? match[0] : null;
+};
+
+/**
+ * Edits that move every URL on a development host to the production origin: the canonical, the
+ * hreflang links, og:url and og:image, links, images and resources, each in the tag that has it.
+ */
+const localHostEdits = (page: ExtractedPage): FixEdit[] => {
+  const origin = slot("https://www.example.com");
+  const edits: FixEdit[] = [];
+  const seen = new Set<string>();
+
+  const add = (
+    raw: string | null | undefined,
+    tag: string | undefined,
+    at: string,
+    attribute: string
+  ) => {
+    const from = raw ? devOrigin(raw) : null;
+    const absolute = raw ? resolveUrl(raw, page.url) : null;
+
+    if (!raw || !from || !absolute || !isDevHost(absolute)) {
+      return;
+    }
+
+    // A URL quoted on its own stops before any "&", which the source may write as "&amp;".
+    const quoted = tag ? raw : (raw.split("&")[0] ?? raw);
+    const moved = `${origin}${quoted.trim().slice(from.length)}`;
+    const key = `${at}|${raw}`;
+
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+
+    if (tag === undefined) {
+      edits.push(replaceHtml(quoted, moved, { at, write: ORIGIN_SLOT_WRITE }));
+
+      return;
+    }
+
+    edits.push(
+      tag.includes(raw)
+        ? replaceHtml(
+            tag,
+            tag.replace(raw, () => moved),
+            {
+              at,
+              write: ORIGIN_SLOT_WRITE,
+            }
+          )
+        : setAttributeEdit(tag, at, attribute, moved, ORIGIN_SLOT_WRITE)
+    );
+  };
+
+  for (const [i, raw] of page.canonicals.entries()) {
+    add(raw, page.markup.canonicals[i], 'head > link[rel="canonical"]', "href");
+  }
+
+  for (const h of page.hreflang) {
+    add(h.href, h.tag, `link[hreflang=${cssString(h.lang)}]`, "href");
+  }
+
+  for (const property of ["url", "image"] as const) {
+    add(
+      page.og[property],
+      page.markup.social[`og:${property}`],
+      `head > meta[property="og:${property}"]`,
+      "content"
+    );
+  }
+
+  for (const resource of page.resources) {
+    add(
+      resource.raw,
+      undefined,
+      `${resource.element}[${resource.attribute}*=${cssString(resource.raw)}]`,
+      resource.attribute
+    );
+  }
+
+  for (const link of page.links) {
+    add(link.href, link.tag, `a[href=${cssString(link.href)}]`, "href");
+  }
+
+  return edits;
+};
+
+/**
+ * `url`, which `raw` resolves to, cut where `raw` is cut at its first "&": the query after it is
+ * the same in both, while a <base href> before it may hold an "&" of its own.
+ */
+const cutLikeRaw = (url: string, raw: string): string => {
+  let cut = url.length;
+
+  for (let n = raw.split("&").length - 1; n > 0 && cut > 0; n -= 1) {
+    cut = url.lastIndexOf("&", cut - 1);
+  }
+
+  return cut > 0 ? url.slice(0, cut) : url;
+};
+
+/**
+ * Edits that load each insecure resource over https, once per URL as the page writes it. Only the
+ * scheme changes, so the quote stops before any "&", which the source may write as "&amp;".
+ */
+const httpsEdits = (resources: ExtractedPage["resources"]): FixEdit[] => {
+  const seen = new Set<string>();
+  const edits: FixEdit[] = [];
+
+  for (const r of resources) {
+    const quoted = r.raw.split("&")[0] ?? r.raw;
+
+    if (seen.has(quoted)) {
+      continue;
+    }
+
+    seen.add(quoted);
+    const at = `${r.element}[${r.attribute}*=${cssString(quoted)}]`;
+
+    // A relative URL is http:// only through an http <base href>: it is written out in full.
+    edits.push(
+      /^http:/iu.test(quoted)
+        ? replaceHtml(quoted, quoted.replace(/^http:/iu, "https:"), { at })
+        : replaceHtml(
+            quoted,
+            cutLikeRaw(r.url, r.raw).replace(/^http:/iu, "https:"),
+            {
+              at,
+              write:
+                "The page's <base href> is on http://; make it https:// too, and check that the https URL exists.",
+            }
+          )
+    );
+  }
+
+  return edits;
+};
+
 export const urlRules = [
   defineRule(
     {
@@ -171,6 +408,12 @@ export const urlRules = [
       return path &&
         /[A-Z]/u.test(pathWithoutLocales(path).replaceAll(/%[\dA-F]{2}/giu, ""))
         ? make(`The URL path ${path} has uppercase letters.`, {
+            fix: spellingRedirect(
+              page,
+              source,
+              lowercaseSegment,
+              "Have the lowercase spelling of the path redirect to this page, so links that differ in case reach it; whatever it answers now (404 or a copy of the page). For new pages, use lowercase paths from the start."
+            ),
             evidence: { path },
           })
         : null;
@@ -192,6 +435,12 @@ export const urlRules = [
       // Underscores in a word (/blue_widgets), not as a leading marker (/_next/, /_assets/).
       return path && /[\p{L}\p{N}]_[\p{L}\p{N}]/u.test(pathWithoutLocales(path))
         ? make(`The URL path ${path} uses underscores between words.`, {
+            fix: spellingRedirect(
+              page,
+              source,
+              hyphenatedSegment,
+              "Have the hyphenated spelling of the path redirect to this page, in case links use it. For new pages, separate words with hyphens from the start; keep this indexed URL as it is."
+            ),
             evidence: { path },
           })
         : null;
@@ -222,11 +471,54 @@ export const urlRules = [
       const parameter =
         own ?? (links[0]?.url ? sessionParameter(links[0].url) : null);
 
+      const isSession = (name: string) =>
+        name.toLowerCase() === parameter?.toLowerCase() ||
+        name.toLowerCase() === "jsessionid";
+
+      const serverSetting =
+        "Then keep the session in a cookie: in a Java servlet container, <tracking-mode>COOKIE</tracking-mode> in web.xml's <session-config>; in PHP, session.use_trans_sid=0 and session.use_only_cookies=1.";
+
+      // The page names its clean URL as canonical, so the session spelling folds into it.
+      const [canonicalTag] = page.markup.canonicals;
+
+      const clean = own
+        ? withoutParameters(page.url, page.url, isSession)
+        : null;
+
+      const ownEdit: FixEdit[] = clean
+        ? [
+            canonicalTag
+              ? setAttributeEdit(
+                  canonicalTag,
+                  'head > link[rel="canonical"]',
+                  "href",
+                  escapeAttribute(clean),
+                  serverSetting
+                )
+              : addHtml(
+                  "head",
+                  `<link rel="canonical" href="${escapeAttribute(clean)}">`,
+                  serverSetting
+                ),
+          ]
+        : [];
+
       return make(
         own
           ? `The page URL carries a session id (${own}).`
           : `${links.length} internal link(s) carry a session id (${parameter}).`,
         {
+          fix: [
+            ...ownEdit,
+            ...links.map((link, i) =>
+              cleanLinkEdit(
+                page,
+                link,
+                isSession,
+                i === 0 && ownEdit.length === 0 ? serverSetting : undefined
+              )
+            ),
+          ],
           evidence: {
             parameter,
             pageUrl: own ? page.url : null,
@@ -265,6 +557,9 @@ export const urlRules = [
 
       return tagged.length > 0
         ? make(`${tagged.length} internal link(s) carry tracking parameters.`, {
+            fix: tagged.map((link) =>
+              cleanLinkEdit(page, link, isTrackingParameter)
+            ),
             evidence: {
               count: tagged.length,
               examples: cap(tagged.map((l) => l.url)),
@@ -295,6 +590,7 @@ export const urlRules = [
       }
 
       const places = [...new Set(local.map((u) => u.where))];
+      const fix = localHostEdits(page);
 
       // A tutorial may link to http://localhost:3000 on purpose, for the reader's own machine.
       const onlyAnchors = places.every((w) => w === "<a href>");
@@ -306,6 +602,7 @@ export const urlRules = [
           recommendation: onlyAnchors
             ? "If these links are meant for the reader's own machine (a setup guide), leave them. Otherwise build them from the production site URL or make them relative."
             : undefined,
+          fix,
           evidence: {
             count: local.length,
             examples: cap(local.map((u) => `${u.where}: ${u.url}`)),
@@ -329,6 +626,13 @@ export const urlRules = [
         ? make(
             `${page.missingFragments.length} same-page link(s) point to ids that are not on the page: ${cap(page.missingFragments, 5).join(", ")}.`,
             {
+              fix: page.missingFragments.map((href) =>
+                addHtml(
+                  `the element ${href} should scroll to`,
+                  `id="${escapeAttribute(href.slice(1))}"`,
+                  `Put this id on the section or heading the link ${href} means. If a script handles the click instead (a menu or modal toggle), make the link a <button type="button">.`
+                )
+              ),
               selector: cap(page.missingFragments, 5)
                 .map((href) => `a[href="${href.replaceAll('"', '\\"')}"]`)
                 .join(", "),
@@ -374,11 +678,15 @@ export const urlRules = [
       const examples = (list: typeof blocked) =>
         cap(list.map((r) => `${r.kind}: ${r.url}`));
 
+      const fixOf = (list: typeof blocked) => httpsEdits(list);
+
       return [
         blocked.length > 0
           ? make(
               `Browsers block ${blocked.length} resource(s) the page loads over http (${[...new Set(blocked.map((r) => r.kind))].join(", ")}).`,
               {
+                fix: fixOf(blocked),
+                key: "blocked",
                 evidence: {
                   count: blocked.length,
                   examples: examples(blocked),
@@ -391,6 +699,8 @@ export const urlRules = [
               `${upgraded.length} resource URL(s) use http; browsers upgrade them to https, which fails where the https URL does not exist.`,
               {
                 severity: "info",
+                fix: fixOf(upgraded),
+                key: "upgraded",
                 evidence: {
                   count: upgraded.length,
                   examples: examples(upgraded),

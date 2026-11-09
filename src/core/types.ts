@@ -188,6 +188,8 @@ export interface LinkInfo {
   hasAccessibleName: boolean;
   /** The `<a>` start tag as the HTML writes it, for a fix to quote. */
   tag: string;
+  /** The whole `<a>` element as the HTML writes it, cut at 500 characters. */
+  outer: string;
 }
 
 export interface HreflangInfo {
@@ -204,12 +206,18 @@ export interface StructuredDataItem {
   context: string | null;
   // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the page's own JSON-LD or microdata, in whatever schema.org shape it has
   data: Record<string, unknown>;
+  /** JSON-LD: the text of the <script> the item comes from, as written (cut at 20,000 characters), for a fix to quote. */
+  scriptText?: string;
 }
 
 export interface StructuredDataError {
   source: "json-ld";
   message: string;
   snippet: string;
+  /** Which `<script type="application/ld+json">` of the page it is, counted from 0 (the index into `markup.jsonLd`). */
+  script: number;
+  /** The script's text as written (cut at 20,000 characters), for a fix to quote. */
+  text: string;
 }
 
 /** A heading (or FAQ `<summary>`/`<dt>`) phrased as a question, and the text that follows it. */
@@ -264,6 +272,11 @@ export interface ResourceInfo {
     | "track";
   /** Absolute http(s) URL. */
   url: string;
+  /** The URL as the attribute writes it, before it is resolved, for a fix to quote. */
+  raw: string;
+  /** The element that loads it ("script", "img", ...) and the attribute the URL is in ("src", "srcset", ...). */
+  element: string;
+  attribute: string;
 }
 
 /** A `<meta http-equiv="refresh">`: reload or redirect after a number of seconds. */
@@ -300,6 +313,40 @@ export interface HeadSignals {
   blockingScripts: string[];
   /** `href` of icon links: rel icon, shortcut icon, apple-touch-icon(-precomposed). */
   icons: string[];
+  /** The source of what the fields above describe, as the HTML writes it, for a fix to quote. */
+  sources: HeadSources;
+}
+
+/**
+ * Source quotes for `HeadSignals`, cut to 500 characters with a trailing "…" like the rest of
+ * `PageMarkup`.
+ */
+export interface HeadSources {
+  /**
+   * What to move out of <head>: the element that ended it (whole), the text, or, when it sat in a
+   * <noscript>, that whole <noscript> block. Null when nothing ended <head> early.
+   */
+  closedBy: string | null;
+  /** Each element of `inBody`, in the same order. */
+  inBody: string[];
+  /** Each element of `streamedInBody`, in the same order. */
+  streamedInBody: string[];
+  /** Each `<meta http-equiv="refresh">` of `refresh`, in the same order. */
+  refresh: string[];
+  /** Each `<script>` start tag of `blockingScripts`, in the same order. */
+  blockingScripts: string[];
+}
+
+/** A paragraph-like element of the body (`<p>`, `<li>`, `<td>`, ...) that holds no other such element. */
+export interface TextBlock {
+  /** Its visible text, whitespace collapsed. */
+  text: string;
+  /** The whole element as written, cut at 500 characters (a cut quote ends in "…"). */
+  outer: string;
+  /** Its start tag as written. */
+  tag: string;
+  /** The element name, for its end tag. */
+  name: string;
 }
 
 /**
@@ -328,6 +375,8 @@ export interface PageMarkup {
   social: Record<string, string>;
   /** Each `<script type="application/ld+json">` start tag, in document order. */
   jsonLd: string[];
+  /** The body's text blocks in document order, the first 300, for a fix that rewrites a passage. */
+  blocks: TextBlock[];
 }
 
 /** Everything the extractor pulls out of one HTML document. Rules read only this. */

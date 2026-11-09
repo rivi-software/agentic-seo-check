@@ -196,7 +196,7 @@ const attributesOf = (
 export const withAttribute = (
   tag: string,
   name: string,
-  value: string
+  value: string | true
 ): string | null => {
   const parsed = attributesOf(tag);
 
@@ -204,7 +204,8 @@ export const withAttribute = (
     return null;
   }
 
-  const attribute = ` ${name}="${value}"`;
+  // `true` writes a boolean attribute bare, the way authors write `defer` or `async`.
+  const attribute = value === true ? ` ${name}` : ` ${name}="${value}"`;
   const lower = name.toLowerCase();
   const existing = parsed.spans.find((s) => s.name === lower);
 
@@ -244,7 +245,7 @@ export const setAttributeEdit = (
   tag: string | null,
   at: string,
   name: string,
-  value: string,
+  value: string | true,
   write?: string
 ): FixEdit => {
   const rewritten = tag ? withAttribute(tag, name, value) : null;
@@ -253,7 +254,7 @@ export const setAttributeEdit = (
     return replaceHtml(tag, rewritten, { at, write });
   }
 
-  return addHtml(at, `${name}="${value}"`, write);
+  return addHtml(at, value === true ? name : `${name}="${value}"`, write);
 };
 
 /**

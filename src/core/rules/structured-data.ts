@@ -1,7 +1,26 @@
+import { isHomePage } from "../aeo/page.js";
 import { isJsonObject, isString, typesOf } from "../html/structured-data.js";
 import type { JsonObject, JsonValue } from "../html/structured-data.js";
-import type { StructuredDataItem } from "../types.js";
+import type {
+  ExtractedPage,
+  FixEdit,
+  PageSource,
+  StructuredDataItem,
+} from "../types.js";
+import { addHtml, replaceHtml, slot } from "./fix.js";
+import {
+  json,
+  jsonLdAt,
+  jsonProperty,
+  productionOrigin,
+} from "./page-fixes.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
+import {
+  addPropertiesEdit,
+  invalidJsonEdits,
+  isoDate,
+  STRUCTURED_SLOTS_WRITE,
+} from "./structured-data-fixes.js";
 import { RETIRED_RICH_RESULTS } from "./structured-data-values.js";
 
 interface SchemaSpec {
@@ -368,6 +387,224 @@ export const validateItem = (item: StructuredDataItem): ItemValidation => {
   return { required, recommended, badDates, unknownTypes };
 };
 
+/** A date property whose value is not ISO 8601, with the object it sits in. */
+interface BadDate {
+  item: StructuredDataItem;
+  type: string;
+  path: string;
+  key: string;
+  value: string;
+}
+
+/** Every date property of the page's structured data that is not ISO 8601. */
+const badDatesOf = (items: StructuredDataItem[]): BadDate[] => {
+  const out: BadDate[] = [];
+  const seen = new Set<JsonObject | JsonValue[]>();
+
+  const walk = (
+    item: StructuredDataItem,
+    node: JsonValue | undefined,
+    path: string,
+    depth: number
+  ): void => {
+    if (
+      depth > 6 ||
+      !(Array.isArray(node) || isJsonObject(node)) ||
+      seen.has(node)
+    ) {
+      return;
+    }
+
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      for (const [i, n] of node.entries()) {
+        walk(item, n, `${path}[${i}]`, depth);
+      }
+
+      return;
+    }
+
+    const type = typesOf(node["@type"])[0] ?? "object";
+
+    for (const [key, value] of Object.entries(node)) {
+      if (
+        DATE_PROPS.has(key) &&
+        isString(value) &&
+        !ISO_DATE.test(value.trim())
+      ) {
+        out.push({ item, type, path, key, value });
+      }
+
+      walk(item, value, path ? `${path}.${key}` : key, depth + 1);
+    }
+  };
+
+  for (const item of items) {
+    // SAFETY: extractStructuredData builds every item's data from JSON.parse or from microdata, and both hold JSON values alone.
+    walk(item, item.data as JsonObject, "", 0);
+  }
+
+  return out;
+};
+
+/** The edit that writes one date as ISO 8601, in place when the source quotes it as written. */
+const dateEdit = (bad: BadDate): FixEdit => {
+  const iso = isoDate(bad.value);
+  const value = iso ? json(iso) : `"${slot("ISO 8601 date, e.g. 2026-03-14")}"`;
+
+  const write = iso
+    ? undefined
+    : `"${bad.value}" can be read more than one way (03/04 is March or April), so write the date it means.`;
+
+  if (bad.item.source === "microdata") {
+    return replaceHtml(
+      bad.value,
+      iso ?? slot("ISO 8601 date, e.g. 2026-03-14"),
+      {
+        at: `[itemprop="${bad.key}"]`,
+        write:
+          write ??
+          "In a <time> element, write the ISO date in its datetime attribute and keep the visible text as it is.",
+      }
+    );
+  }
+
+  const current = jsonProperty(bad.item.scriptText, bad.key, bad.value);
+  const code = `"${bad.key}": ${value}`;
+  const at = jsonLdAt(bad.type, bad.path);
+
+  return current
+    ? replaceHtml(current, code, { at, write })
+    : addHtml(
+        at,
+        code,
+        write ?? `This replaces the "${bad.key}" the object has.`
+      );
+};
+
+/** The JSON-LD block to add to a page without structured data: the site on its home page, else the page's subject. */
+const starterBlock = (page: ExtractedPage, source: PageSource): FixEdit => {
+  const origin = productionOrigin(page, source);
+  const originUrl = origin.includes("{{") ? `"${origin}/"` : json(`${origin}/`);
+
+  const props: [string, string][] = isHomePage(page.url)
+    ? [
+        ["@type", '"WebSite"'],
+        ["name", `"${slot("site name")}"`],
+        ["url", originUrl],
+      ]
+    : [
+        [
+          "@type",
+          `"${slot("Article, Product, Event or another type that fits")}"`,
+        ],
+        [
+          "name",
+          // The main heading names the subject; a <title> often adds the site name.
+          page.h1s[0] ? json(page.h1s[0]) : `"${slot("page subject")}"`,
+        ],
+        [
+          "url",
+          source === "html"
+            ? `"${slot("page URL")}"`
+            : json(page.canonical ?? page.url),
+        ],
+      ];
+
+  const body = [["@context", '"https://schema.org"'], ...props]
+    .map(([k, v]) => `  "${k}": ${v}`)
+    .join(",\n");
+
+  return addHtml(
+    "head",
+    `<script type="application/ld+json">\n{\n${body}\n}\n</script>`,
+    isHomePage(page.url)
+      ? `The site's name as it should show in search results, and its production origin. ${STRUCTURED_SLOTS_WRITE}`
+      : `The schema.org type that fits the page, then the properties Google lists for it (Article: headline, image, datePublished, author; Product: name, image, offers). ${STRUCTURED_SLOTS_WRITE}`
+  );
+};
+
+/** The edit that gives a JSON-LD object a schema.org @context. */
+const contextEdit = (item: StructuredDataItem): FixEdit => {
+  const at = jsonLdAt(item.types[0] ?? "object");
+  const code = '"@context": "https://schema.org"';
+
+  const current =
+    item.context === null
+      ? null
+      : jsonProperty(item.scriptText, "@context", item.context);
+
+  if (current) {
+    return replaceHtml(current, code, { at });
+  }
+
+  return addHtml(
+    at,
+    code,
+    item.context === null
+      ? "Add it to the script's top-level object (the one with @graph, if the script has one)."
+      : `This replaces the @context "${item.context}" the object has.`
+  );
+};
+
+/** The edit that gives a structured data item its @type. */
+const typeEdit = (item: StructuredDataItem): FixEdit => {
+  const keys = Object.keys(item.data)
+    .filter((k) => !k.startsWith("@"))
+    .slice(0, 6);
+
+  const write = `The schema.org type this object describes, judging by its properties (${keys.join(", ") || "none"}): Article, Product, Organization, Person, Event, ...`;
+
+  return item.source === "microdata"
+    ? addHtml(
+        "[itemscope]:not([itemtype])",
+        `itemtype="https://schema.org/${slot("type")}"`,
+        write
+      )
+    : addHtml(
+        jsonLdAt("object"),
+        `"@type": "${slot("schema.org type")}"`,
+        write
+      );
+};
+
+/**
+ * What tells a missing-property finding apart from others on the page: the type, the path and the
+ * item's own @id or url. Not the item's place, which moves when an earlier script is fixed, and
+ * not the missing properties, which shrink when some of them are added. Items alike in all of
+ * these share it and are numbered.
+ */
+const issueKey = (
+  item: StructuredDataItem,
+  iss: { type: string; path: string }
+): string => {
+  // SAFETY: extractStructuredData builds every item's data from JSON.parse or from microdata, and both hold JSON values alone.
+  const data = item.data as JsonObject;
+  const name = data["@id"] ?? data["url"];
+
+  return `${iss.type} ${iss.path} ${isString(name) ? name : ""}`;
+};
+
+/**
+ * What tells one broken JSON-LD script from another while it is being fixed: the first @type its
+ * text names, which a partial fix leaves alone. Not its place, which moves when an earlier block
+ * is removed, nor its text, which every edit changes. An empty block has none; scripts alike share
+ * it and are numbered.
+ */
+const brokenScriptKey = (text: string): string | undefined => {
+  if (!text.trim()) {
+    return undefined;
+  }
+
+  // At most 100 characters are tried after each "@type", so the pattern stays linear.
+  const type = /"@type"\s*:\s*"(?<type>[^"\\]{1,100})"/u.exec(text)?.groups?.[
+    "type"
+  ];
+
+  return type ?? "no @type";
+};
+
 export const structuredDataRules = [
   defineRule(
     {
@@ -383,6 +620,12 @@ export const structuredDataRules = [
     ({ page }, make) =>
       page.structuredDataErrors.map((e) =>
         make(`Invalid JSON-LD: ${e.message}`, {
+          fix: invalidJsonEdits(
+            e.text,
+            page.markup.jsonLd[e.script],
+            e.message
+          ),
+          key: brokenScriptKey(e.text),
           selector: 'script[type="application/ld+json"]',
           evidence: { snippet: e.snippet },
         })
@@ -398,9 +641,11 @@ export const structuredDataRules = [
         "Add JSON-LD for the page type (Article, Product, Organization, BreadcrumbList, Event, Recipe, ...) to qualify for rich results.",
       docs: GOOGLE_DOCS.structuredData,
     },
-    ({ page }, make) =>
+    ({ page, source }, make) =>
       page.structuredData.length === 0 && page.structuredDataErrors.length === 0
-        ? make("Page has no structured data.")
+        ? make("Page has no structured data.", {
+            fix: [starterBlock(page, source)],
+          })
         : null
   ),
   defineRule(
@@ -423,6 +668,7 @@ export const structuredDataRules = [
 
       return bad.length
         ? make(`${bad.length} JSON-LD item(s) lack a schema.org @context.`, {
+            fix: bad.map(contextEdit),
             selector: 'script[type="application/ld+json"]',
             evidence: {
               contexts: cap(bad.map((i) => i.context)),
@@ -447,6 +693,7 @@ export const structuredDataRules = [
 
       return bad.length
         ? make(`${bad.length} structured data item(s) have no @type.`, {
+            fix: bad.map(typeEdit),
             evidence: {
               sources: cap(bad.map((i) => i.source)),
               keys: cap(bad.map((i) => Object.keys(i.data).slice(0, 8))),
@@ -466,12 +713,21 @@ export const structuredDataRules = [
         "Add the missing properties listed in evidence. Validate with https://search.google.com/test/rich-results after fixing.",
       docs: GOOGLE_DOCS.structuredData,
     },
-    ({ page }, make) =>
+    ({ page, source }, make) =>
       page.structuredData.flatMap((item) => {
         const { required } = validateItem(item);
 
         return required.map((iss) =>
           make(`${iss.type} is missing required: ${iss.missing.join(", ")}.`, {
+            fix: [
+              addPropertiesEdit(item, iss.missing, {
+                page,
+                source,
+                type: iss.type,
+                path: iss.path,
+              }),
+            ],
+            key: issueKey(item, iss),
             selector:
               item.source === "json-ld"
                 ? 'script[type="application/ld+json"]'
@@ -498,7 +754,7 @@ export const structuredDataRules = [
         "Add the recommended properties where the data exists; they unlock additional rich-result features.",
       docs: GOOGLE_DOCS.structuredData,
     },
-    ({ page }, make) =>
+    ({ page, source }, make) =>
       page.structuredData.flatMap((item) => {
         const { recommended } = validateItem(item);
 
@@ -506,6 +762,15 @@ export const structuredDataRules = [
           make(
             `${iss.type} is missing recommended: ${iss.missing.join(", ")}.`,
             {
+              fix: [
+                addPropertiesEdit(item, iss.missing, {
+                  page,
+                  source,
+                  type: iss.type,
+                  path: iss.path,
+                }),
+              ],
+              key: issueKey(item, iss),
               evidence: {
                 type: iss.type,
                 missing: iss.missing,
@@ -532,6 +797,7 @@ export const structuredDataRules = [
 
       return bad.length
         ? make(`${bad.length} structured data date(s) are not ISO 8601.`, {
+            fix: badDatesOf(page.structuredData).map(dateEdit),
             evidence: { examples: cap(bad) },
           })
         : null;

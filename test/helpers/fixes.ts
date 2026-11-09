@@ -5,15 +5,28 @@ import type { Finding, FixEdit } from "../../src/core/types.js";
 export const editsOf = (findings: Finding[]): [Finding, FixEdit][] =>
   findings.flatMap((f) => (f.fix ?? []).map((e): [Finding, FixEdit] => [f, e]));
 
-/** Findings without a fix; `tool.*` findings are about this machine and have none. */
+/**
+ * Findings that have no fix on purpose: they describe the audit rather than the site (the crawl
+ * limit, a bot probe that could not run), or there is nothing to change (a retired rich result,
+ * whose markup answer engines still read). `tool.*` findings are about this machine.
+ */
+export const RULES_WITHOUT_FIX = new Set([
+  "site.crawl-limit-reached",
+  "aeo.bot-probe-inconclusive",
+  "structured-data.retired-type",
+]);
+
+/** Findings without a fix, other than those that have none on purpose. */
 export const withoutFix = (findings: Finding[]): string[] =>
   findings.flatMap((f) =>
-    f.rule.startsWith("tool.") || f.fix?.length ? [] : [f.rule]
+    f.rule.startsWith("tool.") || RULES_WITHOUT_FIX.has(f.rule) || f.fix?.length
+      ? []
+      : [f.rule]
   );
 
 /**
- * HTML edits whose `current` is not in `source` as written: a fix an agent could not find. A quote
- * cut short (ending in "…") is left out.
+ * HTML edits of this page whose `current` is not in `source` as written: a fix an agent could not
+ * find. Edits of another page (`url` set) and quotes cut short (ending in "…") are left out.
  */
 export const unquotedEdits = (
   findings: Finding[],
@@ -21,6 +34,7 @@ export const unquotedEdits = (
 ): [string, string][] =>
   editsOf(findings).flatMap(([f, e]): [string, string][] =>
     e.in === "html" &&
+    e.url === undefined &&
     e.current !== undefined &&
     !isCut(e.current) &&
     !source.includes(e.current)

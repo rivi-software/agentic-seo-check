@@ -24,6 +24,10 @@ const URL_A = "https://www.example.com/a";
 const ld = (price: string) =>
   `<script type="application/ld+json">{"@context":"https://schema.org","@type":"Offer","price":"${price}","priceCurrency":"EUR"}</script>`;
 
+/** An Offer with these properties after its @type. */
+const offerWith = (props: string) =>
+  `<script type="application/ld+json">{"@context":"https://schema.org","@type":"Offer"${props}}</script>`;
+
 const idsOf = (findings: Finding[]): string[] =>
   findings.flatMap((f) => (f.id ? [f.id] : []));
 
@@ -418,6 +422,107 @@ describe("a re-check of a rule that reports several findings on a page", () => {
       fixed: [{ id: ids[2] }],
       open: [ids[0], ids[1]],
       new: [newOffer?.id],
+    });
+  });
+});
+
+/** Audits `before`, then `after` against it with only `rules`: the first findings and the comparison. */
+const recheckPage = async (before: string, after: string, rules: string[]) => {
+  const first = await auditHtml(page("A title long enough to pass", before), {
+    url: URL_A,
+  });
+
+  const second = await auditHtml(
+    page("A title long enough to pass", after),
+    { url: URL_A },
+    {
+      baseline: baselineFromAudit(JSON.stringify(first)),
+      onlyRules: rules,
+    }
+  );
+
+  return { first: first.findings, baseline: second.baseline };
+};
+
+describe("a re-check after a fix to an earlier JSON-LD script", () => {
+  const product = `<script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"Blue widget"}</script>`;
+
+  it("keeps a later item's finding open when an earlier script starts to parse", async () => {
+    const broken = `<script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"Acme",}</script>`;
+    const repaired = broken.replace('"Acme",}', '"Acme"}');
+
+    const { first, baseline } = await recheckPage(
+      broken + product,
+      repaired + product,
+      ["structured-data.invalid-json", "structured-data.missing-required"]
+    );
+
+    const idOf = (rule: string) => first.find((f) => f.rule === rule)?.id;
+
+    expect(baseline).toMatchObject({
+      fixed: [{ id: idOf("structured-data.invalid-json") }],
+      open: [idOf("structured-data.missing-required")],
+      new: [],
+    });
+  });
+
+  it("keeps a later script's invalid-json finding open when an earlier empty one is removed", async () => {
+    const empty = '<script type="application/ld+json"></script>';
+
+    const broken =
+      '<script type="application/ld+json">{"name": "X",,}</script>';
+
+    const { first, baseline } = await recheckPage(empty + broken, broken, [
+      "structured-data.invalid-json",
+    ]);
+
+    expect(baseline).toMatchObject({
+      fixed: [{ id: first[0]?.id }],
+      open: [first[1]?.id],
+      new: [],
+    });
+  });
+
+  it("keeps a missing-property finding open when only some of the properties are added", async () => {
+    const { first, baseline } = await recheckPage(
+      offerWith(""),
+      offerWith(',"price":"19.99"'),
+      ["structured-data.missing-required"]
+    );
+
+    const missing = first.filter(
+      (f) => f.rule === "structured-data.missing-required"
+    );
+
+    expect(missing.map((f) => f.message)).toStrictEqual([
+      "Offer is missing required: price, priceCurrency.",
+    ]);
+    expect(baseline).toMatchObject({
+      fixed: [],
+      open: [missing[0]?.id],
+      new: [],
+    });
+  });
+
+  it("keeps an invalid-json finding open when a fix leaves the script still broken", async () => {
+    // A trailing comma and an unquoted key: removing the comma alone still leaves invalid JSON.
+    const broken = `<script type="application/ld+json">{"@context":"https://schema.org","@type":"Product",name:"Blue widget",}</script>`;
+
+    const { first, baseline } = await recheckPage(
+      broken,
+      broken.replace('",}', '"}'),
+      ["structured-data.invalid-json"]
+    );
+
+    const invalid = first.filter(
+      (f) => f.rule === "structured-data.invalid-json"
+    );
+
+    expect(invalid).toHaveLength(1);
+    expect(baseline).toMatchObject({
+      fixed: [],
+      open: [invalid[0]?.id],
+      new: [],
     });
   });
 });

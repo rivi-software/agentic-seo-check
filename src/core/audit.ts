@@ -676,6 +676,15 @@ export const auditUrl = async (
       message: `Could not fetch ${url}: ${res.error}`,
       recommendation:
         "Check that the URL is reachable from this machine (DNS, TLS, firewall, dev server running) and that it responds within the timeout.",
+      fix: [
+        {
+          in: "http",
+          action: "add",
+          at: "response",
+          code: "HTTP/1.1 200 OK\nContent-Type: text/html; charset=utf-8",
+          write: `Make the URL answer from this machine within the timeout: start the dev server, or fix the DNS record, TLS certificate or firewall rule behind "${res.error}".`,
+        },
+      ],
       url,
       evidence: { error: res.error, redirectChain: res.redirectChain },
     });

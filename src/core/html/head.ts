@@ -2,8 +2,15 @@ import { isTag, isText } from "domhandler";
 import { parse } from "parse5";
 import { adapter } from "parse5-htmlparser2-tree-adapter";
 
-import type { HeadSignals, MetaRefresh } from "../types.js";
-import { attr, queryAll, queryOne } from "./dom.js";
+import type { HeadSignals, HeadSources, MetaRefresh } from "../types.js";
+import {
+  attr,
+  MAX_QUOTE_CHARS,
+  queryAll,
+  queryOne,
+  quote as quoteSource,
+  sourceOf,
+} from "./dom.js";
 import type { AnyNode, Document, Element } from "./dom.js";
 import { collapseWhitespace } from "./text.js";
 
@@ -71,6 +78,8 @@ interface BodyMetadata {
   described: string;
   /** Inside a hidden element, where React streams tags that its JavaScript then hoists into <head>. */
   streamed: boolean;
+  /** The element as the HTML writes it. */
+  source: string;
 }
 
 const isInsideHidden = (el: Element): boolean => {
@@ -87,16 +96,102 @@ const isInsideHidden = (el: Element): boolean => {
   return false;
 };
 
-const metadataElements = (root: AnyNode): BodyMetadata[] =>
+const metadataElements = (root: AnyNode, html: string): BodyMetadata[] =>
   queryAll(root, "title, meta[name], link[rel]").flatMap((el) => {
     const described = describeMetadata(el);
 
-    return described ? [{ described, streamed: isInsideHidden(el) }] : [];
+    if (!described) {
+      return [];
+    }
+
+    const source =
+      sourceOf(el, html, el.name === "title" ? "outer" : "start") ??
+      `<${el.name}>`;
+
+    return [{ described, streamed: isInsideHidden(el), source }];
   });
 
 /** Metadata elements under `root`, in document order, as `describeMetadata` writes them. */
-const metadataIn = (root: AnyNode): string[] =>
-  metadataElements(root).map((m) => m.described);
+const metadataIn = (root: AnyNode, html: string): string[] =>
+  metadataElements(root, html).map((m) => m.described);
+
+/** Elements without an end tag, whose start tag is the whole element. */
+const VOID_ELEMENTS = new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "source",
+  "track",
+  "wbr",
+]);
+
+/** `text` without ASCII whitespace at its ends; a byte order mark or no-break space stays. */
+const trimAscii = (text: string): string =>
+  text.replace(/^[\t\n\f\r ]+/u, "").replace(/[\t\n\f\r ]+$/u, "");
+
+/**
+ * The source of what ended <head>, whole, to move out of it: an element with its content (only
+ * its start tag and "…" when the author never closed it), or the text without the whitespace
+ * around it.
+ */
+const closingSource = (node: AnyNode, source: string): string | null => {
+  const location = node.sourceCodeLocation;
+
+  if (!location) {
+    return null;
+  }
+
+  if (isText(node)) {
+    return quoteSource(
+      trimAscii(source.slice(location.startOffset, location.endOffset))
+    );
+  }
+
+  if (!isTag(node)) {
+    return null;
+  }
+
+  if (node.sourceCodeLocation?.endTag || VOID_ELEMENTS.has(node.name)) {
+    return sourceOf(node, source, "outer");
+  }
+
+  const start = sourceOf(node, source, "start");
+
+  if (start === null) {
+    return null;
+  }
+
+  return start.endsWith("…")
+    ? start
+    : `${start.slice(0, MAX_QUOTE_CHARS - 1)}…`;
+};
+
+/** The whole `<noscript>` in <head> of `doc` that holds the source offset `offset`. */
+const noscriptAround = (
+  doc: Document,
+  offset: number,
+  source: string
+): string | null => {
+  const el = queryAll(doc, "head noscript").find((n) => {
+    const location = n.sourceCodeLocation;
+
+    return (
+      location !== undefined &&
+      location !== null &&
+      location.startOffset <= offset &&
+      offset < location.endOffset
+    );
+  });
+
+  return el ? sourceOf(el, source, "outer") : null;
+};
 
 /** Characters that look like whitespace but end <head>, by the name a reader recognizes. */
 const INVISIBLE_NAMES = new Map([
@@ -173,7 +268,7 @@ const parseHead = (prefix: string, scriptingEnabled: boolean): HeadParse => {
 
   return {
     closedBy,
-    afterClose: body && closedBy ? metadataIn(body) : [],
+    afterClose: body && closedBy ? metadataIn(body, prefix) : [],
     doc,
   };
 };
@@ -217,9 +312,15 @@ const charsetEnd = (doc: Document, source: string): number | null => {
 /** Metadata in <body>, apart from what a framework streams there for its JavaScript to move. */
 const splitStreamed = (
   items: BodyMetadata[]
-): Pick<HeadSignals, "inBody" | "streamedInBody"> => ({
+): Pick<HeadSignals, "inBody" | "streamedInBody"> & {
+  sources: Pick<HeadSources, "inBody" | "streamedInBody">;
+} => ({
   inBody: items.flatMap((m) => (m.streamed ? [] : [m.described])),
   streamedInBody: items.flatMap((m) => (m.streamed ? [m.described] : [])),
+  sources: {
+    inBody: items.flatMap((m) => (m.streamed ? [] : [m.source])),
+    streamedInBody: items.flatMap((m) => (m.streamed ? [m.source] : [])),
+  },
 });
 
 /** Types that make a <script> run as JavaScript; anything else (JSON, templates) never blocks. */
@@ -233,16 +334,30 @@ const isJavaScriptType = (type: string | undefined): boolean => {
  * Scripts in <head> the parser waits for: external, classic, neither async nor defer. A nomodule
  * script is a fallback for old browsers, which current ones neither download nor run.
  */
-const blockingScripts = (doc: Document): string[] =>
-  queryAll(doc, "head script[src]")
-    .filter(
-      (el) =>
-        isJavaScriptType(attr(el, "type")) &&
-        attr(el, "async") === undefined &&
-        attr(el, "defer") === undefined &&
-        attr(el, "nomodule") === undefined
-    )
-    .map((el) => (attr(el, "src") ?? "").trim());
+const blockingScriptElements = (doc: Document): Element[] =>
+  queryAll(doc, "head script[src]").filter(
+    (el) =>
+      isJavaScriptType(attr(el, "type")) &&
+      attr(el, "async") === undefined &&
+      attr(el, "defer") === undefined &&
+      attr(el, "nomodule") === undefined
+  );
+
+interface BlockingScripts {
+  srcs: string[];
+  /** Each script's start tag as written, for a fix to quote. */
+  tags: string[];
+}
+
+/** The `src` of each blocking script, and its start tag as written. */
+const blockingScripts = (doc: Document, html: string): BlockingScripts => {
+  const els = blockingScriptElements(doc);
+
+  return {
+    srcs: els.map((el) => (attr(el, "src") ?? "").trim()),
+    tags: els.map((el) => sourceOf(el, html) ?? "<script>"),
+  };
+};
 
 const ICON_RELS = new Set([
   "icon",
@@ -259,27 +374,39 @@ export const extractHeadSignals = (
   html: string,
   doc: Document
 ): HeadSignals => {
-  const refresh = queryAll(doc, "meta[http-equiv]")
-    .filter(
-      (el) => (attr(el, "http-equiv") ?? "").trim().toLowerCase() === "refresh"
-    )
-    .map((el) => parseRefresh(attr(el, "content") ?? ""));
+  const refreshEls = queryAll(doc, "meta[http-equiv]").filter(
+    (el) => (attr(el, "http-equiv") ?? "").trim().toLowerCase() === "refresh"
+  );
 
+  const refresh = refreshEls.map((el) =>
+    parseRefresh(attr(el, "content") ?? "")
+  );
+
+  const refreshSources = refreshEls.map((el) => sourceOf(el, html) ?? "<meta>");
+  const scripts = blockingScripts(doc, html);
   const body = queryOne(doc, "body");
-  const metadataInBody = body ? metadataElements(body) : [];
+  const metadataInBody = body ? metadataElements(body, html) : [];
 
   const end = HEAD_END.exec(html);
 
   if (!end) {
+    const { sources, ...inBody } = splitStreamed(metadataInBody);
+
     return {
       closedBy: null,
       closedInNoscript: false,
       afterClose: [],
-      ...splitStreamed(metadataInBody),
+      ...inBody,
       refresh,
       charsetEndByte: null,
-      blockingScripts: blockingScripts(doc),
+      blockingScripts: scripts.srcs,
       icons: iconLinks(doc),
+      sources: {
+        closedBy: null,
+        ...sources,
+        refresh: refreshSources,
+        blockingScripts: scripts.tags,
+      },
     };
   }
 
@@ -289,16 +416,38 @@ export const extractHeadSignals = (
   // A <noscript> in <head> is text to a browser that runs scripts and markup to one that does not.
   const plain = browser.closedBy ? browser : parseHead(prefix, false);
   const { closedBy } = plain;
+  const closedInNoscript = !browser.closedBy && Boolean(closedBy);
+
+  // The parse of the whole page puts metadata after `closedBy` in <body> too; count it once.
+  const { sources, ...inBody } = splitStreamed(
+    metadataInBody.slice(browser.afterClose.length)
+  );
+
+  let closedBySource: string | null = null;
+
+  if (closedBy) {
+    const offset = closedBy.sourceCodeLocation?.startOffset;
+
+    closedBySource =
+      closedInNoscript && offset !== undefined
+        ? noscriptAround(browser.doc, offset, prefix)
+        : closingSource(closedBy, prefix);
+  }
 
   return {
     closedBy: closedBy ? quote(closedBy, prefix) : null,
-    closedInNoscript: !browser.closedBy && Boolean(closedBy),
+    closedInNoscript,
     afterClose: plain.afterClose,
-    // The parse of the whole page puts metadata after `closedBy` in <body> too; count it once.
-    ...splitStreamed(metadataInBody.slice(browser.afterClose.length)),
+    ...inBody,
     refresh,
     charsetEndByte: charsetEnd(browser.doc, prefix),
-    blockingScripts: blockingScripts(doc),
+    blockingScripts: scripts.srcs,
     icons: iconLinks(doc),
+    sources: {
+      closedBy: closedBySource,
+      ...sources,
+      refresh: refreshSources,
+      blockingScripts: scripts.tags,
+    },
   };
 };

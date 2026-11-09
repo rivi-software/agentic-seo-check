@@ -386,6 +386,13 @@ describe("head and indexing signals", () => {
       charsetEndByte: 59,
       blockingScripts: [],
       icons: [],
+      sources: {
+        closedBy: '<img src="/x.gif">',
+        inBody: ['<link rel="alternate" hreflang="nl" href="/nl/">'],
+        streamedInBody: [],
+        refresh: [],
+        blockingScripts: [],
+      },
     });
   });
 });
