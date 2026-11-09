@@ -159,8 +159,9 @@ export interface AnswerSignals {
 /** A subresource the page requests: a script, stylesheet, frame, image or media file. */
 export interface ResourceInfo {
   /**
-   * What browsers do with it on an https page: they upgrade `image` and `media` to https and block
-   * the rest, including a `responsive-image` (an image with srcset or in a <picture>).
+   * What browsers do with it on an https page: they upgrade `image` and `media` (audio, video) to
+   * https and block the rest, including a `responsive-image` (an image with srcset or in a
+   * <picture>) and a `track` (subtitles).
    */
   kind:
     | "script"
@@ -169,7 +170,8 @@ export interface ResourceInfo {
     | "object"
     | "image"
     | "responsive-image"
-    | "media";
+    | "media"
+    | "track";
   /** Absolute http(s) URL. */
   url: string;
 }

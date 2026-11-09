@@ -64,9 +64,16 @@ describe("URL and link hygiene", () => {
     ).resolves.toHaveLength(1);
 
     await expect(
+      findingsOf("url.uppercase", html, "https://a.example/Our-Team/")
+    ).resolves.toHaveLength(1);
+
+    await expect(
       quietOn("url.uppercase", html, [
         "https://a.example/en-US/widgets/",
         "https://a.example/zh-Hans/widgets/",
+        "https://a.example/zh-Hant-TW/widgets/",
+        "https://a.example/es-419/widgets/",
+        "https://a.example/en-us/widgets/",
         "https://a.example/caf%C3%A9/",
         "https://a.example/widgets/?Color=Blue",
       ])
@@ -82,6 +89,10 @@ describe("URL and link hygiene", () => {
 
     await expect(
       findingsOf("url.underscores", html, "https://a.example/blue_widgets/")
+    ).resolves.toHaveLength(1);
+
+    await expect(
+      findingsOf("url.underscores", html, "https://a.example/how_to_cook/")
     ).resolves.toHaveLength(1);
 
     await expect(
@@ -224,5 +235,51 @@ describe("URL and link hygiene", () => {
       "/img/b.webp",
       "/img/c.jpg",
     ]);
+  });
+
+  it("https.mixed-content reads upgrade-insecure-requests from joined CSP headers, and blocks subtitles", async () => {
+    const url = "https://www.example.com/widgets/blue/";
+
+    const html = page(
+      '<script src="http://cdn.example/app.js"></script><video src="https://cdn.example/v.mp4"><track src="http://cdn.example/subs.vtt"></video>'
+    );
+
+    const plain = await auditHtml(html, { url, source: "url" });
+
+    expect(
+      plain.findings
+        .filter((f) => f.rule === "https.mixed-content")
+        .map((f) => [f.severity, f.evidence?.["examples"]])
+    ).toStrictEqual([
+      [
+        "warning",
+        [
+          "script: http://cdn.example/app.js",
+          "track: http://cdn.example/subs.vtt",
+        ],
+      ],
+    ]);
+
+    const joined = await auditHtml(html, {
+      url,
+      source: "url",
+      response: {
+        status: 200,
+        finalUrl: url,
+        redirectChain: [],
+        timeMs: 10,
+        contentType: "text/html",
+        headers: {
+          "content-security-policy":
+            "frame-ancestors 'self', upgrade-insecure-requests",
+        },
+      },
+    });
+
+    expect(
+      joined.findings
+        .filter((f) => f.rule === "https.mixed-content")
+        .map((f) => f.severity)
+    ).toStrictEqual(["info"]);
   });
 });

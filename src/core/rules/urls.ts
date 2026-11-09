@@ -87,8 +87,13 @@ const pagePath = (page: ExtractedPage, source: PageSource): string | null => {
   }
 };
 
-/** A locale segment such as en-US, pt_BR or zh-Hans, whose case and underscore are conventions. */
-const LOCALE_SEGMENT = /^[a-z]{2,3}(?:[-_][a-z\d]{2,8}){1,2}$/iu;
+/**
+ * A locale segment such as en-US, en-us, pt_BR, es-419, zh-Hans or zh-Hant-TW, whose case and
+ * underscore are conventions: a lowercase language, then an optional Title-case script and an
+ * optional two-letter or three-digit region. "Our-Team" and "how_to_cook" do not match.
+ */
+const LOCALE_SEGMENT =
+  /^[a-z]{2,3}(?:[-_][A-Z][a-z]{3})?(?:[-_](?:[A-Za-z]{2}|\d{3}))?$/u;
 
 /** The path without locale segments, which are spelled the way the locale is. */
 const pathWithoutLocales = (path: string): string =>
@@ -355,7 +360,8 @@ export const urlRules = [
       // upgrade-insecure-requests (meta tag or header) has the browser request all of them over https.
       const upgradesAll =
         page.upgradesInsecureRequests ||
-        /(?:^|;)\s*upgrade-insecure-requests\s*(?:;|$)/iu.test(
+        // Several CSP headers arrive joined with ", ", and a comma separates policies.
+        /(?:^|[;,])\s*upgrade-insecure-requests\s*(?:[;,]|$)/iu.test(
           response?.headers["content-security-policy"] ?? ""
         );
 

@@ -96,9 +96,13 @@ const kindOf = (el: Element): ResourceInfo["kind"] | null => {
     }
 
     case "audio":
-    case "video":
-    case "track": {
+    case "video": {
       return "media";
+    }
+
+    // Subtitles are not among the destinations browsers upgrade (image, audio, video).
+    case "track": {
+      return "track";
     }
 
     default: {
