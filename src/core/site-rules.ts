@@ -1,4 +1,5 @@
 import { normalizeForComparison, shingles, jaccard } from "./html/text.js";
+import { agentMatcher } from "./robots.js";
 import { robotsDirectives } from "./rules/indexing.js";
 import { finding, GOOGLE_DOCS, cap } from "./rules/rule.js";
 import type {
@@ -59,6 +60,27 @@ export const SITE_RULES: RuleMeta[] = [
     GOOGLE_DOCS.robotsTxt
   ),
   meta(
+    "site.robots-txt-too-large",
+    "warning",
+    "robots.txt is larger than 500 KiB; Google ignores everything after the first 500 KiB.",
+    "Shorten robots.txt: group paths under shared prefixes, use wildcards (Disallow: /*?sort=) instead of listing URLs one by one, and remove rules for paths that no longer exist.",
+    "https://developers.google.com/crawling/docs/robots-txt/robots-txt-spec"
+  ),
+  meta(
+    "site.robots-txt-unsupported-rule",
+    "warning",
+    "robots.txt uses rules Google does not support: noindex or nofollow lines (retired in 2019, so the pages stay indexable; warning) or crawl-delay (Google ignores it, Bing reads it; info).",
+    "Remove noindex: and nofollow: lines and use a robots meta tag or X-Robots-Tag header on the pages instead. Crawl-delay may stay for Bing and other crawlers; Google sets its crawl rate itself.",
+    "https://developers.google.com/crawling/docs/robots-txt/robots-txt-spec"
+  ),
+  meta(
+    "site.robots-blocks-resources",
+    "warning",
+    "robots.txt keeps Googlebot from scripts or stylesheets the pages load, so Google renders the pages without them.",
+    "Allow the CSS and JavaScript files pages need (Allow: /assets/, or remove the Disallow line for that folder). Keep blocking only what pages do not need to render.",
+    "https://developers.google.com/search/docs/crawling-indexing/robots/intro"
+  ),
+  meta(
     "site.sitemap-missing",
     "warning",
     "No XML sitemap was found (robots.txt Sitemap: line or /sitemap.xml).",
@@ -71,6 +93,41 @@ export const SITE_RULES: RuleMeta[] = [
     "A sitemap could not be fetched or parsed.",
     "Make the sitemap return 200 with valid XML (urlset or sitemapindex).",
     GOOGLE_DOCS.sitemaps
+  ),
+  meta(
+    "site.sitemap-too-large",
+    "error",
+    "A sitemap holds more than 50,000 URLs or more than 50 MB uncompressed, which search engines do not read (error); or it is larger than the 15 MB this audit reads, so it was not checked (info).",
+    "Split the sitemap into files of at most 50,000 URLs and 50 MB each, and list them in a sitemap index.",
+    "https://developers.google.com/search/docs/crawling-indexing/sitemaps/large-sitemaps"
+  ),
+  meta(
+    "site.sitemap-index-nested",
+    "warning",
+    "A sitemap index lists another sitemap index; Google reads only sitemaps from an index, not further indexes.",
+    "List every sitemap file directly in one sitemap index (up to 50,000), or submit each index separately in Search Console.",
+    "https://developers.google.com/search/docs/crawling-indexing/sitemaps/large-sitemaps"
+  ),
+  meta(
+    "site.sitemap-lastmod-invalid",
+    "warning",
+    "Sitemap <lastmod> values are not in W3C Datetime format, so search engines ignore them.",
+    "Write <lastmod> as a date (2026-11-09) or a date and time with its time zone (2026-11-09T10:00:00+01:00).",
+    "https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap"
+  ),
+  meta(
+    "site.sitemap-lastmod-future",
+    "info",
+    "Sitemap <lastmod> values lie in the future. Google uses lastmod only when it is consistently accurate.",
+    "Set <lastmod> to when the page's content last changed, not to the build time plus an offset or a publish date to come.",
+    "https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap"
+  ),
+  meta(
+    "site.sitemap-other-host",
+    "info",
+    "The site's sitemaps list URLs on other hosts. Google accepts them only for hosts verified in Search Console or whose own robots.txt names the sitemap.",
+    "List each host's URLs in a sitemap that host's robots.txt names. If the URLs use another domain by mistake (a staging or old domain), generate them from the production site URL.",
+    "https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap"
   ),
   meta(
     "site.sitemap-noindex-page",
@@ -317,6 +374,8 @@ export interface SiteContext {
   /** For every internal target URL, the pages linking to it. */
   linkSources: Map<string, Set<string>>;
   robots: RobotsTxtInfo | null;
+  /** robots.txt up to 500 KiB, for checks per user agent (`robots.text` stops at 20,000 characters). */
+  robotsText?: string | null;
   robotsAllows: ((url: string) => boolean) | null;
   blockedByRobots: string[];
   sitemaps: SitemapInfo;
@@ -472,6 +531,227 @@ interface SiteScope {
   okPages: PageRecord[];
   isIndexable: (p: PageRecord) => boolean;
 }
+
+/** Google reads the first 500 KiB of robots.txt and ignores the rest. */
+const ROBOTS_MAX_BYTES = 512_000;
+
+/** Lines of robots.txt whose field Google does not support, by what that costs. */
+interface UnsupportedRobotsLines {
+  /** noindex: and nofollow: lines, which Google stopped reading in 2019. */
+  retired: string[];
+  crawlDelay: string[];
+}
+
+const unsupportedRobotsLines = (text: string): UnsupportedRobotsLines => {
+  const retired: string[] = [];
+  const crawlDelay: string[] = [];
+
+  for (const [i, raw] of text.split(/\r?\n/u).slice(0, 50_000).entries()) {
+    const line = raw.replace(/#.*$/u, "").trim();
+
+    const field = /^(?<field>[a-z-]+)\s*:/iu
+      .exec(line)
+      ?.groups?.field?.toLowerCase();
+
+    if (field === "noindex" || field === "nofollow") {
+      retired.push(`line ${i + 1}: ${line.slice(0, 120)}`);
+    } else if (field === "crawl-delay") {
+      crawlDelay.push(`line ${i + 1}: ${line.slice(0, 120)}`);
+    }
+  }
+
+  return { retired, crawlDelay };
+};
+
+/** robots.txt's size and the rules in it Google does not support. */
+const robotsContentFindings = (ctx: SiteContext): Finding[] => {
+  const out: Finding[] = [];
+  const bytes = ctx.robots?.bytes ?? 0;
+
+  if (bytes > ROBOTS_MAX_BYTES) {
+    out.push(
+      finding(
+        m("site.robots-txt-too-large"),
+        `robots.txt is ${Math.round(bytes / 1024)} KiB; Google reads only the first 500 KiB.`,
+        { evidence: { url: ctx.robots?.url, bytes } }
+      )
+    );
+  }
+
+  const text = ctx.robotsText ?? ctx.robots?.text;
+
+  if (!text) {
+    return out;
+  }
+
+  const { retired, crawlDelay } = unsupportedRobotsLines(text);
+
+  if (retired.length > 0 || crawlDelay.length > 0) {
+    out.push(
+      finding(
+        m("site.robots-txt-unsupported-rule"),
+        retired.length > 0
+          ? `robots.txt has ${retired.length} noindex or nofollow line(s), which Google stopped reading in 2019.`
+          : `robots.txt sets crawl-delay, which Google ignores.`,
+        {
+          severity: retired.length > 0 ? "warning" : "info",
+          evidence: {
+            url: ctx.robots?.url,
+            retired: cap(retired),
+            crawlDelay: cap(crawlDelay),
+          },
+        }
+      )
+    );
+  }
+
+  return out;
+};
+
+const originOf = (url: string): string | null => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+};
+
+/** Scripts and stylesheets on the site's own origin that robots.txt keeps Googlebot from. */
+const blockedResourceFindings = ({
+  ctx,
+  okPages,
+  isIndexable,
+}: SiteScope): Finding[] => {
+  const { robots, robotsText: text } = ctx;
+
+  if (!robots?.found || !text) {
+    return [];
+  }
+
+  const origin = originOf(robots.url);
+
+  if (!origin) {
+    return [];
+  }
+
+  const allowed = agentMatcher(robots.url, text);
+  const verdicts = new Map<string, boolean>();
+  const blocked = new Map<string, Set<string>>();
+
+  // Only pages meant for search: Google need not render a noindex checkout or account page.
+  for (const p of okPages.filter(isIndexable)) {
+    for (const r of p.page.resources) {
+      if (r.kind !== "script" && r.kind !== "stylesheet") {
+        continue;
+      }
+
+      // This robots.txt has no say over files on a CDN or another host.
+      if (originOf(r.url) !== origin) {
+        continue;
+      }
+
+      let ok = verdicts.get(r.url);
+
+      if (ok === undefined) {
+        ok = allowed(r.url, "Googlebot");
+        verdicts.set(r.url, ok);
+      }
+
+      if (!ok) {
+        const pages = blocked.get(r.url) ?? new Set<string>();
+        pages.add(p.url);
+        blocked.set(r.url, pages);
+      }
+    }
+  }
+
+  const list = [...blocked]
+    .map(([url, pages]) => ({ url, pages: pages.size }))
+    .toSorted((a, b) => b.pages - a.pages);
+
+  return list.length > 0
+    ? [
+        finding(
+          m("site.robots-blocks-resources"),
+          `robots.txt keeps Googlebot from ${list.length} script(s) or stylesheet(s) the pages load.`,
+          { evidence: { count: list.length, examples: cap(list) } }
+        ),
+      ]
+    : [];
+};
+
+/** Sitemaps over the protocol's limits, nested indexes, bad lastmod values and other hosts. */
+const sitemapProtocolFindings = (ctx: SiteContext): Finding[] => {
+  const { problems } = ctx.sitemaps;
+  const out: Finding[] = [];
+  const over = problems.oversized.filter((o) => o.overLimit);
+  const unread = problems.oversized.filter((o) => !o.overLimit);
+
+  if (over.length > 0) {
+    out.push(
+      finding(
+        m("site.sitemap-too-large"),
+        `${over.length} sitemap(s) exceed 50,000 URLs or 50 MB.`,
+        { evidence: { sitemaps: cap(over) } }
+      )
+    );
+  }
+
+  if (unread.length > 0) {
+    out.push(
+      finding(
+        m("site.sitemap-too-large"),
+        `${unread.length} sitemap(s) are larger than the 15 MB this audit reads, so their URLs were not checked.`,
+        {
+          severity: "info",
+          recommendation:
+            "Check that each stays under 50 MB and 50,000 URLs; smaller sitemaps (10,000 URLs or fewer) are also quicker for search engines to fetch again.",
+          evidence: { sitemaps: cap(unread) },
+        }
+      )
+    );
+  }
+
+  if (problems.nestedIndexes.length > 0) {
+    out.push(
+      finding(
+        m("site.sitemap-index-nested"),
+        `${problems.nestedIndexes.length} sitemap index(es) are listed by another sitemap index.`,
+        { evidence: { indexes: cap(problems.nestedIndexes) } }
+      )
+    );
+  }
+
+  const examples = [
+    [
+      "site.sitemap-lastmod-invalid",
+      problems.invalidLastmod,
+      "have a <lastmod> that is not a W3C Datetime",
+    ],
+    [
+      "site.sitemap-lastmod-future",
+      problems.futureLastmod,
+      "have a <lastmod> in the future",
+    ],
+    [
+      "site.sitemap-other-host",
+      problems.otherHost,
+      "are on another host than the site",
+    ],
+  ] as const;
+
+  for (const [id, list, label] of examples) {
+    if (list.count > 0) {
+      out.push(
+        finding(m(id), `${list.count} sitemap URL(s) ${label}.`, {
+          evidence: { count: list.count, examples: list.examples },
+        })
+      );
+    }
+  }
+
+  return out;
+};
 
 const robotsFindings = (ctx: SiteContext): Finding[] => {
   const out: Finding[] = [];
@@ -703,7 +983,12 @@ const sitemapFindings = (scope: SiteScope): Finding[] => {
     );
   }
 
-  if (ctx.sitemaps.sources.length === 0 && ctx.sitemaps.errors.length === 0) {
+  // A sitemap too large to read was still found.
+  if (
+    ctx.sitemaps.sources.length === 0 &&
+    ctx.sitemaps.errors.length === 0 &&
+    ctx.sitemaps.problems.oversized.length === 0
+  ) {
     out.push(
       finding(m("site.sitemap-missing"), "No sitemap was found.", {
         severity: ctx.source === "directory" ? "info" : "warning",
@@ -1266,7 +1551,10 @@ export const runSiteRules = (ctx: SiteContext): Finding[] => {
 
   return [
     ...robotsFindings(ctx),
+    ...robotsContentFindings(ctx),
+    ...blockedResourceFindings(scope),
     ...sitemapFindings(scope),
+    ...sitemapProtocolFindings(ctx),
     ...linkHealthFindings(ctx),
     ...unreachedFindings(ctx),
     ...duplicateFindings(scope),

@@ -389,7 +389,38 @@ export interface RobotsTxtInfo {
   sitemaps: string[];
   /** Raw text, capped. */
   text: string | null;
+  /** Size of the file in bytes, or null when there is none. */
+  bytes: number | null;
   error?: string;
+}
+
+/** A count of sitemap entries with one problem, and the first few of them. */
+export interface SitemapExamples {
+  count: number;
+  /** "URL (value)" for the first 10. */
+  examples: string[];
+}
+
+/** Where the sitemaps break the sitemap protocol or what Google reads of it. */
+export interface SitemapProblems {
+  /**
+   * Sitemaps over 50,000 URLs or 50 MB uncompressed (`overLimit`), or larger than the 15 MB this
+   * audit reads, which it could not check.
+   */
+  oversized: {
+    sitemap: string;
+    urls: number | null;
+    bytes: number | null;
+    overLimit: boolean;
+  }[];
+  /** Sitemap indexes that another sitemap index lists, which Google does not read. */
+  nestedIndexes: string[];
+  /** URLs whose <lastmod> is not a W3C Datetime such as 2026-11-09 or 2026-11-09T10:00:00+01:00. */
+  invalidLastmod: SitemapExamples;
+  /** URLs whose <lastmod> is later than the time of the audit. */
+  futureLastmod: SitemapExamples;
+  /** URLs on another host than the audited site. */
+  otherHost: SitemapExamples;
 }
 
 export interface SitemapInfo {
@@ -399,6 +430,7 @@ export interface SitemapInfo {
   urls: string[];
   urlCount: number;
   errors: string[];
+  problems: SitemapProblems;
 }
 
 export interface CrawlStats {

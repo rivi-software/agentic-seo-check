@@ -5,10 +5,14 @@ import type { AddressInfo } from "node:net";
 export interface Route {
   status?: number;
   headers?: Record<string, string>;
-  body?: string;
+  /** Text, in which __ORIGIN__ and __PATH__ are filled in, or bytes sent as they are (a gzip file). */
+  body?: string | Buffer;
   /** Answer 403 to a request whose User-Agent contains one of these, as a CDN that blocks bots does. */
   blockUserAgents?: string[];
 }
+
+/** The site a fixture server serves, by path; a test may add a route once the server listens. */
+export type Routes = Record<string, Route>;
 
 export interface FixtureServer {
   origin: string;
@@ -81,7 +85,7 @@ const originOf = (server: http.Server) => {
 };
 
 export const startFixtureServer = async (
-  routes: Record<string, Route>
+  routes: Routes
 ): Promise<FixtureServer> => {
   const requests: string[] = [];
   const userAgents: string[] = [];
@@ -117,6 +121,13 @@ export const startFixtureServer = async (
     }
 
     res.writeHead(route.status ?? 200);
+
+    if (Buffer.isBuffer(route.body)) {
+      res.end(route.body);
+
+      return;
+    }
+
     res.end(
       (route.body ?? "")
         .replaceAll("__ORIGIN__", origin)

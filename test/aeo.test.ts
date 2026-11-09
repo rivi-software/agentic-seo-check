@@ -68,6 +68,7 @@ const robotsAt = (text: string | null, status = 200): RobotsTxtInfo => ({
   url: "https://www.example.com/robots.txt",
   status,
   found: text !== null,
+  bytes: text === null ? null : Buffer.byteLength(text),
   sitemaps: [],
   text,
 });

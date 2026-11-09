@@ -1,17 +1,38 @@
+import { promisify } from "node:util";
+import { gunzip } from "node:zlib";
+
 import { XMLParser } from "fast-xml-parser";
 
 import { fetchPage } from "./fetch.js";
 import type { FetchOptions } from "./fetch.js";
-import type { SitemapInfo } from "./types.js";
+import type { SitemapExamples, SitemapInfo, SitemapProblems } from "./types.js";
+import { isSameSite } from "./url.js";
+
+/** One sitemap file may hold this many URLs (sitemaps.org; Google applies the same limits). */
+export const SITEMAP_MAX_URLS = 50_000;
+
+/** And this many bytes, uncompressed. */
+export const SITEMAP_MAX_BYTES = 52_428_800;
+
+/** The most of one sitemap this audit reads, uncompressed; parsing more would cost too much memory. */
+export const SITEMAP_READ_BYTES = 15_000_000;
 
 export interface SitemapLimits {
   maxSitemaps?: number;
   maxUrls?: number;
+  /**
+   * The audited site's host. A sitemap the site's robots.txt names may list its URLs from another
+   * host (Google allows it), so URLs are compared with this host, not the sitemap's.
+   */
+  siteHost?: string;
+  includeSubdomains?: boolean;
 }
 
 export interface ParsedSitemap {
   kind: "urlset" | "sitemapindex" | "text" | "unknown";
   locs: string[];
+  /** The <lastmod> of each entry in `locs`, or null where it has none. */
+  lastmods: (string | null)[];
 }
 
 const parser = new XMLParser({
@@ -24,31 +45,54 @@ const parser = new XMLParser({
  * so every value is unknown until the guards below look at it.
  */
 interface SitemapXml {
-  sitemapindex?: { sitemap?: unknown };
-  urlset?: { url?: unknown };
+  // An empty element (<urlset></urlset>) parses as "", which is still a sitemap, with no entries.
+  sitemapindex?: { sitemap?: unknown } | "";
+  urlset?: { url?: unknown } | "";
 }
 
 const isString = (value: unknown): value is string => typeof value === "string";
 
 const isNumber = (value: unknown): value is number => typeof value === "number";
 
-const isEntry = (value: unknown): value is { loc?: unknown } =>
+/** One <url> or <sitemap> element as the parser gives it: its children are unchecked. */
+interface SitemapEntry {
+  loc?: unknown;
+  lastmod?: unknown;
+}
+
+const isEntry = (value: unknown): value is SitemapEntry =>
   Boolean(value) && typeof value === "object";
 
-const locsOf = (entries: unknown[]): string[] => {
-  const out: string[] = [];
+/** The text of one child element; the parser turns a number-like text into a number. */
+const textOf = (
+  entry: SitemapEntry,
+  child: keyof SitemapEntry
+): string | null => {
+  const value = entry[child];
+
+  if (isString(value) && value.trim()) {
+    return value.trim();
+  }
+
+  return isNumber(value) ? String(value) : null;
+};
+
+const entriesOf = (
+  entries: unknown[]
+): Pick<ParsedSitemap, "locs" | "lastmods"> => {
+  const locs: string[] = [];
+  const lastmods: (string | null)[] = [];
 
   for (const e of entries) {
-    const loc = isEntry(e) ? e.loc : undefined;
+    const loc = isEntry(e) ? textOf(e, "loc") : null;
 
-    if (isString(loc) && loc.trim()) {
-      out.push(loc.trim());
-    } else if (isNumber(loc)) {
-      out.push(String(loc));
+    if (loc) {
+      locs.push(loc);
+      lastmods.push(isEntry(e) ? textOf(e, "lastmod") : null);
     }
   }
 
-  return out;
+  return { locs, lastmods };
 };
 
 export const parseSitemap = (
@@ -58,7 +102,7 @@ export const parseSitemap = (
   const trimmed = body.trim();
 
   if (!trimmed) {
-    return { kind: "unknown", locs: [] };
+    return { kind: "unknown", locs: [], lastmods: [] };
   }
 
   if (!trimmed.startsWith("<")) {
@@ -66,16 +110,15 @@ export const parseSitemap = (
       (contentType ?? "").includes("text/plain") ||
       /^https?:\/\//mu.test(trimmed)
     ) {
-      return {
-        kind: "text",
-        locs: trimmed
-          .split(/\r?\n/u)
-          .map((l) => l.trim())
-          .filter((l) => /^https?:\/\//iu.test(l)),
-      };
+      const locs = trimmed
+        .split(/\r?\n/u)
+        .map((l) => l.trim())
+        .filter((l) => /^https?:\/\//iu.test(l));
+
+      return { kind: "text", locs, lastmods: locs.map(() => null) };
     }
 
-    return { kind: "unknown", locs: [] };
+    return { kind: "unknown", locs: [], lastmods: [] };
   }
 
   let doc: SitemapXml;
@@ -83,34 +126,155 @@ export const parseSitemap = (
   try {
     doc = parser.parse(trimmed);
   } catch {
-    return { kind: "unknown", locs: [] };
+    return { kind: "unknown", locs: [], lastmods: [] };
   }
 
-  if (doc.sitemapindex) {
-    const entries = doc.sitemapindex.sitemap;
+  if (doc.sitemapindex !== undefined) {
+    const entries =
+      doc.sitemapindex === "" ? undefined : doc.sitemapindex.sitemap;
 
     return {
       kind: "sitemapindex",
-      locs: Array.isArray(entries) ? locsOf(entries) : [],
+      ...entriesOf(Array.isArray(entries) ? entries : []),
     };
   }
 
-  if (doc.urlset) {
-    const entries = doc.urlset.url;
+  if (doc.urlset !== undefined) {
+    const entries = doc.urlset === "" ? undefined : doc.urlset.url;
 
     return {
       kind: "urlset",
-      locs: Array.isArray(entries) ? locsOf(entries) : [],
+      ...entriesOf(Array.isArray(entries) ? entries : []),
     };
   }
 
-  return { kind: "unknown", locs: [] };
+  return { kind: "unknown", locs: [], lastmods: [] };
+};
+
+const gunzipAsync = promisify(gunzip);
+
+/**
+ * A sitemap file's text: gunzipped when it is gzip (a .xml.gz file), or an error. Inflating stops
+ * at the same 15 MB budget a plain sitemap is read up to (`tooLarge`), so a small file that
+ * inflates to gigabytes costs no more than a large plain one.
+ */
+export const sitemapText = async (
+  bytes: Buffer
+): Promise<
+  { text: string; bytes: number } | { error: string; tooLarge: boolean }
+> => {
+  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
+    return { text: bytes.toString("utf-8"), bytes: bytes.length };
+  }
+
+  try {
+    const inflated = await gunzipAsync(bytes, {
+      maxOutputLength: SITEMAP_READ_BYTES + 1,
+    });
+
+    return { text: inflated.toString("utf-8"), bytes: inflated.length };
+  } catch (error) {
+    const tooLarge =
+      error instanceof RangeError ||
+      (error instanceof Error &&
+        "code" in error &&
+        error.code === "ERR_BUFFER_TOO_LARGE");
+
+    return {
+      error: tooLarge
+        ? "inflates to more than the 15 MB this audit reads"
+        : `is not valid gzip (${error instanceof Error ? error.message : String(error)})`,
+      tooLarge,
+    };
+  }
+};
+
+export const emptySitemapProblems = (): SitemapProblems => ({
+  oversized: [],
+  nestedIndexes: [],
+  invalidLastmod: { count: 0, examples: [] },
+  futureLastmod: { count: 0, examples: [] },
+  otherHost: { count: 0, examples: [] },
+});
+
+/*
+ * W3C Datetime: a year, a month, a day, then a time with an optional time zone. A time without a
+ * zone breaks the format but is common, and search engines read it, so it passes.
+ */
+const W3C_DATETIME =
+  /^\d{4}(?:-\d{2}(?:-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?)?)?)?$/u;
+
+/** A day of slack, so a lastmod written in a time zone ahead of the audit's is not "future". */
+const FUTURE_SLACK_MS = 86_400_000;
+
+const note = (list: SitemapExamples, example: string): void => {
+  list.count += 1;
+
+  if (list.examples.length < 10) {
+    list.examples.push(example.slice(0, 300));
+  }
+};
+
+export interface InspectOptions {
+  /** The sitemap was listed by a sitemap index. */
+  fromIndex: boolean;
+  /** The audited site's host, to compare each URL with, or null to skip that (build output on a placeholder host). */
+  siteHost: string | null;
+  includeSubdomains?: boolean;
+  now: number;
+}
+
+/** Record where one parsed sitemap file breaks the protocol. */
+export const inspectSitemap = (
+  problems: SitemapProblems,
+  sitemap: string,
+  parsed: ParsedSitemap,
+  bytes: number,
+  options: InspectOptions
+): void => {
+  if (parsed.kind === "sitemapindex" && options.fromIndex) {
+    problems.nestedIndexes.push(sitemap);
+  }
+
+  if (parsed.locs.length > SITEMAP_MAX_URLS || bytes > SITEMAP_MAX_BYTES) {
+    problems.oversized.push({
+      sitemap,
+      urls: parsed.locs.length,
+      bytes,
+      overLimit: true,
+    });
+  }
+
+  if (parsed.kind !== "urlset") {
+    return;
+  }
+
+  const { siteHost } = options;
+
+  for (const [i, loc] of parsed.locs.entries()) {
+    const lastmod = parsed.lastmods[i];
+
+    if (lastmod) {
+      const value = lastmod.slice(0, 64);
+
+      if (!W3C_DATETIME.test(value)) {
+        note(problems.invalidLastmod, `${loc} (${value})`);
+      } else if (Date.parse(value) > options.now + FUTURE_SLACK_MS) {
+        note(problems.futureLastmod, `${loc} (${value})`);
+      }
+    }
+
+    if (siteHost && !isSameSite(loc, siteHost, options.includeSubdomains)) {
+      note(problems.otherHost, `${loc} (in ${sitemap})`);
+    }
+  }
 };
 
 /** What fetching one sitemap gave: one to read, an error to report, or nothing to say. */
 type SitemapFetch =
-  | { kind: "parsed"; parsed: ParsedSitemap }
+  | { kind: "parsed"; parsed: ParsedSitemap; bytes: number }
   | { kind: "error"; message: string }
+  | { kind: "oversized"; bytes: number | null; overLimit: boolean }
   | { kind: "skip" };
 
 const fetchSitemap = async (
@@ -118,24 +282,18 @@ const fetchSitemap = async (
   candidates: string[],
   options: FetchOptions
 ): Promise<SitemapFetch> => {
-  if (url.endsWith(".gz")) {
-    return {
-      kind: "error",
-      message: `${url}: gzip sitemaps are not supported yet`,
-    };
-  }
-
   const res = await fetchPage(url, {
     ...options,
     timeoutMs: Math.min(options.timeoutMs ?? 15_000, 20_000),
-    maxBodyBytes: 15_000_000,
+    maxBodyBytes: SITEMAP_READ_BYTES,
+    keepBytes: true,
   });
 
   if (res.error) {
     return { kind: "error", message: `${url}: ${res.error}` };
   }
 
-  if (res.status !== 200 || res.body === null) {
+  if (res.status !== 200 || res.body === null || !res.bytes) {
     // A sitemap that answers 404 is passed over without an error.
     if (res.status !== 404) {
       return { kind: "error", message: `${url}: HTTP ${res.status}` };
@@ -144,13 +302,38 @@ const fetchSitemap = async (
     return { kind: "skip" };
   }
 
-  const parsed = parseSitemap(res.body, res.contentType);
+  if (res.truncated) {
+    const declared = Number(res.headers["content-length"]);
+    const known = Number.isFinite(declared) && declared > 0 ? declared : null;
 
-  if (parsed.kind !== "unknown") {
-    return { kind: "parsed", parsed };
+    // Content-Length counts compressed bytes for a Content-Encoding response or a gzip file; the
+    // uncompressed size is then unknown, though it can only be larger.
+    const compressed =
+      Boolean(res.headers["content-encoding"]) ||
+      (res.bytes[0] === 0x1f && res.bytes[1] === 0x8b);
+
+    return {
+      kind: "oversized",
+      bytes: compressed ? null : known,
+      overLimit: known !== null && known > SITEMAP_MAX_BYTES,
+    };
   }
 
-  if (!/<html/iu.test(res.body.slice(0, 1000))) {
+  const text = await sitemapText(res.bytes);
+
+  if ("error" in text) {
+    return text.tooLarge
+      ? { kind: "oversized", bytes: null, overLimit: false }
+      : { kind: "error", message: `${url}: ${text.error}` };
+  }
+
+  const parsed = parseSitemap(text.text, res.contentType);
+
+  if (parsed.kind !== "unknown") {
+    return { kind: "parsed", parsed, bytes: text.bytes };
+  }
+
+  if (!/<html/iu.test(text.text.slice(0, 1000))) {
     return { kind: "error", message: `${url}: could not parse as a sitemap` };
   }
 
@@ -170,22 +353,33 @@ export const loadSitemaps = async (
 ): Promise<SitemapInfo> => {
   const maxSitemaps = limits.maxSitemaps ?? 25;
   const maxUrls = limits.maxUrls ?? 5000;
-  const info: SitemapInfo = { sources: [], urls: [], urlCount: 0, errors: [] };
-  const queue = [...new Set(candidates)];
+
+  const info: SitemapInfo = {
+    sources: [],
+    urls: [],
+    urlCount: 0,
+    errors: [],
+    problems: emptySitemapProblems(),
+  };
+
+  const queue = [...new Set(candidates)].map((url) => ({
+    url,
+    fromIndex: false,
+  }));
+
   const seen = new Set<string>();
   const urls = new Set<string>();
+  const now = Date.now();
 
-  while (
-    queue.length > 0 &&
-    info.sources.length < maxSitemaps &&
-    urls.size < maxUrls
-  ) {
-    const url = queue.shift();
+  // Count every download, not only the sitemaps that parsed: one over the read limit still costs 15 MB.
+  while (queue.length > 0 && seen.size < maxSitemaps && urls.size < maxUrls) {
+    const next = queue.shift();
 
-    if (url === undefined || seen.has(url)) {
+    if (next === undefined || seen.has(next.url)) {
       continue;
     }
 
+    const { url, fromIndex } = next;
     seen.add(url);
 
     // oxlint-disable-next-line eslint/no-await-in-loop -- a sitemap index adds the sitemaps to fetch next, and the limits count what the earlier ones gave
@@ -195,15 +389,30 @@ export const loadSitemaps = async (
       info.errors.push(fetched.message);
     }
 
+    if (fetched.kind === "oversized") {
+      info.problems.oversized.push({
+        sitemap: url,
+        urls: null,
+        bytes: fetched.bytes,
+        overLimit: fetched.overLimit,
+      });
+    }
+
     if (fetched.kind !== "parsed") {
       continue;
     }
 
     const { parsed } = fetched;
     info.sources.push(url);
+    inspectSitemap(info.problems, url, parsed, fetched.bytes, {
+      fromIndex,
+      siteHost: limits.siteHost ?? null,
+      includeSubdomains: limits.includeSubdomains,
+      now,
+    });
 
     if (parsed.kind === "sitemapindex") {
-      queue.push(...parsed.locs);
+      queue.push(...parsed.locs.map((loc) => ({ url: loc, fromIndex: true })));
     } else {
       for (const loc of parsed.locs) {
         if (urls.size < maxUrls) {

@@ -61,24 +61,35 @@ describe("sitemap parsing", () => {
   it("parses urlsets, indexes and text sitemaps", () => {
     expect(
       parseSitemap(
-        '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://a.test/</loc></url><url><loc>https://a.test/b</loc></url></urlset>'
+        '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://a.test/</loc></url><url><loc>https://a.test/b</loc><lastmod>2026-03-14</lastmod></url></urlset>'
       )
     ).toStrictEqual({
       kind: "urlset",
       locs: ["https://a.test/", "https://a.test/b"],
+      lastmods: [null, "2026-03-14"],
     });
     expect(
       parseSitemap(
         "<sitemapindex><sitemap><loc>https://a.test/s1.xml</loc></sitemap></sitemapindex>"
       )
-    ).toStrictEqual({ kind: "sitemapindex", locs: ["https://a.test/s1.xml"] });
+    ).toStrictEqual({
+      kind: "sitemapindex",
+      locs: ["https://a.test/s1.xml"],
+      lastmods: [null],
+    });
     expect(
       parseSitemap("https://a.test/\nhttps://a.test/x\n", "text/plain")
     ).toStrictEqual({
       kind: "text",
       locs: ["https://a.test/", "https://a.test/x"],
+      lastmods: [null, null],
     });
     expect(parseSitemap("<html><body>nope</body></html>").kind).toBe("unknown");
+    expect(
+      parseSitemap(
+        '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>'
+      )
+    ).toStrictEqual({ kind: "urlset", locs: [], lastmods: [] });
   });
 });
 

@@ -24,6 +24,11 @@ export interface FetchOptions {
   maxRedirects?: number;
   /** Stop reading the body after this many bytes. */
   maxBodyBytes?: number;
+  /**
+   * Return the body as bytes (`bytes`) instead of text (`body` is then ""), for files that are not
+   * text, such as a gzip sitemap.
+   */
+  keepBytes?: boolean;
 }
 
 export interface FetchResult {
@@ -36,6 +41,10 @@ export interface FetchResult {
   timeMs: number;
   contentType: string | null;
   error?: string;
+  /** The body stopped at `maxBodyBytes`; the rest was not read. */
+  truncated?: boolean;
+  /** The body's bytes, with `keepBytes`. */
+  bytes?: Buffer;
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -82,12 +91,17 @@ const result = (
   return r;
 };
 
+interface BodyRead {
+  bytes: Buffer;
+  truncated: boolean;
+}
+
 const readLimited = async (
   res: Response,
   maxBytes: number
-): Promise<string> => {
+): Promise<BodyRead> => {
   if (!res.body) {
-    return "";
+    return { bytes: Buffer.alloc(0), truncated: false };
   }
 
   const reader = res.body.getReader();
@@ -118,14 +132,18 @@ const readLimited = async (
     await reader.cancel().catch(() => null);
   }
 
-  const charset = /charset=(?<charset>[\w-]+)/iu.exec(
-    res.headers.get("content-type") ?? ""
-  )?.groups?.charset;
+  return { bytes: Buffer.concat(chunks), truncated };
+};
+
+/** The body as text, in the charset the Content-Type header names (UTF-8 otherwise). */
+const decodeBody = (bytes: Buffer, contentType: string | null): string => {
+  const charset = /charset=(?<charset>[\w-]+)/iu.exec(contentType ?? "")?.groups
+    ?.charset;
 
   try {
-    return new TextDecoder(charset ?? "utf-8").decode(Buffer.concat(chunks));
+    return new TextDecoder(charset ?? "utf-8").decode(bytes);
   } catch {
-    return new TextDecoder("utf-8").decode(Buffer.concat(chunks));
+    return new TextDecoder("utf-8").decode(bytes);
   }
 };
 
@@ -207,17 +225,38 @@ const fetchHop = async (
       return { next: nextUrl };
     }
 
-    let body: string | null = null;
-
-    if (readBody) {
-      body = await readLimited(res, options.maxBodyBytes ?? 5_000_000);
-    } else {
+    if (!readBody) {
       await res.body?.cancel().catch(() => null);
+
+      return {
+        done: result(url, current, res.status, headers, null, chain, started),
+      };
     }
 
-    return {
-      done: result(url, current, res.status, headers, body, chain, started),
-    };
+    const read = await readLimited(res, options.maxBodyBytes ?? 5_000_000);
+
+    const done = result(
+      url,
+      current,
+      res.status,
+      headers,
+      // The caller reads `bytes`; decoding them too would hold the body a second time.
+      options.keepBytes
+        ? ""
+        : decodeBody(read.bytes, res.headers.get("content-type")),
+      chain,
+      started
+    );
+
+    if (read.truncated) {
+      done.truncated = true;
+    }
+
+    if (options.keepBytes) {
+      done.bytes = read.bytes;
+    }
+
+    return { done };
   } catch (error) {
     let message = String(error);
 
