@@ -1,4 +1,5 @@
-import { hostOf, normalizeUrl, samePath } from "../url.js";
+import type { ResponseInfo } from "../types.js";
+import { hostOf, normalizeUrl, resolveUrl, samePath } from "../url.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
 
 const SELECTOR = 'head > link[rel="canonical"]';
@@ -26,6 +27,45 @@ export const isLocalHost = (url: string): boolean => {
   );
 };
 
+/*
+ * One `<url>; param; param` entry of a Link header. Neither character class crosses an angle
+ * bracket, so no match can restart inside another and matching stays linear on a long header.
+ */
+const LINK_ENTRY = /<(?<target>[^<>]*)>(?<params>[^<]*)/gu;
+
+/** Targets of `Link: <url>; rel="canonical"` in the response headers, resolved against the page URL. */
+export const headerCanonicals = (
+  response: ResponseInfo | undefined,
+  base: string
+): string[] => {
+  const header = response?.headers["link"]?.slice(0, 16_384);
+
+  if (!header) {
+    return [];
+  }
+
+  const out: string[] = [];
+
+  for (const match of header.matchAll(LINK_ENTRY)) {
+    const rel = match.groups?.params
+      ?.split(";")
+      .map((p) => p.trim())
+      .find((p) => /^rel\s*=/iu.test(p));
+
+    const values = (rel?.slice(rel.indexOf("=") + 1) ?? "")
+      .replaceAll(/["']/gu, "")
+      .toLowerCase()
+      .split(/[\s,]+/u);
+
+    if (values.includes("canonical")) {
+      const target = match.groups?.target?.trim() ?? "";
+      out.push(resolveUrl(target, base) ?? target);
+    }
+  }
+
+  return out;
+};
+
 const stripTrailingSlash = (url: string): string =>
   url.endsWith("/") && new URL(url).pathname !== "/" ? url.slice(0, -1) : url;
 
@@ -40,10 +80,47 @@ export const canonicalRules = [
         "Add a self-referencing canonical with the absolute preferred URL (scheme, host, trailing slash) so duplicate URLs (query strings, www/non-www) consolidate to it.",
       docs: GOOGLE_DOCS.canonical,
     },
-    ({ page }, make) =>
-      page.canonicals.length === 0
+    ({ page, response }, make) =>
+      page.canonicals.length === 0 &&
+      headerCanonicals(response, page.url).length === 0
         ? make("Page has no canonical link.", { selector: SELECTOR })
         : null
+  ),
+  defineRule(
+    {
+      id: "canonical.header-conflict",
+      category: "canonical",
+      severity: "error",
+      description:
+        'The HTTP Link header names a different canonical URL than the page\'s <link rel="canonical">, or names more than one.',
+      recommendation:
+        'Name one canonical URL, in one place: the <link rel="canonical"> in <head>, or the Link header (meant for PDFs and other files without HTML). Google asks not to give different canonical URLs through different methods. A CDN, plugin or platform rule often sets the header; remove the one you did not mean.',
+      docs: GOOGLE_DOCS.canonical,
+    },
+    ({ page, response }, make) => {
+      const header = headerCanonicals(response, page.url);
+
+      const targets = new Set(
+        // Google treats /page and /page/ as two URLs, so a trailing slash is a real difference.
+        [...header, ...(page.canonical ? [page.canonical] : [])].map(
+          (url) => normalizeUrl(url) ?? url
+        )
+      );
+
+      return header.length > 0 && targets.size > 1
+        ? make(
+            page.canonical
+              ? `The Link header names ${header.join(" and ")} as canonical, but <link rel="canonical"> names ${page.canonical}.`
+              : `The Link header names ${header.length} different canonical URLs.`,
+            {
+              evidence: {
+                linkHeader: cap(header),
+                htmlCanonical: page.canonical,
+              },
+            }
+          )
+        : null;
+    }
   ),
   defineRule(
     {

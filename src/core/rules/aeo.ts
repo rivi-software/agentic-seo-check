@@ -9,13 +9,12 @@ import {
   markedUpTexts,
   maxSnippet,
   nameOf,
-  parseRobotsHeader,
   stripTags,
   typedNodes,
 } from "../aeo/page.js";
 import { isJsonObject, isString } from "../html/structured-data.js";
 import type { JsonValue } from "../html/structured-data.js";
-import { robotsDirectives } from "./indexing.js";
+import { parseRobotsHeader, robotsDirectives } from "./indexing.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
 
 /** Answer engines' own documentation for the AEO rules. */

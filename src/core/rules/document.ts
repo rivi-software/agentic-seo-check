@@ -78,12 +78,14 @@ export const documentRules = [
       id: "charset.missing",
       category: "document",
       severity: "info",
-      description: "No character encoding is declared.",
+      description:
+        "No character encoding is declared, in the HTML or in the Content-Type header.",
       recommendation:
         'Add <meta charset="utf-8"> as the first element in <head>.',
     },
-    ({ page }, make) =>
-      page.charset
+    // The HTML spec asks for <meta charset> only when Content-Type carries no charset.
+    ({ page, response }, make) =>
+      page.charset || /charset=/iu.test(response?.contentType ?? "")
         ? null
         : make("No <meta charset> declaration found.", {
             selector: "head > meta[charset]",

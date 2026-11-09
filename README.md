@@ -49,9 +49,10 @@ Two audits share that core: the **SEO audit** (`audit`, `crawl`) for search engi
 
 ### SEO audit
 
-| Area | Examples (123 rules, `agentic-seo-check rules` lists them) |
+| Area | Examples (130 rules, `agentic-seo-check rules` lists them) |
 | --- | --- |
 | On-page basics | title missing/long/short/placeholder ("React App"), meta description, H1 and heading outline, canonical (missing, conflicting, relative, pointing elsewhere), robots meta and `X-Robots-Tag`, `lang`, viewport, charset, doctype |
+| Head and indexing | an element that ends `<head>` early (a pixel `<img>`, an `<iframe>`, stray text) so Google ignores the metadata after it, canonical, description or hreflang in `<body>`, meta refresh redirects, a charset declared past the first 1024 bytes, contradicting (`index` and `noindex`) or misspelled (`no-index`) robots directives, an HTTP `Link` canonical that disagrees with the HTML one |
 | Social | Open Graph completeness, absolute `og:image`, `og:url` vs canonical, Twitter card |
 | Images and links | alt text, filename-style alt, missing dimensions (CLS), empty or generic anchor text, `href="#"`/`javascript:` anchors, http links on https pages, internal nofollow |
 | International | hreflang syntax, absolute URLs, self reference, x-default, return links (crawl) |

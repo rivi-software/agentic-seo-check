@@ -1,6 +1,6 @@
 import { isJsonObject, isString, typesOf } from "../html/structured-data.js";
 import type { JsonObject, JsonValue } from "../html/structured-data.js";
-import { robotsDirectives } from "../rules/indexing.js";
+import { parseRobotsHeader, robotsDirectives } from "../rules/indexing.js";
 import type {
   AeoPageSummary,
   ExtractedPage,
@@ -24,46 +24,6 @@ const META_NAMES: Record<Engine, string[]> = {
 const HEADER_AGENT: Record<Engine, string> = {
   google: "googlebot",
   bing: "bingbot",
-};
-
-/** Directives that carry a value after a colon, which is not a user agent prefix. */
-const VALUE_DIRECTIVES = new Set([
-  "max-snippet",
-  "max-image-preview",
-  "max-video-preview",
-  "unavailable_after",
-]);
-
-export interface ScopedDirective {
-  /** The user agent the directive is for, or null when it is for every crawler. */
-  agent: string | null;
-  directive: string;
-}
-
-/**
- * X-Robots-Tag values. "googlebot: nosnippet, noarchive" scopes every directive after the prefix
- * to googlebot, up to the next prefix.
- */
-export const parseRobotsHeader = (value: string): ScopedDirective[] => {
-  const out: ScopedDirective[] = [];
-  let agent: string | null = null;
-
-  for (const piece of value.toLowerCase().split(",")) {
-    let directive = piece.trim();
-    const match = /^(?<name>[a-z0-9_-]+)\s*:\s*(?<rest>.*)$/u.exec(directive);
-    const name = match?.groups?.name;
-
-    if (name && !VALUE_DIRECTIVES.has(name)) {
-      agent = name;
-      directive = match.groups?.rest?.trim() ?? "";
-    }
-
-    if (directive) {
-      out.push({ agent, directive: directive.replaceAll(/\s+/gu, "") });
-    }
-  }
-
-  return out;
 };
 
 /** The robots directives one engine applies to the page, from its meta tags and X-Robots-Tag. */

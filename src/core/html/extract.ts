@@ -16,6 +16,7 @@ import {
   visibleText,
 } from "./dom.js";
 import type { Document } from "./dom.js";
+import { extractHeadSignals, isHtmlElement } from "./head.js";
 import { extractStructuredData } from "./structured-data.js";
 import { collapseWhitespace, wordCount } from "./text.js";
 
@@ -73,9 +74,10 @@ export const extractPage = (
   const base = (baseHref && resolveUrl(baseHref, options.url)) || options.url;
   const siteHost = options.siteHost ?? hostOf(options.url) ?? "";
 
-  const titles = queryAll(doc, "title").map((el) =>
-    collapseWhitespace(text(el))
-  );
+  // An inline SVG icon's <title> is its accessible name, not a second page title.
+  const titles = queryAll(doc, "title")
+    .filter(isHtmlElement)
+    .map((el) => collapseWhitespace(text(el)));
 
   const metaDescriptions = queryAll(doc, "meta[name]")
     .filter(
@@ -211,6 +213,7 @@ export const extractPage = (
     wordCount: wordCount(bodyText),
     htmlBytes: Buffer.byteLength(html, "utf-8"),
     hasBaseHref: Boolean(baseHref),
+    head: extractHeadSignals(html, doc),
     answer: extractAnswerSignals(doc, bodyText),
   };
 };

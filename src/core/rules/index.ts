@@ -7,6 +7,7 @@ import { aeoRules } from "./aeo.js";
 import { canonicalRules } from "./canonical.js";
 import { contentRules } from "./content.js";
 import { documentRules } from "./document.js";
+import { headRules } from "./head.js";
 import { headingRules } from "./headings.js";
 import { hreflangRules } from "./hreflang.js";
 import { imageRules } from "./images.js";
@@ -30,6 +31,7 @@ export const PAGE_RULES: Rule[] = [
   ...canonicalRules,
   ...indexingRules,
   ...documentRules,
+  ...headRules,
   ...socialRules,
   ...imageRules,
   ...linkRules,
