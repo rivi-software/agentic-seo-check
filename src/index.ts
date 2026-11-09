@@ -44,6 +44,10 @@ export {
   runPageRules,
 } from "./core/rules/index.js";
 
+export { baselineFromAudit, baselineFromIds } from "./core/recheck.js";
+
+export type { Baseline, BaselineEntry } from "./core/recheck.js";
+
 export { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 
 export {

@@ -99,10 +99,10 @@ const eachObject = (
     }
   };
 
-  for (const item of items) {
-    if (item.source === "json-ld") {
+  for (const data of items) {
+    if (data.source === "json-ld") {
       // SAFETY: extractStructuredData builds every item's data from JSON.parse or from microdata, and both hold JSON values alone.
-      walk(item.data as JsonObject, "", 0);
+      walk(data.data as JsonObject, "", 0);
     }
   }
 
@@ -298,6 +298,7 @@ export const structuredDataValueRules = [
 
       return [...found].map(([type, count]) =>
         make(`${type} markup: ${RETIRED_RICH_RESULTS.get(type)}`, {
+          key: type,
           selector: 'script[type="application/ld+json"]',
           evidence: { type, count },
         })
@@ -332,6 +333,9 @@ export const structuredDataValueRules = [
 
           findings.push(
             make(`${type}: ${problems.join("; ")}.`, {
+              // What is wrong, not where the object is: an id that holds while other markup is
+              // added or removed. Two objects with the same problems share it and are numbered.
+              key: `${type} ${path} ${problems.join("; ")}`,
               selector: 'script[type="application/ld+json"]',
               evidence: {
                 type,

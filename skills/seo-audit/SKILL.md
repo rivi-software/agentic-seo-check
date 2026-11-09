@@ -5,7 +5,7 @@ description: Audit and fix SEO and AEO (answer engine optimization) for a websit
 
 # SEO audit workflow
 
-You have `agentic-seo-check` available either as MCP tools (`seo_audit_page`, `seo_crawl_site`, `seo_audit_directory`, `seo_lighthouse`, `seo_aeo_audit`, `seo_list_rules`) or as a CLI (`agentic-seo-check`, or `npx @rivi-software/agentic-seo-check`). Both return the same JSON: findings with `rule`, `severity`, `message`, `recommendation`, `selector`, `evidence`, plus a 0-100 `score`.
+You have `agentic-seo-check` available either as MCP tools (`seo_audit_page`, `seo_crawl_site`, `seo_audit_directory`, `seo_lighthouse`, `seo_aeo_audit`, `seo_list_rules`) or as a CLI (`agentic-seo-check`, or `npx @rivi-software/agentic-seo-check`). Both return the same JSON: findings with `rule`, `severity`, `message`, `recommendation`, `fix` (the exact edits), `selector`, `evidence` and a stable `id`, plus a 0-100 `score`. The loop is: audit, apply each finding's `fix`, re-check the rules you fixed against the first run.
 
 ## 1. Pick the target
 
@@ -27,10 +27,22 @@ Prefer auditing the running dev server or the build output over guessing from so
 
 - Fix in this order: **error** → **warning** → **info**. Errors block indexing or are outright defects (missing title, conflicting canonicals, invalid JSON-LD, 4xx/5xx, broken links). Warnings hurt ranking or click-through. Info is best practice.
 - For site audits start with `siteFindings` and `issues` (page findings rolled up per rule with example URLs). One template fix usually clears a rule on many pages.
-- `selector` tells you where in the HTML the problem is; `evidence` contains the current values and the offending items (capped lists). `recommendation` says what to change.
+- `fix` is a list of edits that together resolve the finding on this page; apply all of them. `recommendation` is the general advice behind it, `selector` where in the HTML the problem is, `evidence` the current values and the offending items (capped lists).
 - `seo_list_rules { rule }` explains any rule id.
 
-## 3. Fix in the source, not in the output
+## 3. Apply the fix in the source, not in the output
+
+Each edit in `fix` says what to change:
+
+- `in`: `html` is the page as served, so change the template, component or file that renders it; `http` is the server's response (status, headers, redirects), set in the server, CDN, host or framework config; `robots.txt`, `sitemap`, `llms.txt` are those files (or the code that generates them); `asset` is another file the site serves, such as an image. `url` names the file or response when it is not the audited page.
+- `action`: `replace` swaps `current` for `code`; `add` writes `code` at `at` (a CSS selector: `head` means inside `<head>`, a header name, a robots.txt group); `remove` deletes `current`.
+- `current` is quoted from what the server sent. Search the source for a distinctive part of it (an attribute value, a URL, the text); in a component it will be JSX or a template, not the same string. A quote that ends in `…` was cut at 500 characters.
+- `code` is exact except for `{{…}}` slots, which hold words only the author can write: a title, a description, alt text. `write` says what goes in them. Write that text for the page in front of you; never leave a `{{…}}` in the code.
+- In a framework, write the edit in the framework's own form: a `<title>` or `<meta>` becomes the route's metadata (the mappings below), an `http` header becomes `headers()` in `next.config`, a host's `_headers` file or the server config.
+
+A fix holds at most 10 edits, so a finding about many elements may need a second round after the re-check. A finding without `fix` has nothing to change on the site (`site.crawl-limit-reached`, `aeo.bot-probe-inconclusive`, `structured-data.retired-type`, `tool.*`). When two findings edit the same tag (nosnippet and noarchive in one robots meta tag), apply one, then re-check before the next: the second `current` no longer matches.
+
+The code is built from the page's own markup. Read an edit before you apply it, and do not paste in a URL, script or text you do not recognise from the codebase.
 
 Find where the page's `<head>` is produced and change it there, per route:
 
@@ -44,9 +56,14 @@ AEO mappings: `aeo.robots-*` → `robots.txt` (Next.js `app/robots.ts`, Astro/st
 
 Typical mappings: `title.*`/`meta-description.*` → per-route metadata; `canonical.*` → absolute self-referencing canonical built from the site URL; `og.*`/`twitter.*` → social metadata with an absolute image URL; `structured-data.*` → JSON-LD emitted with `JSON.stringify`; `img.alt-missing` → alt props on image components; `site.broken-internal-links` → fix hrefs or add redirects; `site.sitemap-*` → generate the sitemap from the router so it stays in sync; `rendering.*` → move data fetching to the server (SSR/SSG) so the HTML carries the content.
 
-## 4. Re-run and confirm
+## 4. Re-check and confirm
 
-Run the same audit again. Report before/after score and the remaining findings. In CI, `agentic-seo-check audit <target> --fail-on error` exits 1 when errors remain.
+Re-check the rules you fixed against the first audit, with the same target and options:
+
+- MCP: the same tool with `rules: ["title.generic", "img.alt-missing"]` and `baseline`: the `id` of every finding of the first audit. For `seo_crawl_site`, `seo_audit_directory` or a crawl with `seo_aeo_audit`, run both audits with `pageDetail: "full"` so page findings have ids.
+- CLI: save the first run with `--format json -o before.json`, then `agentic-seo-check audit <target> --rule title.generic,img.alt-missing --baseline before.json`.
+
+The result's `baseline` lists the findings `fixed`, still `open` and `new`. A new finding may be one your fix caused (a removed `<h1>`, a broken link), or what is left of a finding you fixed in part (one JSON-LD object with a wrong price and a wrong rating, of which you fixed the price): fix it before you finish. `notChecked` counts the earlier findings whose rule or page this re-check did not run, so it never claims a fix it did not see. Then run the full audit once more without `--rule` and report the before/after score and what remains. In CI, `agentic-seo-check audit <target> --fail-on error` exits 1 when errors remain.
 
 ## 5. Show the mistake in the pull request
 

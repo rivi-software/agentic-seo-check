@@ -13,8 +13,22 @@ import { crawlSite } from "../crawl.js";
 import { DEFAULT_USER_AGENT, fetchPage, toResponseInfo } from "../fetch.js";
 import type { FetchOptions } from "../fetch.js";
 import { extractPage } from "../html/extract.js";
+import {
+  assignIds,
+  compareWithBaseline,
+  insertBefore,
+  recordUrls,
+  ruleRanWith,
+} from "../recheck.js";
+import type { Baseline } from "../recheck.js";
 import { loadRobotsTxt } from "../robots.js";
-import { AEO_PAGE_RULES, runPageRules, sortFindings } from "../rules/index.js";
+import {
+  AEO_PAGE_RULES,
+  AEO_RULES,
+  checkRuleIds,
+  runPageRules,
+  sortFindings,
+} from "../rules/index.js";
 import { pageScore, siteScore } from "../score.js";
 import type { PageRecord } from "../site-rules.js";
 import { scanDirectory } from "../static.js";
@@ -27,6 +41,7 @@ import type {
   Finding,
   LlmsTxtInfo,
   PageSource,
+  Requirement,
   RobotsTxtInfo,
   SeverityCounts,
 } from "../types.js";
@@ -55,6 +70,13 @@ export interface AeoOptions {
   includeInfo?: boolean;
   /** Rule ids to skip. */
   disableRules?: string[];
+  /** Run only these rule ids: a re-check of the rules a fix was for. */
+  onlyRules?: string[];
+  /**
+   * The findings of an earlier AEO audit. The result then has `baseline`: the findings since
+   * fixed, still open and new.
+   */
+  baseline?: Baseline;
   /** Site audits: "summary" keeps page findings out of `findings`; they stay rolled up in `issues`. */
   pageDetail?: "full" | "summary";
   fetch?: FetchOptions;
@@ -78,6 +100,8 @@ interface Collected {
 interface EvaluatedPage {
   record: PageRecord;
   findings: Finding[];
+  /** Info findings `includeInfo: false` left out: still on the page, for the re-check. */
+  hidden: Finding[];
   counts: SeverityCounts;
   score: number;
 }
@@ -231,29 +255,62 @@ const collectHtml = (
   live: false,
 });
 
+/**
+ * Findings the options leave in: not disabled, among `onlyRules`, and info only when asked for.
+ * The info findings left out go to `hidden`: still there, so a re-check never calls them fixed.
+ */
+const selected = (
+  findings: Finding[],
+  options: AeoOptions,
+  hidden: Finding[]
+): Finding[] => {
+  const disabled = new Set(options.disableRules);
+  const only = options.onlyRules ? new Set(options.onlyRules) : null;
+  const shown: Finding[] = [];
+
+  for (const f of findings) {
+    if (disabled.has(f.rule) || (only && !only.has(f.rule))) {
+      continue;
+    }
+
+    (options.includeInfo === false && f.severity === "info"
+      ? hidden
+      : shown
+    ).push(f);
+  }
+
+  return shown;
+};
+
 const evaluatePage = (
   record: PageRecord,
   source: PageSource,
   options: AeoOptions
 ): EvaluatedPage => {
-  let findings = runPageRules(
-    {
-      page: record.page,
-      source,
-      response: record.response,
-      thresholds: DEFAULT_THRESHOLDS,
-      depth: record.depth,
-    },
-    { disable: new Set(options.disableRules), rules: AEO_PAGE_RULES }
-  );
+  const hidden: Finding[] = [];
 
-  if (options.includeInfo === false) {
-    findings = findings.filter((f) => f.severity !== "info");
-  }
+  const findings = selected(
+    runPageRules(
+      {
+        page: record.page,
+        source,
+        response: record.response,
+        thresholds: DEFAULT_THRESHOLDS,
+        depth: record.depth,
+      },
+      {
+        disable: new Set(options.disableRules),
+        only: options.onlyRules ? new Set(options.onlyRules) : undefined,
+        rules: AEO_PAGE_RULES,
+      }
+    ),
+    options,
+    hidden
+  );
 
   const counts = countFindings(findings);
 
-  return { record, findings, counts, score: pageScore(counts) };
+  return { record, findings, hidden, counts, score: pageScore(counts) };
 };
 
 /**
@@ -332,6 +389,58 @@ const pageEntry = (p: EvaluatedPage): AeoPage => {
   };
 };
 
+/** Fails on `onlyRules` that name no AEO rule, before any request goes out. */
+const checkOptions = (options: AeoOptions): void => {
+  if (options.onlyRules) {
+    checkRuleIds(options.onlyRules, AEO_RULES, "AEO");
+  }
+};
+
+/**
+ * Gives every finding its id and, with `baseline`, compares them with the earlier audit's. Site
+ * rules ran when the target had a site to read robots.txt and llms.txt from.
+ */
+const recheck = (
+  c: Collected,
+  findings: Finding[],
+  hidden: Finding[],
+  options: AeoOptions
+) => {
+  assignIds([...findings, ...hidden]);
+
+  if (!options.baseline) {
+    return null;
+  }
+
+  const site = c.robots !== null || c.llmsTxt !== null;
+  const active = new Set<Requirement>(site ? ["crawl"] : []);
+
+  if (options.aiBots) {
+    active.add("ai-bots");
+  }
+
+  return compareWithBaseline(findings, options.baseline, {
+    // robots.txt and llms.txt findings name those files, not a page.
+    urls: [
+      c.url,
+      c.target,
+      ...recordUrls(c.records),
+      ...(c.robots ? [c.robots.url] : []),
+      ...(c.llmsTxt ? [c.llmsTxt.url] : []),
+    ],
+    site,
+    hidden,
+    ruleRan: ruleRanWith(
+      {
+        onlyRules: options.onlyRules,
+        disableRules: options.disableRules,
+        active,
+      },
+      AEO_RULES
+    ),
+  });
+};
+
 const buildAudit = async (
   c: Collected,
   options: AeoOptions
@@ -353,22 +462,29 @@ const buildAudit = async (
     ? await runProbe(c, start, crawlers, options)
     : undefined;
 
-  const disabled = new Set(options.disableRules);
+  const hiddenSite: Finding[] = [];
 
-  let siteFindings = aeoSiteFindings({
-    crawlers,
-    llmsTxt: c.llmsTxt,
-    pageCount: pages.length,
-    probeSkipped,
-  }).filter((f) => !disabled.has(f.rule));
-
-  if (options.includeInfo === false) {
-    siteFindings = siteFindings.filter((f) => f.severity !== "info");
-  }
+  const siteFindings = selected(
+    aeoSiteFindings({
+      crawlers,
+      llmsTxt: c.llmsTxt,
+      pageCount: pages.length,
+      probeSkipped,
+    }),
+    options,
+    hiddenSite
+  );
 
   const pageFindings = pages.flatMap((p) => p.findings);
 
-  const audit: AeoAudit = {
+  const comparison = recheck(
+    c,
+    [...siteFindings, ...pageFindings],
+    [...hiddenSite, ...pages.flatMap((p) => p.hidden)],
+    options
+  );
+
+  let audit: AeoAudit = {
     schemaVersion: 1,
     kind: "aeo",
     target: c.target,
@@ -401,6 +517,10 @@ const buildAudit = async (
     llmsTxt: c.llmsTxt,
   };
 
+  if (comparison) {
+    audit = insertBefore(audit, "findings", "baseline", comparison);
+  }
+
   if (isSite) {
     audit.pages = pages
       .toSorted((a, b) => a.record.depth - b.record.depth || a.score - b.score)
@@ -423,6 +543,7 @@ export const auditAeoHtml = async (
   input: { url?: string; target?: string } = {},
   options: AeoOptions = {}
 ): Promise<AeoAudit> => {
+  checkOptions(options);
   const url = input.url ?? options.baseUrl ?? "http://localhost/";
 
   return buildAudit(
@@ -435,27 +556,39 @@ export const auditAeoHtml = async (
 export const auditAeoUrl = async (
   url: string,
   options: AeoOptions = {}
-): Promise<AeoAudit> => buildAudit(await collectUrl(url, options), options);
+): Promise<AeoAudit> => {
+  checkOptions(options);
+
+  return buildAudit(await collectUrl(url, options), options);
+};
 
 /** AEO audit of a site, crawled from `startUrl`. */
 export const auditAeoSite = async (
   startUrl: string,
   options: AeoOptions = {}
-): Promise<AeoAudit> =>
-  buildAudit(await collectSite(startUrl, options), options);
+): Promise<AeoAudit> => {
+  checkOptions(options);
+
+  return buildAudit(await collectSite(startUrl, options), options);
+};
 
 /** AEO audit of a directory of built HTML, with the robots.txt and llms.txt in it. */
 export const auditAeoDirectory = async (
   dir: string,
   options: AeoOptions = {}
-): Promise<AeoAudit> =>
-  buildAudit(await collectDirectory(dir, options), options);
+): Promise<AeoAudit> => {
+  checkOptions(options);
+
+  return buildAudit(await collectDirectory(dir, options), options);
+};
 
 /** AEO audit of a URL (a crawl with `crawl`), a directory, an .html file, or "-" for stdin. */
 export const auditAeoTarget = async (
   target: string,
   options: AeoOptions & { stdinHtml?: string } = {}
 ): Promise<AeoAudit> => {
+  checkOptions(options);
+
   if (target === "-" || options.stdinHtml !== undefined) {
     const html = options.stdinHtml ?? (await readStdin());
 

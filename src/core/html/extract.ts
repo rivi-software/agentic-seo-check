@@ -6,6 +6,7 @@ import type {
   HreflangInfo,
   ImageInfo,
   LinkInfo,
+  PageMarkup,
 } from "../types.js";
 import { isSameSite, resolveUrl, hostOf } from "../url.js";
 import { extractAnswerSignals } from "./answer.js";
@@ -14,6 +15,7 @@ import {
   parseDocument,
   queryAll,
   queryOne,
+  sourceOf,
   text,
   visibleText,
   wordsBeforeImages,
@@ -53,12 +55,18 @@ const firstNonEmpty = (values: string[]): string | null => {
   return null;
 };
 
-const detectCharset = (doc: Document): string | null => {
+/** The element that declares the character encoding, and the encoding it names. */
+interface CharsetDeclaration {
+  charset: string | null;
+  el: Element | null;
+}
+
+const detectCharset = (doc: Document): CharsetDeclaration => {
   const metaCharset = queryOne(doc, "meta[charset]");
   const direct = metaCharset ? attr(metaCharset, "charset") : undefined;
 
   if (direct) {
-    return direct.trim();
+    return { charset: direct.trim(), el: metaCharset };
   }
 
   const httpEquiv = queryAll(doc, "meta[http-equiv]").find(
@@ -68,53 +76,34 @@ const detectCharset = (doc: Document): string | null => {
   const content = httpEquiv ? attr(httpEquiv, "content") : undefined;
   const match = content?.match(/charset=(?<charset>[\w-]+)/iu);
 
-  return match?.groups?.charset ?? null;
+  return { charset: match?.groups?.charset ?? null, el: httpEquiv ?? null };
 };
 
-export const extractPage = (
-  html: string,
-  options: ExtractOptions
-): ExtractedPage => {
-  const doc = parseDocument(html);
-  const hasDoctype = /^\s*<!doctype\s+html/iu.test(html);
-  const baseEl = queryOne(doc, "base[href]");
-  const baseHref = baseEl ? attr(baseEl, "href") : undefined;
-  const base = (baseHref && resolveUrl(baseHref, options.url)) || options.url;
-  const siteHost = options.siteHost ?? hostOf(options.url) ?? "";
+const ROBOTS_META_NAMES = new Set([
+  "robots",
+  "googlebot",
+  "googlebot-news",
+  "bingbot",
+]);
 
-  // An inline SVG icon's <title> is its accessible name, not a second page title.
-  const titles = queryAll(doc, "title")
-    .filter(isHtmlElement)
-    .map((el) => collapseWhitespace(text(el)));
+const nameOf = (el: Element): string =>
+  (attr(el, "name") ?? "").trim().toLowerCase();
 
-  const metaDescriptions = queryAll(doc, "meta[name]")
-    .filter(
-      (el) => (attr(el, "name") ?? "").trim().toLowerCase() === "description"
-    )
-    .map((el) => collapseWhitespace(attr(el, "content") ?? ""));
+interface SocialTags {
+  og: Record<string, string>;
+  twitter: Record<string, string>;
+  /** The tag of each property kept, keyed with its prefix ("og:image"). */
+  social: Record<string, string>;
+}
 
-  const metaRobots = queryAll(doc, "meta[name]")
-    .filter((el) =>
-      ["robots", "googlebot", "googlebot-news", "bingbot"].includes(
-        (attr(el, "name") ?? "").trim().toLowerCase()
-      )
-    )
-    .map((el) => collapseWhitespace(attr(el, "content") ?? "").toLowerCase())
-    .filter(Boolean);
-
-  const canonicals = queryAll(doc, "link[rel]")
-    .filter((el) => relList(attr(el, "rel")).includes("canonical"))
-    .map((el) => (attr(el, "href") ?? "").trim());
-
-  const headings: HeadingInfo[] = queryAll(doc, "h1, h2, h3, h4, h5, h6").map(
-    (el) => ({
-      level: Number(el.name.slice(1)),
-      text: collapseWhitespace(text(el)),
-    })
-  );
-
+/** Open Graph and Twitter properties, with the tag each one comes from. */
+const extractSocial = (
+  doc: Document,
+  tagOf: (el: Element) => string
+): SocialTags => {
   const og: Record<string, string> = {};
   const twitter: Record<string, string> = {};
+  const social: Record<string, string> = {};
 
   for (const el of queryAll(doc, "meta[property], meta[name]")) {
     const key = (attr(el, "property") ?? attr(el, "name") ?? "")
@@ -129,10 +118,64 @@ export const extractPage = (
 
     if (key.startsWith("og:") && !(key in og)) {
       og[key.slice(3)] = content;
+      social[key] = tagOf(el);
     } else if (key.startsWith("twitter:") && !(key in twitter)) {
       twitter[key.slice(8)] = content;
+      social[key] = tagOf(el);
     }
   }
+
+  return { og, twitter, social };
+};
+
+export const extractPage = (
+  html: string,
+  options: ExtractOptions
+): ExtractedPage => {
+  const doc = parseDocument(html);
+  const hasDoctype = /^\s*<!doctype\s+html/iu.test(html);
+  const baseEl = queryOne(doc, "base[href]");
+  const baseHref = baseEl ? attr(baseEl, "href") : undefined;
+  const base = (baseHref && resolveUrl(baseHref, options.url)) || options.url;
+  const siteHost = options.siteHost ?? hostOf(options.url) ?? "";
+
+  // Elements the parser added itself have no source; their quote is the bare start tag.
+  const tagOf = (el: Element, part: "start" | "outer" = "start"): string =>
+    sourceOf(el, html, part) ?? `<${el.name}>`;
+
+  // An inline SVG icon's <title> is its accessible name, not a second page title.
+  const titleEls = queryAll(doc, "title").filter(isHtmlElement);
+  const titles = titleEls.map((el) => collapseWhitespace(text(el)));
+
+  const descriptionEls = queryAll(doc, "meta[name]").filter(
+    (el) => nameOf(el) === "description"
+  );
+
+  const metaDescriptions = descriptionEls.map((el) =>
+    collapseWhitespace(attr(el, "content") ?? "")
+  );
+
+  const robotsEls = queryAll(doc, "meta[name]").filter((el) =>
+    ROBOTS_META_NAMES.has(nameOf(el))
+  );
+
+  const metaRobots = robotsEls
+    .map((el) => collapseWhitespace(attr(el, "content") ?? "").toLowerCase())
+    .filter(Boolean);
+
+  const canonicalEls = queryAll(doc, "link[rel]").filter((el) =>
+    relList(attr(el, "rel")).includes("canonical")
+  );
+
+  const canonicals = canonicalEls.map((el) => (attr(el, "href") ?? "").trim());
+  const headingEls = queryAll(doc, "h1, h2, h3, h4, h5, h6");
+
+  const headings: HeadingInfo[] = headingEls.map((el) => ({
+    level: Number(el.name.slice(1)),
+    text: collapseWhitespace(text(el)),
+  }));
+
+  const { og, twitter, social } = extractSocial(doc, tagOf);
 
   const body = queryOne(doc, "body");
   const position = body ? wordsBeforeImages(body) : new Map<Element, number>();
@@ -147,6 +190,7 @@ export const extractPage = (
     inPicture:
       el.parent !== null && isTag(el.parent) && el.parent.name === "picture",
     fetchpriority: attr(el, "fetchpriority")?.trim().toLowerCase() ?? null,
+    tag: tagOf(el),
     wordsBefore: position.get(el) ?? null,
   }));
 
@@ -177,6 +221,7 @@ export const extractPage = (
         : false,
       nofollow: relTokens.includes("nofollow"),
       hasAccessibleName: Boolean(linkText || ariaLabel || title || imgAlt),
+      tag: tagOf(el),
     };
   });
 
@@ -192,6 +237,7 @@ export const extractPage = (
         lang: (attr(el, "hreflang") ?? "").trim(),
         href,
         url: resolveUrl(href, base),
+        tag: tagOf(el),
       };
     });
 
@@ -200,13 +246,35 @@ export const extractPage = (
   const bodyText = body ? visibleText(body) : "";
 
   const htmlEl = queryOne(doc, "html");
+  const headEl = queryOne(doc, "head");
   const viewportEl = queryOne(doc, 'meta[name="viewport" i]');
+  const charset = detectCharset(doc);
+
+  const markup: PageMarkup = {
+    html: htmlEl ? sourceOf(htmlEl, html) : null,
+    head: headEl ? sourceOf(headEl, html) : null,
+    titles: titleEls.map((el) => tagOf(el, "outer")),
+    metaDescriptions: descriptionEls.map((el) => tagOf(el)),
+    metaRobots: robotsEls.map((el) => tagOf(el)),
+    canonicals: canonicalEls.map((el) => tagOf(el)),
+    headings: headingEls.map((el) => tagOf(el, "outer")),
+    viewport: viewportEl ? tagOf(viewportEl) : null,
+    charset: charset.el ? tagOf(charset.el) : null,
+    social,
+    jsonLd: queryAll(doc, "script[type]")
+      .filter(
+        (el) =>
+          (attr(el, "type") ?? "").trim().toLowerCase() ===
+          "application/ld+json"
+      )
+      .map((el) => tagOf(el)),
+  };
 
   return {
     url: options.url,
     hasDoctype,
     lang: attrOrNull(htmlEl ? attr(htmlEl, "lang") : undefined),
-    charset: detectCharset(doc),
+    charset: charset.charset,
     viewport: attrOrNull(viewportEl ? attr(viewportEl, "content") : undefined),
     titles,
     title: firstNonEmpty(titles),
@@ -232,6 +300,7 @@ export const extractPage = (
     htmlBytes: Buffer.byteLength(html, "utf-8"),
     hasBaseHref: Boolean(baseHref),
     head: extractHeadSignals(html, doc),
+    markup,
     answer: extractAnswerSignals(doc, bodyText),
   };
 };

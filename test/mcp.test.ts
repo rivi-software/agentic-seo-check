@@ -163,6 +163,44 @@ describe("MCP server", () => {
     expect(both.isError).toBeTruthy();
   });
 
+  it("re-checks the rules a fix was for against the earlier finding ids", async () => {
+    const { client } = await connect();
+    const Ids = z.object({ findings: z.array(z.object({ id: z.string() })) });
+
+    const first = await client.callTool({
+      name: "seo_audit_page",
+      arguments: {
+        html: "<html><head><title>React App</title></head><body></body></html>",
+        baseUrl: "https://a.test/",
+      },
+    });
+
+    const baseline = Ids.parse(first.structuredContent).findings.map(
+      (f) => f.id
+    );
+
+    const again = await client.callTool({
+      name: "seo_audit_page",
+      arguments: {
+        html: "<html><head><title>Blue widgets for every workshop | Acme</title></head><body></body></html>",
+        baseUrl: "https://a.test/",
+        rules: ["title.generic"],
+        baseline,
+      },
+    });
+
+    expect(again.isError).toBeFalsy();
+    expect(again.structuredContent).toMatchObject({
+      baseline: {
+        fixed: [{ rule: "title.generic" }],
+        open: [],
+        new: [],
+        notChecked: baseline.length - 1,
+      },
+      findings: [],
+    });
+  });
+
   it("reports errors as isError results", async () => {
     const { client } = await connect();
 

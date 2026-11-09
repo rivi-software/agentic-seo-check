@@ -8,6 +8,8 @@ import { auditAeoTarget, compactAeoAudit } from "./core/aeo/audit.js";
 import { auditTarget, compactAudit } from "./core/audit.js";
 import type { CrawlOptions, ProgressEvent } from "./core/audit.js";
 import type { FetchOptions } from "./core/fetch.js";
+import { baselineFromAudit } from "./core/recheck.js";
+import type { BaselineEntry } from "./core/recheck.js";
 import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 import { ALL_RULES } from "./core/rules/index.js";
 import { SEVERITY_RANK } from "./core/types.js";
@@ -132,6 +134,14 @@ const addAuditOptions = (cmd: Command, mode: Mode): Command => {
         .default("full")
     )
     .option("--disable <rule...>", "Rule ids to skip")
+    .option(
+      "--rule <id...>",
+      "Run only these rule ids (space- or comma-separated): re-check the findings a fix was for"
+    )
+    .option(
+      "--baseline <file>",
+      "Compare with an earlier audit saved as JSON: lists the findings since fixed, still open and new"
+    )
     .option("--timeout <ms>", "Per-request timeout", intArg, 15_000)
     .option("--user-agent <ua>", "Custom User-Agent header")
     .option(
@@ -165,6 +175,8 @@ interface CliOptions {
   compact?: boolean;
   pageDetail: "full" | "summary";
   disable?: string[];
+  rule?: string[];
+  baseline?: string;
   timeout: number;
   userAgent?: string;
   header?: string[];
@@ -182,6 +194,28 @@ const formatOf = (opts: CliOptions): "json" | "md" => {
   }
 
   return process.stdout.isTTY ? "md" : "json";
+};
+
+/** Rule ids from `--rule a b` and `--rule a,b`. */
+const ruleIds = (values: string[] | undefined): string[] | undefined =>
+  values
+    ?.flatMap((v) => v.split(","))
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+/** The findings of the audit `--baseline` names. */
+const readBaseline = async (
+  file: string | undefined
+): Promise<BaselineEntry[] | undefined> => {
+  if (file === undefined) {
+    return;
+  }
+
+  const json = await fs.readFile(file, "utf-8").catch((error: Error) => {
+    throw new Error(`Cannot read the baseline ${file}: ${error.message}`);
+  });
+
+  return baselineFromAudit(json);
 };
 
 /** `-H "Name: value"` flags as request headers. */
@@ -244,6 +278,8 @@ const auditFor = async (
     excludePatterns: opts.exclude,
     includeInfo: opts.info,
     disableRules: opts.disable,
+    onlyRules: ruleIds(opts.rule),
+    baseline: await readBaseline(opts.baseline),
     pageDetail: opts.pageDetail,
     fetch: {
       timeoutMs: opts.timeout,

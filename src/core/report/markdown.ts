@@ -5,7 +5,9 @@ import type {
   AiBotAccess,
   AiCrawlerReport,
   Audit,
+  BaselineComparison,
   Finding,
+  FixEdit,
   LlmsTxtInfo,
   PageAudit,
   SiteAudit,
@@ -28,11 +30,73 @@ const countsLine = (c: {
   info: number;
 }): string => `${c.error} error(s), ${c.warning} warning(s), ${c.info} info`;
 
+/** `text` as inline code, fenced with more backticks than it holds so a page's own backticks cannot end it. */
+const codeSpan = (text: string): string => {
+  const longest = Math.max(
+    0,
+    ...[...text.matchAll(/`+/gu)].map((m) => m[0].length)
+  );
+
+  const fence = "`".repeat(longest + 1);
+  const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";
+
+  return `${fence}${pad}${text}${pad}${fence}`;
+};
+
+/** A labelled line for one line of code, or a fenced block under the label for several. */
+const codeLines = (label: string, text: string, indent: string): string[] => {
+  if (!text.includes("\n")) {
+    return [`${indent}- ${label}: ${codeSpan(text)}`];
+  }
+
+  const longest = Math.max(
+    2,
+    ...[...text.matchAll(/`+/gu)].map((m) => m[0].length)
+  );
+
+  const fence = "`".repeat(longest + 1);
+
+  return [
+    `${indent}- ${label}:`,
+    "",
+    `${indent}  ${fence}`,
+    ...text.split("\n").map((line) => `${indent}  ${line}`),
+    `${indent}  ${fence}`,
+    "",
+  ];
+};
+
+const editLines = (e: FixEdit): string[] => {
+  const where = [e.in, e.url, e.at ? codeSpan(e.at) : undefined]
+    .filter(Boolean)
+    .join(", ");
+
+  const out = [`  - Edit: ${e.action} in ${where}`];
+
+  if (e.current !== undefined) {
+    out.push(...codeLines("Current", e.current, "    "));
+  }
+
+  if (e.code !== undefined) {
+    out.push(...codeLines("Code", e.code, "    "));
+  }
+
+  if (e.write) {
+    out.push(`    - Write: ${e.write}`);
+  }
+
+  return out;
+};
+
 const findingLines = (f: Finding): string[] => {
   const out = [
     `- **\`${f.rule}\`** ${f.message}`,
     `  - Fix: ${f.recommendation}`,
   ];
+
+  for (const e of f.fix ?? []) {
+    out.push(...editLines(e));
+  }
 
   if (f.selector) {
     out.push(`  - Where: \`${f.selector}\``);
@@ -43,6 +107,32 @@ const findingLines = (f: Finding): string[] => {
   }
 
   return out;
+};
+
+/** What a re-check found: the findings fixed since the baseline, still open and new. */
+const baselineLines = (b: BaselineComparison, heading: string): string[] => {
+  const lines = [
+    `${heading}# Re-check`,
+    "",
+    `${b.fixed.length} fixed · ${b.open.length} still open · ${b.new.length} new${b.notChecked ? ` · ${b.notChecked} not checked (their rule or page did not run this time)` : ""}`,
+    "",
+  ];
+
+  for (const f of b.fixed) {
+    lines.push(
+      `- Fixed: \`${f.id}\`${f.message ? ` ${f.message}` : ""}${f.url ? ` (${f.url})` : ""}`
+    );
+  }
+
+  for (const id of b.new) {
+    lines.push(`- New: \`${id}\``);
+  }
+
+  if (b.fixed.length || b.new.length) {
+    lines.push("");
+  }
+
+  return lines;
 };
 
 const SEVERITY_HEADINGS = {
@@ -157,6 +247,10 @@ const pageMarkdown = (audit: PageAudit, heading = "#"): string => {
     );
   }
 
+  if (audit.baseline) {
+    lines.push(...baselineLines(audit.baseline, heading));
+  }
+
   lines.push(...findingsSection(audit.findings, heading));
 
   return lines.join("\n");
@@ -186,6 +280,10 @@ const siteMarkdown = (audit: SiteAudit): string => {
     `| Sitemaps | ${audit.sitemaps.sources.length ? `${audit.sitemaps.sources.length} file(s), ${audit.sitemaps.urlCount} URLs` : "none found"}${audit.sitemaps.errors.length ? `, ${audit.sitemaps.errors.length} error(s)` : ""} |`,
     "",
   ];
+
+  if (audit.baseline) {
+    lines.push(...baselineLines(audit.baseline, "#"));
+  }
 
   if (audit.siteFindings.length) {
     lines.push("## Site-wide findings", "");
@@ -375,7 +473,11 @@ const aeoMarkdown = (audit: AeoAudit): string => {
     );
   }
 
-  lines.push(...aeoPageLines(audit), ...findingsSection(audit.findings, "#"));
+  lines.push(
+    ...aeoPageLines(audit),
+    ...(audit.baseline ? baselineLines(audit.baseline, "#") : []),
+    ...findingsSection(audit.findings, "#")
+  );
 
   if (audit.issues?.length) {
     lines.push(
