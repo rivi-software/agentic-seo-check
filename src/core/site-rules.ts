@@ -461,6 +461,9 @@ const pushDuplicates = (
   label: string
 ): void => {
   const groups = new Map<string, string[]>();
+  // Pages are grouped by a lowercased key, but the evidence quotes the value as the first page
+  // wrote it, so a report or pull request shows the text a reviewer would find on the site.
+  const written = new Map<string, string>();
 
   for (const p of pages) {
     const value = pick(p);
@@ -472,6 +475,10 @@ const pushDuplicates = (
     const k = normalizeForComparison(value);
 
     pushTo(groups, k, p.url);
+
+    if (!written.has(k)) {
+      written.set(k, value);
+    }
   }
 
   const dupes = [...groups.entries()].filter(([, urls]) => urls.length > 1);
@@ -488,8 +495,8 @@ const pushDuplicates = (
       {
         evidence: {
           groups: cap(
-            dupes.map(([value, urls]) => ({
-              value: value.slice(0, 120),
+            dupes.map(([k, urls]) => ({
+              value: (written.get(k) ?? k).slice(0, 120),
               pages: cap(urls, 5),
               count: urls.length,
             }))

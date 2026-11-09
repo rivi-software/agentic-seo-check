@@ -62,7 +62,7 @@ export const keywordRules = [
       !includesKeyword(page.metaDescription, keyword)
         ? make(`Meta description does not contain "${keyword}".`, {
             selector: 'head > meta[name="description"]',
-            evidence: { keyword },
+            evidence: { description: page.metaDescription, keyword },
           })
         : null
   ),

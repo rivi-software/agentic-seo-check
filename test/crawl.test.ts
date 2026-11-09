@@ -89,6 +89,10 @@ describe("audits of a site served over HTTP", () => {
 
       it("reports duplicate titles and nothing wrong with soft 404s, the sitemap or robots.txt", () => {
         expect(siteRules).toContain("site.duplicate-titles");
+        // Quoted as the pages write it, not as the lowercased key the pages are grouped by.
+        expect(evidence("site.duplicate-titles")).toContain(
+          '"value":"Home page title for fixture"'
+        );
         expect(siteRules).not.toContain("site.soft-404");
         expect(siteRules).not.toContain("site.sitemap-missing");
         expect(siteRules).not.toContain("site.robots-txt-missing");
