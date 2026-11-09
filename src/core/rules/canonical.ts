@@ -1,5 +1,14 @@
-import type { ResponseInfo } from "../types.js";
+import { quote } from "../html/dom.js";
+import type { ExtractedPage, FixEdit, ResponseInfo } from "../types.js";
 import { hostOf, normalizeUrl, resolveUrl, samePath } from "../url.js";
+import {
+  addHtml,
+  escapeAttribute,
+  removeEdit,
+  replaceEdit,
+  setAttributeEdit,
+} from "./fix.js";
+import { liveUrl, ORIGIN_WRITE } from "./quoted-tags.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
 
 const SELECTOR = 'head > link[rel="canonical"]';
@@ -69,6 +78,79 @@ export const headerCanonicals = (
 const stripTrailingSlash = (url: string): string =>
   url.endsWith("/") && new URL(url).pathname !== "/" ? url.slice(0, -1) : url;
 
+/** `url` for an href on the live site, and what the agent writes when its origin is a slot. */
+const hrefFor = (
+  page: ExtractedPage,
+  url: string
+): { href: string; write?: string } => {
+  const local = isLocalHost(page.url) || page.url.startsWith("file:");
+
+  return local
+    ? { href: liveUrl(url, true), write: ORIGIN_WRITE }
+    : { href: escapeAttribute(url) };
+};
+
+/** This page's own URL, for a self-referencing canonical: no fragment, no tracking parameters. */
+const selfUrl = (page: ExtractedPage): string =>
+  normalizeUrl(page.url) ?? page.url;
+
+/** The edit that points the canonical <link> the page reads at `url`. */
+const pointCanonical = (
+  page: ExtractedPage,
+  url: string,
+  write?: string
+): FixEdit => {
+  const { href, write: originWrite } = hrefFor(page, url);
+  const tag = page.markup.canonicals[0] ?? null;
+  const text = [originWrite, write].filter(Boolean).join(" ") || undefined;
+
+  return tag === null
+    ? addHtml("head", `<link rel="canonical" href="${href}">`, text)
+    : setAttributeEdit(tag, SELECTOR, "href", href, text);
+};
+
+/**
+ * The edit of the Link header that leaves only the canonical entries `keep` keeps, and every entry
+ * that is not a canonical (preload, preconnect) as it was.
+ */
+const linkHeaderEdit = (
+  header: string,
+  base: string,
+  keep: (target: string) => boolean,
+  write: string
+): FixEdit => {
+  const kept: string[] = [];
+
+  for (const match of header.slice(0, 16_384).matchAll(LINK_ENTRY)) {
+    const entry = match[0].trim().replace(/,$/u, "").trim();
+
+    const [canonical] = headerCanonicals(
+      {
+        status: null,
+        finalUrl: base,
+        redirectChain: [],
+        timeMs: null,
+        contentType: null,
+        headers: { link: entry },
+      },
+      base
+    );
+
+    if (canonical === undefined || keep(canonical)) {
+      kept.push(entry);
+    }
+  }
+
+  const current = quote(`Link: ${header}`);
+
+  return kept.length === 0
+    ? removeEdit("http", current, { at: "Link", write })
+    : replaceEdit("http", current, `Link: ${kept.join(", ")}`, {
+        at: "Link",
+        write,
+      });
+};
+
 export const canonicalRules = [
   defineRule(
     {
@@ -83,7 +165,16 @@ export const canonicalRules = [
     ({ page, response }, make) =>
       page.canonicals.length === 0 &&
       headerCanonicals(response, page.url).length === 0
-        ? make("Page has no canonical link.", { selector: SELECTOR })
+        ? make("Page has no canonical link.", {
+            fix: [
+              pointCanonical(
+                page,
+                selfUrl(page),
+                "If this page is a copy of another one, name that page's URL instead."
+              ),
+            ],
+            selector: SELECTOR,
+          })
         : null
   ),
   defineRule(
@@ -107,19 +198,43 @@ export const canonicalRules = [
         )
       );
 
-      return header.length > 0 && targets.size > 1
-        ? make(
-            page.canonical
-              ? `The Link header names ${header.join(" and ")} as canonical, but <link rel="canonical"> names ${page.canonical}.`
-              : `The Link header names ${header.length} different canonical URLs.`,
-            {
-              evidence: {
-                linkHeader: cap(header),
-                htmlCanonical: page.canonical,
-              },
-            }
-          )
-        : null;
+      if (header.length === 0 || targets.size <= 1) {
+        return null;
+      }
+
+      // Keep the <link> in <head> the page's author wrote; with none, keep the header's first URL.
+      const keepUrl = normalizeUrl(page.canonical ?? header[0] ?? "");
+      let firstKept = false;
+
+      const edit = linkHeaderEdit(
+        response?.headers["link"] ?? "",
+        page.url,
+        (target) => {
+          if (page.canonical || firstKept) {
+            return false;
+          }
+
+          firstKept = (normalizeUrl(target) ?? target) === keepUrl;
+
+          return firstKept;
+        },
+        page.canonical
+          ? `Name the canonical once, in the <link> in <head>. If the header's URL is the right one, point the <link> at it and remove the header entry all the same. A CDN, plugin or platform rule often adds the header.`
+          : "Keep one canonical URL in the header: the URL this page should rank under."
+      );
+
+      return make(
+        page.canonical
+          ? `The Link header names ${header.join(" and ")} as canonical, but <link rel="canonical"> names ${page.canonical}.`
+          : `The Link header names ${header.length} different canonical URLs.`,
+        {
+          fix: [edit],
+          evidence: {
+            linkHeader: cap(header),
+            htmlCanonical: page.canonical,
+          },
+        }
+      );
     }
   ),
   defineRule(
@@ -140,9 +255,35 @@ export const canonicalRules = [
 
       const distinct = new Set(page.canonicals.map((c) => c.trim()));
 
+      // Keep the canonical that names this page, if one does, else the first; remove the others.
+      const self = normalizeUrl(page.url);
+
+      const selfIndex = page.canonicals.findIndex((c) => {
+        const url = resolveUrl(c, page.url);
+
+        return url !== null && normalizeUrl(url) === self;
+      });
+
+      const keep = Math.max(selfIndex, 0);
+
+      const removals = page.markup.canonicals.flatMap((tag, i) =>
+        i === keep
+          ? []
+          : [
+              removeEdit("html", tag, {
+                at: SELECTOR,
+                write:
+                  distinct.size > 1 && selfIndex === -1
+                    ? `This keeps the first canonical, ${page.canonicals[keep] ?? ""}. If another one names the URL this page should rank under, keep that one instead.`
+                    : undefined,
+              }),
+            ]
+      );
+
       return make(
         `Page has ${page.canonicals.length} canonical links${distinct.size > 1 ? " with different targets" : " (identical)"}.`,
         {
+          fix: removals,
           selector: SELECTOR,
           severity: distinct.size > 1 ? "error" : "warning",
           evidence: { canonicals: cap(page.canonicals) },
@@ -171,6 +312,13 @@ export const canonicalRules = [
       return page.canonical
         ? null
         : make(`Canonical href "${first}" is not a valid URL.`, {
+            fix: [
+              pointCanonical(
+                page,
+                selfUrl(page),
+                "This points the canonical at this page; if it was meant for another page, write that page's absolute URL."
+              ),
+            ],
             selector: SELECTOR,
             evidence: { href: first },
           });
@@ -196,6 +344,7 @@ export const canonicalRules = [
       return /^https?:\/\//iu.test(first)
         ? null
         : make(`Canonical href "${first}" is relative.`, {
+            fix: [pointCanonical(page, page.canonical)],
             selector: SELECTOR,
             evidence: { href: first, resolved: page.canonical },
           });
@@ -221,6 +370,12 @@ export const canonicalRules = [
         ? make(
             "Canonical uses http:// while the page is served over https://.",
             {
+              fix: [
+                pointCanonical(
+                  page,
+                  page.canonical.replace(/^http:/iu, "https:")
+                ),
+              ],
               selector: SELECTOR,
               evidence: { canonical: page.canonical, page: page.url },
             }
@@ -261,6 +416,13 @@ export const canonicalRules = [
       return same
         ? null
         : make(`Canonical points to ${page.canonical}, not to this page.`, {
+            fix: [
+              pointCanonical(
+                page,
+                selfUrl(page),
+                `Only if this page should rank on its own. If it is a copy of ${page.canonical} on purpose (a print view, a filtered list, a tracking URL), keep the canonical as it is.`
+              ),
+            ],
             selector: SELECTOR,
             evidence: {
               canonical: page.canonical,

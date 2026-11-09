@@ -1,5 +1,48 @@
 import { isGenericAnchor } from "../html/text.js";
+import type { FixEdit, LinkInfo } from "../types.js";
+import {
+  addHtml,
+  escapeAttribute,
+  replaceHtml,
+  setAttributeEdit,
+  slot,
+  withContent,
+  withoutAttribute,
+} from "./fix.js";
+import { withAttributeSelector } from "./quoted-tags.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
+
+/** The selector of one link, by its href as written. */
+const linkAt = (link: LinkInfo): string =>
+  withAttributeSelector("a", "href", link.href);
+
+/** The link's start tag with rel="nofollow" taken out, keeping its other rel values. */
+const withoutNofollow = (link: LinkInfo): FixEdit => {
+  const rel = (link.rel ?? "")
+    .split(/\s+/u)
+    .filter((token) => token && token.toLowerCase() !== "nofollow");
+
+  const at = linkAt(link);
+
+  const write =
+    "Unless the target page is kept out of search on purpose; then link to it less, or noindex it.";
+
+  if (rel.length > 0) {
+    return setAttributeEdit(
+      link.tag,
+      at,
+      "rel",
+      escapeAttribute(rel.join(" ")),
+      write
+    );
+  }
+
+  const code = withoutAttribute(link.tag, "rel");
+
+  return code
+    ? replaceHtml(link.tag, code, { at, write })
+    : setAttributeEdit(null, at, "rel", "", write);
+};
 
 export const linkRules = [
   defineRule(
@@ -17,6 +60,13 @@ export const linkRules = [
       page.links.some((l) => l.internal)
         ? null
         : make("Page contains no internal links.", {
+            fix: [
+              addHtml(
+                "body",
+                `<a href="${slot("/path-of-a-related-page/")}">${slot("its name")}</a>`,
+                "A plain <a href> to a page of this site a visitor would want next, with text that names it; the site's navigation or footer with links to the main sections does the same for every page. The href is a path on this site (/pricing/), not a JavaScript click handler."
+              ),
+            ],
             evidence: { totalLinks: page.links.length },
           })
   ),
@@ -36,6 +86,15 @@ export const linkRules = [
 
       return empty.length
         ? make(`${empty.length} link(s) have no accessible text.`, {
+            fix: empty.map((l) =>
+              setAttributeEdit(
+                l.tag,
+                linkAt(l),
+                "aria-label",
+                slot("where the link goes"),
+                `What the link to ${l.href.slice(0, 120)} leads to, in a few words ("Instagram", "Cart"). Visible text inside the link does the same and also gives search engines anchor text.`
+              )
+            ),
             evidence: {
               count: empty.length,
               examples: cap(empty.map((l) => l.href)),
@@ -60,8 +119,22 @@ export const linkRules = [
         (l) => l.url && l.text && isGenericAnchor(l.text)
       );
 
+      // The whole link as written; when it was cut short, its text, with `at` saying which link.
+      const fix = generic.map((l) => {
+        const write = `Text that names the destination of ${l.href.slice(0, 120)}, such as "pricing plans" instead of "${l.text.slice(0, 40)}".`;
+        const rewritten = withContent(l.outer, slot("what the link leads to"));
+
+        return rewritten
+          ? replaceHtml(l.outer, rewritten, { at: linkAt(l), write })
+          : replaceHtml(l.text, slot("what the link leads to"), {
+              at: linkAt(l),
+              write,
+            });
+      });
+
       return generic.length
         ? make(`${generic.length} link(s) use generic anchor text.`, {
+            fix,
             evidence: {
               count: generic.length,
               examples: cap(
@@ -90,6 +163,15 @@ export const linkRules = [
 
       return bad.length
         ? make(`${bad.length} anchor(s) have an uncrawlable href.`, {
+            fix: bad.map((l) =>
+              setAttributeEdit(
+                l.tag,
+                linkAt(l),
+                "href",
+                slot("URL the link opens"),
+                `The URL of the page this link opens, even when JavaScript handles the click. If it runs an action instead of opening a page${l.text ? ` ("${l.text.slice(0, 40)}")` : ""}, make it a <button type="button"> and its </a> a </button>.`
+              )
+            ),
             evidence: {
               count: bad.length,
               examples: cap(bad.map((l) => ({ href: l.href, text: l.text }))),
@@ -118,8 +200,23 @@ export const linkRules = [
         (l) => l.internal && l.url?.startsWith("http://")
       );
 
+      // The href as written with https; one that is not written as http:// gets the full URL.
+      const fix = insecure.map((l) =>
+        setAttributeEdit(
+          l.tag,
+          linkAt(l),
+          "href",
+          escapeAttribute(
+            /^http:/iu.test(l.href)
+              ? l.href.replace(/^http:/iu, "https:")
+              : (l.url ?? l.href).replace(/^http:/iu, "https:")
+          )
+        )
+      );
+
       return insecure.length
         ? make(`${insecure.length} internal link(s) point to http:// URLs.`, {
+            fix,
             evidence: {
               count: insecure.length,
               examples: cap(insecure.map((l) => l.url)),
@@ -143,6 +240,7 @@ export const linkRules = [
 
       return nf.length
         ? make(`${nf.length} internal link(s) are rel="nofollow".`, {
+            fix: nf.map((l) => withoutNofollow(l)),
             evidence: { count: nf.length, examples: cap(nf.map((l) => l.url)) },
           })
         : null;

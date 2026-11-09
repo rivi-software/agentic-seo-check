@@ -1,4 +1,25 @@
+import type { FixEdit, ImageInfo } from "../types.js";
+import {
+  addHtml,
+  replaceHtml,
+  setAttributeEdit,
+  slot,
+  withAttribute,
+} from "./fix.js";
+import { readAttributes, withAttributeSelector } from "./quoted-tags.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
+
+/** The selector of one image: by its src, unless that is a data: URI or too long to read. */
+const imageAt = (image: ImageInfo, fallback: string): string =>
+  image.src && !image.src.startsWith("data:") && image.src.length <= 200
+    ? withAttributeSelector("img", "src", image.src)
+    : fallback;
+
+const ALT_WRITE =
+  'What the image shows, in a few words, for someone who cannot see it; leave it empty (alt="") when the image is only decoration.';
+
+/** Attributes lazy-loaders keep the image URL in until JavaScript copies it to src. */
+const LAZY_SRC = ["data-src", "data-lazy-src", "data-original"];
 
 const FILENAME_ALT =
   /^(?:img|image|dsc|dscn|dcim|photo|screenshot|screen shot|untitled)[-_ ]?\d*|\.(?:jpe?g|png|gif|webp|avif|svg)$/iu;
@@ -21,6 +42,15 @@ export const imageRules = [
         ? make(
             `${missing.length} of ${page.images.length} images have no alt attribute.`,
             {
+              fix: missing.map((i) =>
+                setAttributeEdit(
+                  i.tag,
+                  imageAt(i, "img:not([alt])"),
+                  "alt",
+                  slot("what the image shows"),
+                  ALT_WRITE
+                )
+              ),
               selector: "img:not([alt])",
               evidence: {
                 count: missing.length,
@@ -50,6 +80,15 @@ export const imageRules = [
 
       return bad.length
         ? make(`${bad.length} image(s) have filename-like alt text.`, {
+            fix: bad.map((i) =>
+              setAttributeEdit(
+                i.tag,
+                imageAt(i, withAttributeSelector("img", "alt", i.alt ?? "")),
+                "alt",
+                slot("what the image shows"),
+                `${ALT_WRITE} Not the file name "${(i.alt ?? "").slice(0, 60)}".`
+              )
+            ),
             evidence: {
               examples: cap(bad.map((i) => ({ src: i.src, alt: i.alt }))),
             },
@@ -73,10 +112,40 @@ export const imageRules = [
         (i) => i.src && (!i.width || !i.height)
       );
 
+      const fix = missing.map((i): FixEdit => {
+        const at = imageAt(i, "img:not([width]), img:not([height])");
+        let code: string | null = i.tag;
+
+        if (!i.width) {
+          code = withAttribute(code, "width", slot("width"));
+        }
+
+        if (code && !i.height) {
+          code = withAttribute(code, "height", slot("height"));
+        }
+
+        const write =
+          "The image's size in pixels (its intrinsic width and height, or the size it is shown at with the same aspect ratio); CSS can still scale it.";
+
+        return code
+          ? replaceHtml(i.tag, code, { at, write })
+          : addHtml(
+              at,
+              [
+                i.width ? "" : `width="${slot("width")}"`,
+                i.height ? "" : `height="${slot("height")}"`,
+              ]
+                .filter(Boolean)
+                .join(" "),
+              write
+            );
+      });
+
       return missing.length
         ? make(
             `${missing.length} of ${page.images.length} images lack width/height attributes.`,
             {
+              fix,
               selector: "img:not([width]), img:not([height])",
               evidence: {
                 count: missing.length,
@@ -101,8 +170,39 @@ export const imageRules = [
     ({ page }, make) => {
       const missing = page.images.filter((i) => !i.src);
 
+      // A lazy-loader's URL attribute gives the src exactly; without one, the URL is a slot.
+      const fix = missing.map((i) => {
+        const attributes = readAttributes(i.tag);
+
+        // The value is quoted as written, character references and all; only a `"` needs escaping.
+        const lazy = LAZY_SRC.map((name) => attributes?.get(name)).find(
+          Boolean
+        );
+
+        const code = lazy
+          ? withAttribute(i.tag, "src", lazy.replaceAll('"', "&quot;"))
+          : null;
+
+        // No loading="lazy" here: on an image in the first screen, a hero, it would make
+        // img.lazy-above-fold fire on the re-check.
+        return code
+          ? replaceHtml(i.tag, code, {
+              at: "img:not([src])",
+              write:
+                'Add loading="lazy" as well when the image is further down than the first screen.',
+            })
+          : setAttributeEdit(
+              i.tag,
+              "img:not([src])",
+              "src",
+              slot("image URL"),
+              'The URL of the image file. If a lazy-loader fills it in with JavaScript, give the <img> its real src and loading="lazy" instead.'
+            );
+      });
+
       return missing.length
         ? make(`${missing.length} image(s) have no src attribute.`, {
+            fix,
             selector: "img:not([src])",
             evidence: { count: missing.length },
           })

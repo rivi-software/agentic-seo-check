@@ -1,5 +1,75 @@
 import { fleschReadingEase, hasPlaceholderText } from "../html/text.js";
+import type { ExtractedPage, FixEdit, TextBlock } from "../types.js";
+import { addHtml, replaceHtml, slot } from "./fix.js";
+import { bestBlock, rewriteBlock, sentences } from "./page-fixes.js";
 import { defineRule, GOOGLE_DOCS } from "./rule.js";
+
+/** Where new body copy goes: the page's main content, or the body when it marks none. */
+const CONTENT_AT = "main, article, body";
+
+/** Words in a sentence, for picking the hardest one to read. */
+const wordsIn = (sentence: string): number =>
+  sentence.split(/\s+/u).filter(Boolean).length;
+
+/** Words in the longest sentence of a block; 0 for one with no full sentence, such as a menu item. */
+const longestIn = (text: string): number => {
+  // A loop, not Math.max(...): a long block can hold more sentences than a call takes arguments.
+  let most = 0;
+
+  for (const sentence of sentences(text)) {
+    most = Math.max(most, wordsIn(sentence));
+  }
+
+  return most;
+};
+
+const PLACEHOLDER_WRITE =
+  "The text this part of the page was designed for (remove the element if it has none yet). Search the templates for other placeholder passages too.";
+
+const READABILITY_WRITE =
+  "This paragraph, which holds the page's longest sentence, rewritten in sentences of about 15-20 words with common words. Rewrite the page's other long sentences the same way, aiming for a Flesch score of 50-70.";
+
+/** "Lorem ipsum" as the page writes it, with its capitals. */
+const placeholderQuote = (text: string): string =>
+  /lorem\s+ipsum/iu.exec(text)?.[0] ?? "Lorem ipsum";
+
+/**
+ * Each block that holds placeholder text, rewritten whole; when none does (the text sits straight
+ * in a <div>), the words "Lorem ipsum" themselves.
+ */
+const placeholderFix = (blocks: TextBlock[], text: string) => {
+  const found = blocks.filter((b) => hasPlaceholderText(b.text));
+
+  return found.length
+    ? found.map((b) => rewriteBlock(b, "real copy", PLACEHOLDER_WRITE))
+    : [
+        replaceHtml(placeholderQuote(text), slot("real copy"), {
+          at: "body",
+          write: PLACEHOLDER_WRITE,
+        }),
+      ];
+};
+
+/**
+ * The paragraph with the page's longest sentence, rewritten whole. A page whose blocks hold no full
+ * sentence (its text is menus and labels) gets new copy instead: words cut from the joined page
+ * text would not be in the source as written.
+ */
+const readabilityFix = (page: ExtractedPage): FixEdit => {
+  const block = bestBlock(page.markup.blocks, (b) => longestIn(b.text));
+
+  return block
+    ? rewriteBlock(
+        block,
+        "the same text in shorter sentences",
+        READABILITY_WRITE
+      )
+    : addHtml(
+        CONTENT_AT,
+        slot("shorter sentences"),
+        "Rewrite the copy in shorter sentences with common words, aiming for a Flesch score of 50-70."
+      );
+};
 
 export const contentRules = [
   defineRule(
@@ -14,7 +84,15 @@ export const contentRules = [
     },
     ({ page }, make) =>
       page.wordCount === 0
-        ? make("Page body has no visible text in the HTML response.")
+        ? make("Page body has no visible text in the HTML response.", {
+            fix: [
+              addHtml(
+                "body",
+                `<main>\n  <h1>${slot("page heading")}</h1>\n  <p>${slot("page content")}</p>\n</main>`,
+                "The page's heading and content, rendered on the server: with server-side rendering or static generation (or prerendering this route) the HTML response carries the text the JavaScript now builds in the browser."
+              ),
+            ],
+          })
         : null
   ),
   defineRule(
@@ -32,6 +110,15 @@ export const contentRules = [
         ? make(
             `Page has only ${page.wordCount} words of visible text (threshold ${thresholds.thinContentWords}).`,
             {
+              // Adding useful text cannot hurt; noindex would drop the page from search, so it is
+              // left to the author for utility pages.
+              fix: [
+                addHtml(
+                  CONTENT_AT,
+                  `<p>${slot("more content")}</p>`,
+                  `About ${thresholds.thinContentWords - page.wordCount} more words that answer what a visitor comes to this page for: details, examples, answers to common questions. If this is a utility page (login, cart, thank-you), add <meta name="robots" content="noindex"> instead.`
+                ),
+              ],
               evidence: {
                 wordCount: page.wordCount,
                 threshold: thresholds.thinContentWords,
@@ -51,7 +138,9 @@ export const contentRules = [
     },
     ({ page }, make) =>
       hasPlaceholderText(page.text)
-        ? make('Page contains "lorem ipsum" placeholder text.')
+        ? make('Page contains "lorem ipsum" placeholder text.', {
+            fix: placeholderFix(page.markup.blocks, page.text),
+          })
         : null
   ),
   defineRule(
@@ -71,11 +160,14 @@ export const contentRules = [
 
       const score = fleschReadingEase(page.text);
 
-      return score !== null && score < 30
-        ? make(`Flesch Reading Ease is ${score} (very difficult).`, {
-            evidence: { fleschReadingEase: score, wordCount: page.wordCount },
-          })
-        : null;
+      if (score === null || score >= 30) {
+        return null;
+      }
+
+      return make(`Flesch Reading Ease is ${score} (very difficult).`, {
+        fix: [readabilityFix(page)],
+        evidence: { fleschReadingEase: score, wordCount: page.wordCount },
+      });
     }
   ),
 ];

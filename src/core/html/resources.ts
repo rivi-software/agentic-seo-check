@@ -111,19 +111,28 @@ const kindOf = (el: Element): ResourceInfo["kind"] | null => {
   }
 };
 
-const urlsOf = (el: Element): string[] => {
+/** The URLs an element loads, each with the attribute that holds it, as written. */
+const urlsOf = (el: Element): { attribute: string; raw: string }[] => {
+  const one = (attribute: string) => ({
+    attribute,
+    raw: attr(el, attribute) ?? "",
+  });
+
   if (el.name === "link") {
-    return [attr(el, "href") ?? ""];
+    return [one("href")];
   }
 
   if (el.name === "object") {
-    return [attr(el, "data") ?? ""];
+    return [one("data")];
   }
 
   return [
-    attr(el, "src") ?? "",
-    ...srcsetUrls(attr(el, "srcset") ?? ""),
-    ...(el.name === "video" ? [attr(el, "poster") ?? ""] : []),
+    one("src"),
+    ...srcsetUrls(attr(el, "srcset") ?? "").map((raw) => ({
+      attribute: "srcset",
+      raw,
+    })),
+    ...(el.name === "video" ? [one("poster")] : []),
   ];
 };
 
@@ -160,11 +169,11 @@ export const extractResources = (
       continue;
     }
 
-    for (const raw of urlsOf(el)) {
+    for (const { attribute, raw } of urlsOf(el)) {
       const url = raw.trim() ? resolveUrl(raw, base) : null;
 
       if (url) {
-        out.push({ kind, url });
+        out.push({ kind, url, raw: raw.trim(), element: el.name, attribute });
       }
     }
   }

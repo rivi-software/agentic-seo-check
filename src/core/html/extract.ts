@@ -7,11 +7,13 @@ import type {
   ImageInfo,
   LinkInfo,
   PageMarkup,
+  TextBlock,
 } from "../types.js";
 import { isSameSite, resolveUrl, hostOf } from "../url.js";
 import { extractAnswerSignals } from "./answer.js";
 import {
   attr,
+  HIDDEN_ELEMENTS,
   parseDocument,
   queryAll,
   queryOne,
@@ -20,7 +22,7 @@ import {
   visibleText,
   wordsBeforeImages,
 } from "./dom.js";
-import type { Document, Element } from "./dom.js";
+import type { AnyNode, Document, Element } from "./dom.js";
 import { extractHeadSignals, isHtmlElement } from "./head.js";
 import {
   extractMissingFragments,
@@ -128,6 +130,73 @@ const extractSocial = (
   return { og, twitter, social };
 };
 
+const BLOCK_ELEMENTS = new Set([
+  "p",
+  "li",
+  "dd",
+  "dt",
+  "td",
+  "th",
+  "blockquote",
+  "figcaption",
+]);
+
+const MAX_BLOCKS = 300;
+
+/**
+ * The body's innermost text blocks with text, quoted as written, so a fix can rewrite one passage
+ * (a placeholder paragraph, a hard-to-read one) instead of words cut out of the joined page text.
+ * One walk from the top that skips hidden subtrees and stops at `MAX_BLOCKS`: a hostile page of
+ * deep nesting and empty paragraphs costs no more than its size.
+ */
+const extractBlocks = (
+  body: Element | null,
+  tagOf: (el: Element, part?: "start" | "outer") => string
+): TextBlock[] => {
+  const out: TextBlock[] = [];
+
+  // Whether `nodes` hold a block, so a block knows whether it is the innermost one.
+  const walk = (nodes: AnyNode[]): boolean => {
+    let holdsBlock = false;
+
+    for (const node of nodes) {
+      if (out.length >= MAX_BLOCKS) {
+        return true;
+      }
+
+      if (!isTag(node) || HIDDEN_ELEMENTS.has(node.name)) {
+        continue;
+      }
+
+      const inner = walk(node.children);
+
+      if (BLOCK_ELEMENTS.has(node.name)) {
+        holdsBlock = true;
+        const blockText = inner ? "" : visibleText(node);
+
+        if (blockText) {
+          out.push({
+            text: blockText,
+            outer: tagOf(node, "outer"),
+            tag: tagOf(node),
+            name: node.name,
+          });
+        }
+      } else if (inner) {
+        holdsBlock = true;
+      }
+    }
+
+    return holdsBlock;
+  };
+
+  if (body) {
+    walk(body.children);
+  }
+
+  return out;
+};
+
 export const extractPage = (
   html: string,
   options: ExtractOptions
@@ -222,6 +291,7 @@ export const extractPage = (
       nofollow: relTokens.includes("nofollow"),
       hasAccessibleName: Boolean(linkText || ariaLabel || title || imgAlt),
       tag: tagOf(el),
+      outer: tagOf(el, "outer"),
     };
   });
 
@@ -268,6 +338,7 @@ export const extractPage = (
           "application/ld+json"
       )
       .map((el) => tagOf(el)),
+    blocks: extractBlocks(body, tagOf),
   };
 
   return {

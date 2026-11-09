@@ -99,10 +99,11 @@ export const typesOf = (value: JsonValue | undefined): string[] => {
 
 const flattenJsonLd = (
   node: JsonValue,
-  inheritedContext: string | null
+  inheritedContext: string | null,
+  scriptText: string
 ): StructuredDataItem[] => {
   if (Array.isArray(node)) {
-    return node.flatMap((n) => flattenJsonLd(n, inheritedContext));
+    return node.flatMap((n) => flattenJsonLd(n, inheritedContext, scriptText));
   }
 
   if (!isJsonObject(node)) {
@@ -113,11 +114,17 @@ const flattenJsonLd = (
   const graph = node["@graph"];
 
   if (Array.isArray(graph)) {
-    return graph.flatMap((n) => flattenJsonLd(n, context));
+    return graph.flatMap((n) => flattenJsonLd(n, context, scriptText));
   }
 
   return [
-    { source: "json-ld", types: typesOf(node["@type"]), context, data: node },
+    {
+      source: "json-ld",
+      types: typesOf(node["@type"]),
+      context,
+      data: node,
+      scriptText,
+    },
   ];
 };
 
@@ -258,11 +265,16 @@ const extractMicrodata = (doc: Document): StructuredDataItem[] => {
   return items;
 };
 
+/** The script text a fix may quote; past it a fix describes the edit instead. */
+const MAX_SCRIPT_TEXT = 20_000;
+
 export const extractStructuredData = (
   doc: Document
 ): StructuredDataExtraction => {
   const items: StructuredDataItem[] = [];
   const errors: StructuredDataError[] = [];
+
+  let script = -1;
 
   for (const el of queryAll(doc, "script[type]")) {
     const type = (attr(el, "type") ?? "").trim().toLowerCase();
@@ -271,6 +283,9 @@ export const extractStructuredData = (
       continue;
     }
 
+    script += 1;
+    // Script text is raw text in HTML, so this is the source as written.
+    const written = text(el).slice(0, MAX_SCRIPT_TEXT);
     const raw = text(el).trim();
 
     if (!raw) {
@@ -278,6 +293,8 @@ export const extractStructuredData = (
         source: "json-ld",
         message: "Empty JSON-LD script block",
         snippet: "",
+        script,
+        text: written,
       });
 
       continue;
@@ -292,12 +309,14 @@ export const extractStructuredData = (
         source: "json-ld",
         message: `Invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
         snippet: raw.slice(0, 200),
+        script,
+        text: written,
       });
 
       continue;
     }
 
-    for (const node of flattenJsonLd(parsed, null)) {
+    for (const node of flattenJsonLd(parsed, null, written)) {
       items.push(node);
     }
   }

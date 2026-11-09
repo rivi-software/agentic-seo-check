@@ -1,4 +1,7 @@
-import type { ExtractedPage, ResponseInfo } from "../types.js";
+import { quote } from "../html/dom.js";
+import type { ExtractedPage, FixEdit, ResponseInfo } from "../types.js";
+import { removeEdit, replaceEdit, setAttributeEdit } from "./fix.js";
+import { readAttributes, withAttributeSelector } from "./quoted-tags.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
 
 /** Directives that carry a value after a colon, which is not a user agent prefix. */
@@ -193,6 +196,175 @@ export const robotsDirectives = (
   };
 };
 
+/**
+ * What an edit does to one directive, given the user agent it is for (null for every crawler):
+ * the directive to write instead (the same one keeps it), or null to drop it.
+ */
+type DirectiveEdit = (directive: string, agent: string | null) => string | null;
+
+/**
+ * A robots meta content or X-Robots-Tag value with every directive passed through `edit`, written
+ * back with ", " between directives. When a dropped directive carried an `agent:` prefix, the next
+ * directive of that agent takes the prefix, so no directive changes the crawler it is for.
+ */
+interface EditedDirectives {
+  value: string;
+  /** Whether any directive was dropped or rewritten. */
+  changed: boolean;
+}
+
+const editDirectives = (
+  value: string,
+  edit: DirectiveEdit
+): EditedDirectives => {
+  const out: string[] = [];
+  let agent: string | null = null;
+  let carry = "";
+  let changed = false;
+
+  for (const piece of value.split(",")) {
+    let directive = piece.trim();
+    let prefix = "";
+    const match = /^(?<name>[a-z0-9_-]+)\s*:\s*(?<rest>.*)$/iu.exec(directive);
+    const name = match?.groups?.name;
+
+    if (name && !VALUE_DIRECTIVES.has(name.toLowerCase())) {
+      agent = name.toLowerCase();
+      prefix = `${name}: `;
+      carry = "";
+      directive = match.groups?.rest?.trim() ?? "";
+    }
+
+    if (!directive) {
+      continue;
+    }
+
+    const lower = directive.toLowerCase();
+    const result = edit(lower, agent);
+
+    if (result === null) {
+      changed = true;
+      carry = prefix || carry;
+      continue;
+    }
+
+    if (result !== lower) {
+      changed = true;
+    }
+
+    out.push(`${prefix || carry}${result === lower ? directive : result}`);
+    carry = "";
+  }
+
+  return { value: out.join(", "), changed };
+};
+
+const KEEP_IF_DELIBERATE =
+  "Keep it if the page should stay out of search (a login, thank-you or internal search page). Preview and staging hosts often add it themselves: check production first.";
+
+/**
+ * The edits that apply `edit` to the robots meta tags named in `names` (robots, googlebot, ...)
+ * and to the X-Robots-Tag header for the agents `headerAgent` accepts.
+ */
+const directiveEdits = (
+  page: ExtractedPage,
+  response: ResponseInfo | undefined,
+  names: ReadonlySet<string>,
+  headerAgent: (agent: string | null) => boolean,
+  edit: DirectiveEdit,
+  write?: string
+): FixEdit[] => {
+  const fix: FixEdit[] = [];
+
+  for (const tag of page.markup.metaRobots) {
+    const attributes = readAttributes(tag);
+    const name = attributes?.get("name")?.trim() ?? "";
+
+    if (!attributes || !names.has(name.toLowerCase())) {
+      continue;
+    }
+
+    const agent = name.toLowerCase() === "robots" ? null : name.toLowerCase();
+
+    const next = editDirectives(attributes.get("content") ?? "", (d) =>
+      edit(d, agent)
+    );
+
+    if (!next.changed) {
+      continue;
+    }
+
+    const at = withAttributeSelector("meta", "name", name);
+
+    fix.push(
+      next.value
+        ? setAttributeEdit(
+            tag,
+            at,
+            "content",
+            next.value.replaceAll('"', "&quot;"),
+            write
+          )
+        : removeEdit("html", tag, { at, write })
+    );
+  }
+
+  const header = response?.headers["x-robots-tag"];
+
+  if (header) {
+    const next = editDirectives(header, (d, agent) =>
+      headerAgent(agent) ? edit(d, agent) : d
+    );
+
+    const current = quote(`X-Robots-Tag: ${header}`);
+
+    const where =
+      "Set in the server, CDN or host config (a headers file or rule) that sends it.";
+
+    const text = [write, where].filter(Boolean).join(" ");
+
+    if (next.changed) {
+      fix.push(
+        next.value
+          ? replaceEdit("http", current, `X-Robots-Tag: ${next.value}`, {
+              at: "X-Robots-Tag",
+              write: text,
+            })
+          : removeEdit("http", current, { at: "X-Robots-Tag", write: text })
+      );
+    }
+  }
+
+  return fix;
+};
+
+/** A directive without its whitespace, as X-Robots-Tag is read: "noindex nofollow" is "noindexnofollow". */
+const squash = (d: string): string => d.replaceAll(/\s+/gu, "");
+
+const ALL_ROBOTS_NAMES = new Set(["robots", ...SEARCH_ENGINE_AGENTS]);
+const GOOGLE_NAMES = new Set(["robots", "googlebot"]);
+
+const forSearch = (agent: string | null): boolean =>
+  agent === null || SEARCH_ENGINE_AGENTS.has(agent);
+
+const forGoogle = (agent: string | null): boolean =>
+  agent === null || agent === "googlebot";
+
+/** Drops `directive` from a list; "none" (noindex and nofollow) keeps the other half. */
+const dropping =
+  (directive: "noindex" | "nofollow"): DirectiveEdit =>
+  (d) => {
+    if (d === directive) {
+      return null;
+    }
+
+    if (d === "none") {
+      return directive === "noindex" ? "nofollow" : "noindex";
+    }
+
+    return d;
+  };
+
 export const indexingRules = [
   defineRule(
     {
@@ -210,6 +382,14 @@ export const indexingRules = [
 
       return r.noindex
         ? make(`Page is set to noindex via ${r.sources.join(" and ")}.`, {
+            fix: directiveEdits(
+              page,
+              response,
+              ALL_ROBOTS_NAMES,
+              forSearch,
+              dropping("noindex"),
+              `Only if this page should appear in search results. ${KEEP_IF_DELIBERATE}`
+            ),
             selector: r.sources.includes("meta")
               ? 'head > meta[name="robots"]'
               : undefined,
@@ -237,6 +417,14 @@ export const indexingRules = [
 
       return r.nofollow
         ? make(`Page-level nofollow is set via ${r.sources.join(" and ")}.`, {
+            fix: directiveEdits(
+              page,
+              response,
+              ALL_ROBOTS_NAMES,
+              forSearch,
+              dropping("nofollow"),
+              "Only if search engines should follow this page's links. Keep it if they should not, for instance on a page of links you do not vouch for."
+            ),
             evidence: { directives: r.directives },
           })
         : null;
@@ -277,11 +465,26 @@ export const indexingRules = [
         const allowed = where(allow);
         const denied = where(deny);
 
+        // Removing the permissive directive changes nothing Google does, since it applies the
+        // restrictive one already; "all" goes too, as index and follow are the default.
+        const permissive = new Set(allow);
+
         return allowed.length > 0 && denied.length > 0
           ? [
               make(
                 `The page says ${allowed.join(" and ")} but also ${denied.join(" and ")}; Google applies ${wins}.`,
-                { evidence: { allow: allowed, deny: denied, applied: wins } }
+                {
+                  fix: directiveEdits(
+                    page,
+                    response,
+                    GOOGLE_NAMES,
+                    forGoogle,
+                    (d) => (permissive.has(d) ? null : d),
+                    `Google already applies ${wins}, so this changes nothing in search. If the page should be ${wins === "noindex" ? "indexed" : "followed"}, remove ${wins} instead.`
+                  ),
+                  key: wins,
+                  evidence: { allow: allowed, deny: denied, applied: wins },
+                }
               ),
             ]
           : [];
@@ -316,10 +519,24 @@ export const indexingRules = [
         (m) => `"${m.directive}" (${m.source}, meant as ${m.meant.join(", ")})`
       );
 
+      const meant = new Map(
+        misread.map((m) => [
+          squash(m.directive.toLowerCase()),
+          m.meant.join(", "),
+        ])
+      );
+
       return make(
         `${misread.length === 1 ? "A robots directive is" : `${misread.length} robots directives are`} not written the way Google documents: ${cap(listed, 5).join("; ")}.`,
         {
           severity: misspelled ? "warning" : "info",
+          fix: directiveEdits(
+            page,
+            response,
+            GOOGLE_NAMES,
+            forGoogle,
+            (d) => meant.get(squash(d)) ?? d
+          ),
           evidence: {
             directives: cap(
               misread.map((m) => ({
