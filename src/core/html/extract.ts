@@ -372,6 +372,6 @@ export const extractPage = (
     hasBaseHref: Boolean(baseHref),
     head: extractHeadSignals(html, doc),
     markup,
-    answer: extractAnswerSignals(doc, bodyText),
+    answer: extractAnswerSignals(doc, bodyText, html),
   };
 };

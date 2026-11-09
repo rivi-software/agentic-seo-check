@@ -7,6 +7,7 @@ import {
   HIDDEN_ELEMENTS,
   queryAll,
   queryOne,
+  sourceOf,
   text,
   visibleText,
 } from "./dom.js";
@@ -199,12 +200,15 @@ const hasNosnippetAncestor = (el: Element): boolean => {
   return false;
 };
 
-const emptyAppRoot = (body: Element): string | null => {
+/** The first empty app root, and its selector. */
+const emptyAppRoot = (
+  body: Element
+): { selector: string; el: Element } | null => {
   for (const selector of APP_ROOTS) {
     const el = queryOne(body, selector);
 
     if (el && wordCount(visibleText(el)) === 0) {
-      return selector;
+      return { selector, el };
     }
   }
 
@@ -219,23 +223,37 @@ const emptySignals = (robotsMeta: AnswerSignals["robotsMeta"]) => ({
   nosnippetElements: 0,
   nosnippetWords: 0,
   nosnippetSelectors: [],
+  nosnippetTags: [],
   emptyAppRoot: null,
+  emptyAppRootTag: null,
   noscriptAsksForJavaScript: false,
   timeElements: 0,
   mentionsDate: false,
 });
 
-/** Reads what the AEO rules need from a parsed document; `bodyText` is its visible body text. */
+/**
+ * Reads what the AEO rules need from a parsed document; `bodyText` is its visible body text. With
+ * `html`, the source it was parsed from, the signals also quote the elements a fix rewrites.
+ */
 export const extractAnswerSignals = (
   doc: Document,
-  bodyText: string
+  bodyText: string,
+  html?: string
 ): AnswerSignals => {
-  const robotsMeta = queryAll(doc, "meta[name]").flatMap((el) => {
-    const name = (attr(el, "name") ?? "").trim().toLowerCase();
-    const content = collapseWhitespace(attr(el, "content") ?? "").toLowerCase();
+  // `index` counts every robots meta tag, empty ones too, the way `markup.metaRobots` lists them.
+  const robotsMeta = queryAll(doc, "meta[name]")
+    .filter((el) =>
+      ROBOTS_META_NAMES.has((attr(el, "name") ?? "").trim().toLowerCase())
+    )
+    .flatMap((el, index) => {
+      const name = (attr(el, "name") ?? "").trim().toLowerCase();
 
-    return ROBOTS_META_NAMES.has(name) && content ? [{ name, content }] : [];
-  });
+      const content = collapseWhitespace(
+        attr(el, "content") ?? ""
+      ).toLowerCase();
+
+      return content ? [{ name, content, index }] : [];
+    });
 
   const body = queryOne(doc, "body");
 
@@ -246,6 +264,8 @@ export const extractAnswerSignals = (
   const nosnippet = queryAll(body, "[data-nosnippet]").filter(
     (el) => !hasNosnippetAncestor(el)
   );
+
+  const appRoot = emptyAppRoot(body);
 
   return {
     robotsMeta,
@@ -264,7 +284,17 @@ export const extractAnswerSignals = (
       0
     ),
     nosnippetSelectors: nosnippet.slice(0, 10).map(nosnippetSelector),
-    emptyAppRoot: emptyAppRoot(body),
+    nosnippetTags:
+      html === undefined
+        ? []
+        : nosnippet
+            .slice(0, 10)
+            .map((el) => sourceOf(el, html) ?? `<${el.name}>`),
+    emptyAppRoot: appRoot?.selector ?? null,
+    emptyAppRootTag:
+      html !== undefined && appRoot
+        ? sourceOf(appRoot.el, html, "outer")
+        : null,
     noscriptAsksForJavaScript: queryAll(body, "noscript").some((el) =>
       /javascript/iu.test(text(el))
     ),

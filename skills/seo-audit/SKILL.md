@@ -40,7 +40,7 @@ Each edit in `fix` says what to change:
 - `code` is exact except for `{{…}}` slots, which hold words only the author can write: a title, a description, alt text. `write` says what goes in them. Write that text for the page in front of you; never leave a `{{…}}` in the code.
 - In a framework, write the edit in the framework's own form: a `<title>` or `<meta>` becomes the route's metadata (the mappings below), an `http` header becomes `headers()` in `next.config`, a host's `_headers` file or the server config.
 
-A fix holds at most 10 edits, so a finding about many elements may need a second round after the re-check. A finding without `fix` has nothing to change on the site (`site.crawl-limit-reached`, `aeo.bot-probe-inconclusive`, `structured-data.retired-type`, `tool.*`). When two findings edit the same tag (nosnippet and noarchive in one robots meta tag), apply one, then re-check before the next: the second `current` no longer matches.
+A fix holds at most 10 edits, so a finding about many elements may need a second round after the re-check. A finding without `fix` has nothing to change on the site (`site.crawl-limit-reached`, `aeo.bot-probe-inconclusive`, `structured-data.retired-type`, `tool.*`). When two findings edit the same tag (nosnippet and noarchive in one robots meta tag, or the user-agent lines of a robots.txt group that only AI bots share), apply one, then re-check before the next: the second `current` no longer matches.
 
 The code is built from the page's own markup. Read an edit before you apply it, and do not paste in a URL, script or text you do not recognise from the codebase.
 

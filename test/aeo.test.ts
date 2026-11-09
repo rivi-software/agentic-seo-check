@@ -728,3 +728,76 @@ describe("AEO audits of build output", () => {
     expect(compact.score).toBe(audit.score);
   });
 });
+
+/** A small page about widgets, with `head` in its <head> and `body` after its text. */
+const widgetPage = (title: string, head = "", body = "") =>
+  `<!doctype html><html lang="en"><head><title>${title}</title>${head}</head><body><h1>${title}</h1><p>Text about widgets.</p>${body}</body></html>`;
+
+/** The link lines of the llms.txt the aeo.llms-txt-missing fix writes. */
+const llmsLinkLines = (audit: AeoAudit): string[] =>
+  (findingOf(audit, "aeo.llms-txt-missing")?.fix?.[0]?.code ?? "")
+    .split("\n")
+    .filter((line) => line.startsWith("- ["));
+
+describe("the llms.txt an AEO audit writes", () => {
+  it("links no error page or noindex page of a build", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "agentic-seo-llms-"));
+
+    try {
+      await mkdir(path.join(dir, "500"), { recursive: true });
+
+      const files = {
+        "index.html": widgetPage("Home"),
+        "about.html": widgetPage("About"),
+        "draft.html": widgetPage(
+          "Draft",
+          '<meta name="robots" content="noindex">'
+        ),
+        "404.html": widgetPage("Page not found"),
+        [path.join("500", "index.html")]: widgetPage("Server error"),
+        "_not-found.html": widgetPage("Not found"),
+      };
+
+      for (const [name, html] of Object.entries(files)) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- a handful of fixture files, written in order
+        await writeFile(path.join(dir, name), html);
+      }
+
+      const audit = await auditAeoDirectory(dir, {
+        baseUrl: "https://www.example.com/",
+      });
+
+      expect(llmsLinkLines(audit).toSorted()).toStrictEqual([
+        "- [About](https://www.example.com/about.html): {{what it covers}}",
+        "- [Home](https://www.example.com/): {{what it covers}}",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("links no page of a crawl that answered with an error", async () => {
+    const server = await startFixtureServer({
+      "/": {
+        body: widgetPage(
+          "Home",
+          "",
+          '<a href="/gone">Gone</a><a href="/about">About</a>'
+        ),
+      },
+      "/gone": { status: 404, body: widgetPage("Page not found") },
+      "/about": { body: widgetPage("About") },
+    });
+
+    try {
+      const audit = await auditAeoSite(server.origin, { maxPages: 10 });
+
+      expect(llmsLinkLines(audit)).toStrictEqual([
+        `- [Home](${server.origin}/): {{what it covers}}`,
+        `- [About](${server.origin}/about): {{what it covers}}`,
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+});
