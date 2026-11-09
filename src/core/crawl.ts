@@ -92,6 +92,47 @@ interface QueueItem {
 }
 
 /**
+ * The crawled pages in the order a one-at-a-time breadth-first crawl reaches them: from the start
+ * page, through each page's links in the order the page lists them. Worked out from the recorded
+ * links after the crawl, so it does not depend on which parallel request finished first. Pages no
+ * link reached (a redirect target already crawled under another URL) follow, by URL.
+ */
+const inCrawlOrder = (
+  records: PageRecord[],
+  startUrl: string
+): PageRecord[] => {
+  const byUrl = new Map<string, PageRecord>();
+
+  for (const r of records) {
+    byUrl.set(r.requestedUrl, r);
+    byUrl.set(r.url, r);
+  }
+
+  const start = byUrl.get(startUrl) ?? records.find((r) => r.depth === 0);
+  const ordered: PageRecord[] = start ? [start] : [];
+  const placed = new Set(ordered);
+
+  // `ordered` grows while it is read, and for...of reads what is pushed: the breadth-first queue.
+  for (const record of ordered) {
+    for (const link of record.page.links) {
+      const target = link.url ? normalizeUrl(link.url) : null;
+      const linked = target ? byUrl.get(target) : undefined;
+
+      if (linked && !placed.has(linked)) {
+        placed.add(linked);
+        ordered.push(linked);
+      }
+    }
+  }
+
+  const rest = records
+    .filter((r) => !placed.has(r))
+    .toSorted((a, b) => a.url.localeCompare(b.url));
+
+  return [...ordered, ...rest];
+};
+
+/**
  * Works through a queue that grows while it runs: each crawled page can add the links it found.
  * At most `concurrency` items run at once, and with `delayMs` each slot waits that long after its
  * item before it takes the next one. An item that throws is left out; the rest go on.
@@ -401,13 +442,15 @@ export const crawlSite = async (
       includeSubdomains: options.includeSubdomains,
     });
 
-    records.push({
+    const record: PageRecord = {
       url: finalKey,
       requestedUrl: item.url,
       page,
       response: toResponseInfo(res),
       depth: item.depth,
-    });
+    };
+
+    records.push(record);
   };
 
   const processItem = async (item: QueueItem): Promise<void> => {
@@ -461,18 +504,27 @@ export const crawlSite = async (
       includeSubdomains: options.includeSubdomains,
     });
 
-    records.push({
+    const record: PageRecord = {
       url: finalKey,
       requestedUrl: item.url,
       page,
       response: toResponseInfo(res),
       depth: item.depth,
-    });
+    };
+
+    records.push(record);
 
     followLinks(page.links, finalKey, item.depth);
   };
 
   await runQueue(queue, options.concurrency, options.delayMs, processItem);
+
+  // Site rules that keep the first of a group (the page a spelling variant duplicates, the page
+  // a duplicate's canonical should name) then pick the same page on every run.
+  // One at a time: spreading 100,000 records into splice() overflows the stack.
+  for (const [i, record] of inCrawlOrder(records, startUrl).entries()) {
+    records[i] = record;
+  }
 
   /* Check internal link targets that were discovered but not crawled (limits, depth, non-HTML). */
   progress({ phase: "links", message: "Checking internal link targets" });

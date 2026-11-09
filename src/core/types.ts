@@ -72,7 +72,11 @@ export type FixTarget =
  */
 export interface FixEdit {
   in: FixTarget;
-  /** `replace` swaps `current` for `code`, `add` writes `code` at `at`, `remove` deletes `current`. */
+  /**
+   * `replace` swaps `current` for `code`, `add` writes `code` at `at`, `remove` deletes `current`.
+   * An `asset` replace at "whole file" has no `current`: the file itself changes (a script split, an
+   * image re-encoded), as `write` says.
+   */
   action: "add" | "replace" | "remove";
   /** The URL whose file or response to change, when it is not the finding's own page. */
   url?: string;
@@ -470,6 +474,50 @@ export interface LighthouseMetrics {
   inpMs: number | null;
 }
 
+/** An element Lighthouse names, as the rendered DOM serialises it. */
+export interface LighthouseNode {
+  /** CSS selector of the element in the rendered DOM. */
+  selector: string;
+  /** The element's start tag; Lighthouse shortens long attribute values with "…". */
+  snippet: string;
+  /** Its text or alt, as Lighthouse labels it. */
+  label: string | null;
+  /** Element name, lower-cased ("img", "div"), when Lighthouse gives it. */
+  name: string | null;
+  /** Rendered size in CSS pixels, rounded. */
+  width: number | null;
+  height: number | null;
+}
+
+/** One row of a Lighthouse audit's details, the parts a fix needs. */
+export interface LighthouseItem {
+  url?: string;
+  node?: LighthouseNode;
+  totalBytes?: number;
+  wastedBytes?: number;
+  wastedMs?: number;
+  /** A line of a file Lighthouse checked (robots.txt), and its 1-based number. */
+  line?: string;
+  lineNumber?: number;
+  /** What Lighthouse says about the row: an error message, a cause, a description. */
+  text?: string;
+}
+
+/** The Largest Contentful Paint element, and what Lighthouse found about how it loads. */
+export interface LcpElement {
+  node: LighthouseNode;
+  /** URL of the image request, when exactly one image request in the network log matches the element. */
+  imageUrl: string | null;
+  /** The element has a srcset, so a preload would need imagesrcset and imagesizes. */
+  hasSrcset: boolean;
+  /** lcp-discovery checks, false where the page gets it wrong, null when Lighthouse did not check. */
+  fetchpriorityHigh: boolean | null;
+  discoverable: boolean | null;
+  notLazy: boolean | null;
+  /** Where the time to LCP goes, in ms: timeToFirstByte, resourceLoadDelay, resourceLoadDuration, elementRenderDelay. */
+  phases: Record<string, number>;
+}
+
 export interface LighthouseOpportunity {
   id: string;
   title: string;
@@ -477,6 +525,8 @@ export interface LighthouseOpportunity {
   score: number | null;
   savingsMs: number | null;
   savingsBytes: number | null;
+  /** The first rows of the audit (resources, elements), for a fix to name. */
+  items?: LighthouseItem[];
 }
 
 export interface LighthouseAuditSummary {
@@ -485,6 +535,8 @@ export interface LighthouseAuditSummary {
   description: string;
   score: number | null;
   displayValue: string | null;
+  /** The first rows of the audit (failing links, robots.txt lines, elements), for a fix to name. */
+  items?: LighthouseItem[];
 }
 
 export interface PerformanceResult {
@@ -497,6 +549,16 @@ export interface PerformanceResult {
   opportunities: LighthouseOpportunity[];
   failedSeoAudits: LighthouseAuditSummary[];
   agenticBrowsingAudits: LighthouseAuditSummary[];
+  /** The LCP element, when Lighthouse names one. */
+  lcpElement?: LcpElement;
+  /** Images without width and height (unsized-images), which shift the layout when they load. */
+  unsizedImages?: LighthouseItem[];
+  /** Elements that shifted the layout (cls-culprits), with the causes Lighthouse found in `text`. */
+  layoutShifts?: LighthouseItem[];
+  /** Stylesheets and scripts that block the first paint (render-blocking). */
+  renderBlocking?: LighthouseItem[];
+  /** Scripts with the most main-thread time (bootup-time), `wastedMs` holding their script evaluation time. */
+  scripts?: LighthouseItem[];
 }
 
 export interface RenderComparison {

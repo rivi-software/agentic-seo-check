@@ -37,6 +37,19 @@ export const agentMatcher = (
   return (target, agent) => robot.isAllowed(target, agent) ?? true;
 };
 
+/**
+ * The line of robots.txt at `url` (1-based) whose rule decides whether `agent` may fetch `target`,
+ * or -1 when no rule matches, so a fix can quote the Disallow line that blocks a URL.
+ */
+export const ruleLineMatcher = (
+  url: string,
+  text: string
+): ((target: string, agent: string) => number) => {
+  const robot = robotsParser(url, text.slice(0, MAX_ROBOTS_BYTES));
+
+  return (target, agent) => robot.getMatchingLineNumber(target, agent);
+};
+
 export const buildRobots = (
   url: string,
   status: number | null,

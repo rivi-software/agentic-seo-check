@@ -207,7 +207,7 @@ All tools are read-only. Results are returned both as text (JSON or Markdown) an
 }
 ```
 
-A fix's `current` is quoted from the HTML the server sent, so an agent can find it in the template that renders it; a quote cut short at 500 characters ends in `…`. Text in `{{` `}}` is a slot for words only the author can write, such as a title or alt text; everything else in `code` is exact. The code is built from the page's own markup, so review an edit like any other change before you commit it.
+A fix's `current` is quoted from the HTML the server sent, so an agent can find it in the template that renders it; a quote cut short at 500 characters ends in `…`. Text in `{{` `}}` is a slot for words only the author can write, such as a title or alt text; everything else in `code` is exact. An `asset` replace at `whole file` (a script to split, an image to re-encode) has no `current`, a slot for `code`, and the measurement and target in `write`. The code is built from the page's own markup, so review an edit like any other change before you commit it.
 
 A fix holds at most 10 edits; a finding about more elements (23 skipped heading levels, 40 images without alt text) lists the first 10, and a re-check shows what is left. A few findings have no fix because there is nothing on the site to change: `site.crawl-limit-reached` and `aeo.bot-probe-inconclusive` describe the audit, `structured-data.retired-type` says Google stopped showing a rich result whose markup answer engines still read, and `tool.*` findings are about this machine.
 

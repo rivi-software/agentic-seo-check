@@ -1,5 +1,20 @@
+import {
+  canonicalFix,
+  consoleErrorFix,
+  contentFix,
+  descriptionFix,
+  h1Fix,
+  linksFix,
+  noindexAddedFix,
+  noindexRemovedFix,
+  structuredDataFix,
+  titleChangedFix,
+  titleFix,
+} from "./render-fixes.js";
+import type { RenderPages } from "./render-fixes.js";
 import { robotsDirectives } from "./rules/indexing.js";
 import { finding, GOOGLE_DOCS } from "./rules/rule.js";
+import type { FindingExtras } from "./rules/rule.js";
 import type {
   ExtractedPage,
   Finding,
@@ -128,28 +143,39 @@ export const snapshot = (
   structuredDataCount: page.structuredData.length,
 });
 
-/** Title, description, canonical and robots: what the head says before and after JavaScript runs. */
-const headFindings = (a: RenderSnapshot, b: RenderSnapshot): Finding[] => {
+/** The server HTML and the rendered DOM, read once, with what each says. */
+interface Sides extends RenderPages {
+  a: RenderSnapshot;
+  b: RenderSnapshot;
+}
+
+const make = (id: string, message: string, extras: FindingExtras): Finding =>
+  finding(m(id), message, extras);
+
+/** Title and description: what the head says before and after JavaScript runs. */
+const textFindings = (s: Sides): Finding[] => {
+  const { a, b } = s;
   const findings: Finding[] = [];
-  const add = (f: Finding) => findings.push(f);
 
   if (!a.title && b.title) {
-    add(
-      finding(
-        m("rendering.title-client-only"),
+    findings.push(
+      make(
+        "rendering.title-client-only",
         `Title "${b.title}" is only present after rendering.`,
         {
+          fix: titleFix(s, b.title),
           selector: "head > title",
           evidence: { raw: a.title, rendered: b.title },
         }
       )
     );
   } else if (a.title && b.title && a.title !== b.title) {
-    add(
-      finding(
-        m("rendering.title-changed"),
+    findings.push(
+      make(
+        "rendering.title-changed",
         "Title differs between server HTML and rendered DOM.",
         {
+          fix: titleChangedFix(s, a.title, b.title),
           selector: "head > title",
           evidence: { raw: a.title, rendered: b.title },
         }
@@ -158,11 +184,12 @@ const headFindings = (a: RenderSnapshot, b: RenderSnapshot): Finding[] => {
   }
 
   if (!a.metaDescription && b.metaDescription) {
-    add(
-      finding(
-        m("rendering.description-client-only"),
+    findings.push(
+      make(
+        "rendering.description-client-only",
         "Meta description is only present after rendering.",
         {
+          fix: descriptionFix(s, b.metaDescription),
           selector: 'head > meta[name="description"]',
           evidence: { rendered: b.metaDescription },
         }
@@ -170,23 +197,33 @@ const headFindings = (a: RenderSnapshot, b: RenderSnapshot): Finding[] => {
     );
   }
 
+  return findings;
+};
+
+/** Canonical and robots: the signals that decide which URL is indexed, before and after JavaScript. */
+const indexingFindings = (s: Sides): Finding[] => {
+  const { a, b } = s;
+  const findings: Finding[] = [];
+
   if (!a.canonical && b.canonical) {
-    add(
-      finding(
-        m("rendering.canonical-client-only"),
+    findings.push(
+      make(
+        "rendering.canonical-client-only",
         `Canonical ${b.canonical} is only present after rendering.`,
         {
+          fix: canonicalFix(s, null, b.canonical),
           selector: 'head > link[rel="canonical"]',
           evidence: { rendered: b.canonical },
         }
       )
     );
   } else if (a.canonical && b.canonical && a.canonical !== b.canonical) {
-    add(
-      finding(
-        m("rendering.canonical-changed"),
+    findings.push(
+      make(
+        "rendering.canonical-changed",
         "Canonical differs between server HTML and rendered DOM.",
         {
+          fix: canonicalFix(s, a.canonical, b.canonical),
           selector: 'head > link[rel="canonical"]',
           evidence: { raw: a.canonical, rendered: b.canonical },
         }
@@ -198,24 +235,22 @@ const headFindings = (a: RenderSnapshot, b: RenderSnapshot): Finding[] => {
   const renderedNoindex = b.robots.some((d) => d === "noindex" || d === "none");
 
   if (!rawNoindex && renderedNoindex) {
-    add(
-      finding(
-        m("rendering.noindex-client-only"),
-        "noindex is added by JavaScript.",
-        {
-          selector: 'head > meta[name="robots"]',
-          evidence: { raw: a.robots, rendered: b.robots },
-        }
-      )
+    findings.push(
+      make("rendering.noindex-client-only", "noindex is added by JavaScript.", {
+        fix: noindexAddedFix(s),
+        selector: 'head > meta[name="robots"]',
+        evidence: { raw: a.robots, rendered: b.robots },
+      })
     );
   }
 
   if (rawNoindex && !renderedNoindex) {
-    add(
-      finding(
-        m("rendering.noindex-removed-by-js"),
+    findings.push(
+      make(
+        "rendering.noindex-removed-by-js",
         "Server HTML contains noindex; JavaScript removes it.",
         {
+          fix: noindexRemovedFix(s),
           selector: 'head > meta[name="robots"]',
           evidence: { raw: a.robots, rendered: b.robots },
         }
@@ -226,21 +261,18 @@ const headFindings = (a: RenderSnapshot, b: RenderSnapshot): Finding[] => {
   return findings;
 };
 
-/** H1, words, links, structured data and script errors: what only the rendered body has. */
-const bodyFindings = (
-  a: RenderSnapshot,
-  b: RenderSnapshot,
-  consoleErrors: string[]
-): Finding[] => {
+/** H1, words and links: what only the rendered body has. */
+const contentFindings = (s: Sides): Finding[] => {
+  const { a, b } = s;
   const findings: Finding[] = [];
-  const add = (f: Finding) => findings.push(f);
 
   if (a.h1Count === 0 && b.h1Count > 0) {
-    add(
-      finding(
-        m("rendering.h1-client-only"),
+    findings.push(
+      make(
+        "rendering.h1-client-only",
         "The <h1> is only present after rendering.",
         {
+          fix: h1Fix(s),
           selector: "h1",
           evidence: { rawH1Count: a.h1Count, renderedH1Count: b.h1Count },
         }
@@ -249,11 +281,14 @@ const bodyFindings = (
   }
 
   if (b.wordCount - a.wordCount >= 100 && a.wordCount < b.wordCount * 0.5) {
-    add(
-      finding(
-        m("rendering.content-client-only"),
+    findings.push(
+      make(
+        "rendering.content-client-only",
         `Server HTML has ${a.wordCount} words; rendered DOM has ${b.wordCount}.`,
-        { evidence: { rawWords: a.wordCount, renderedWords: b.wordCount } }
+        {
+          fix: contentFix(s, b.wordCount - a.wordCount),
+          evidence: { rawWords: a.wordCount, renderedWords: b.wordCount },
+        }
       )
     );
   }
@@ -262,11 +297,12 @@ const bodyFindings = (
     b.internalLinks - a.internalLinks >= 10 &&
     a.internalLinks < b.internalLinks * 0.5
   ) {
-    add(
-      finding(
-        m("rendering.links-client-only"),
+    findings.push(
+      make(
+        "rendering.links-client-only",
         `Server HTML has ${a.internalLinks} internal links; rendered DOM has ${b.internalLinks}.`,
         {
+          fix: linksFix(s, b.internalLinks - a.internalLinks),
           evidence: {
             rawLinks: a.internalLinks,
             renderedLinks: b.internalLinks,
@@ -276,22 +312,36 @@ const bodyFindings = (
     );
   }
 
+  return findings;
+};
+
+/** Structured data and script errors that only the rendered page has. */
+const scriptFindings = (s: Sides, consoleErrors: string[]): Finding[] => {
+  const { a, b } = s;
+  const findings: Finding[] = [];
+
   if (a.structuredDataCount === 0 && b.structuredDataCount > 0) {
-    add(
-      finding(
-        m("rendering.structured-data-client-only"),
+    findings.push(
+      make(
+        "rendering.structured-data-client-only",
         `${b.structuredDataCount} structured data item(s) are only present after rendering.`,
-        { evidence: { renderedCount: b.structuredDataCount } }
+        {
+          fix: structuredDataFix(s),
+          evidence: { renderedCount: b.structuredDataCount },
+        }
       )
     );
   }
 
   if (consoleErrors.length) {
-    add(
-      finding(
-        m("rendering.console-errors"),
+    findings.push(
+      make(
+        "rendering.console-errors",
         `${consoleErrors.length} JavaScript error(s) logged during render.`,
-        { evidence: { errors: consoleErrors.slice(0, 5) } }
+        {
+          fix: consoleErrorFix(consoleErrors),
+          evidence: { errors: consoleErrors.slice(0, 5) },
+        }
       )
     );
   }
@@ -314,11 +364,19 @@ export const compareRender = (
   const a = snapshot(raw, rawResponse);
   const b = snapshot(rendered);
   const url = rawResponse?.finalUrl ?? raw.url;
+  const sides: Sides = { raw, rendered, response: rawResponse, a, b };
 
   const findings = [
-    ...headFindings(a, b),
-    ...bodyFindings(a, b, consoleErrors),
-  ].map((f) => ({ ...f, url }));
+    ...textFindings(sides),
+    ...indexingFindings(sides),
+    ...contentFindings(sides),
+    ...scriptFindings(sides, consoleErrors),
+  ];
+
+  // Set in place: a copy would lose the key a finding's id is made from.
+  for (const f of findings) {
+    f.url = url;
+  }
 
   return {
     comparison: {

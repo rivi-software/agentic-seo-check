@@ -88,6 +88,18 @@ export const replaceHtml = (
 export const removeHtml = (current: string, at?: string): FixEdit =>
   removeEdit("html", current, { at });
 
+/**
+ * A change to a whole file the site serves (a script split, an image re-encoded) that no code can
+ * show: a replace at "whole file" with no `current`. `code` is a slot, and `write` says what to
+ * change and by how much, since a measurement is not text an agent can find in the file.
+ */
+export const rebuildEdit = (
+  url: string | undefined,
+  hint: string,
+  write: string
+): FixEdit =>
+  edit("asset", "replace", { url, at: "whole file", code: slot(hint), write });
+
 /** A quote the extractor cut short, which no longer matches the source as a whole. */
 export const isCut = (quoted: string): boolean => quoted.endsWith("…");
 

@@ -42,9 +42,13 @@ export const unquotedEdits = (
       : []
   );
 
+const isWholeFile = (e: FixEdit): boolean =>
+  e.in === "asset" && e.at === "whole file";
+
 /**
  * Edits missing a part their action needs (replace: current and code, remove: current, add: at
- * and code), or with a `{{…}}` slot that is not closed or not explained in `write`.
+ * and code), or with a `{{…}}` slot that is not closed or not explained in `write`. An asset
+ * replace at "whole file" changes the file itself and quotes nothing.
  */
 export const incompleteEdits = (findings: Finding[]): [string, FixEdit][] =>
   editsOf(findings).flatMap(([f, e]): [string, FixEdit][] => {
@@ -55,7 +59,8 @@ export const incompleteEdits = (findings: Finding[]): [string, FixEdit][] =>
 
     const broken =
       (e.action === "replace" &&
-        (e.current === undefined || e.code === undefined)) ||
+        ((e.current === undefined && !isWholeFile(e)) ||
+          e.code === undefined)) ||
       (e.action === "remove" && e.current === undefined) ||
       (e.action === "add" && (!e.at || e.code === undefined)) ||
       slots.length !== opens ||
