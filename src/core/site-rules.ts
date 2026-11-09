@@ -477,11 +477,7 @@ export interface SiteContext {
 }
 
 /** Appends `value` to the list under `k`, starting the list when there is none. */
-const pushTo = (
-  groups: Map<string, string[]>,
-  k: string,
-  value: string
-): void => {
+const pushTo = <T>(groups: Map<string, T[]>, k: string, value: T): void => {
   const list = groups.get(k);
 
   if (list) {
@@ -578,6 +574,38 @@ const languageVersions = (
   return (url) => first.get(key(url)) ?? key(url);
 };
 
+/**
+ * The pages of a group that get a value of their own. The page with the most language versions in
+ * the group keeps the value, with those versions: a page that shares a title with its translations
+ * is retitled, not the translations. On a tie the first page keeps it, the shallowest the crawl
+ * reached.
+ */
+const pagesToChange = (
+  group: PageRecord[],
+  versionOf: (url: string) => string
+): PageRecord[] => {
+  const counts = new Map<string, number>();
+
+  for (const p of group) {
+    const v = versionOf(p.url);
+
+    counts.set(v, (counts.get(v) ?? 0) + 1);
+  }
+
+  // A Map iterates in insertion order, so on a tie the first page's version stays.
+  let kept = "";
+  let most = 0;
+
+  for (const [v, n] of counts) {
+    if (n > most) {
+      kept = v;
+      most = n;
+    }
+  }
+
+  return group.filter((p) => versionOf(p.url) !== kept);
+};
+
 const pushDuplicates = (
   out: Finding[],
   rule: RuleMeta,
@@ -587,14 +615,10 @@ const pushDuplicates = (
   label: string,
   fixFor: (p: PageRecord) => FixEdit | null
 ): void => {
-  const groups = new Map<string, string[]>();
-  // Every page of a group gets a value of its own but the first and its language versions, which
-  // keep what they have.
-  const others: PageRecord[] = [];
+  const groups = new Map<string, PageRecord[]>();
   // Pages are grouped by a lowercased key, but the evidence quotes the value as the first page
   // wrote it, so a report or pull request shows the text a reviewer would find on the site.
   const written = new Map<string, string>();
-  const firstVersion = new Map<string, string>();
 
   for (const p of pages) {
     const value = pick(p);
@@ -604,40 +628,42 @@ const pushDuplicates = (
     }
 
     const k = normalizeForComparison(value);
-    const first = firstVersion.get(k);
 
-    pushTo(groups, k, p.url);
-
-    if (first === undefined) {
+    if (!groups.has(k)) {
       written.set(k, value);
-      firstVersion.set(k, versionOf(p.url));
-    } else if (first !== versionOf(p.url)) {
-      others.push(p);
     }
+
+    pushTo(groups, k, p);
   }
 
   // The versions of one page may share a value: a group needs two different pages.
   const dupes = [...groups.entries()].filter(
-    ([, urls]) => new Set(urls.map(versionOf)).size > 1
+    ([, group]) => new Set(group.map((p) => versionOf(p.url))).size > 1
   );
 
   if (!dupes.length) {
     return;
   }
 
-  const pagesAffected = dupes.reduce((n, [, urls]) => n + urls.length, 0);
+  const pagesAffected = dupes.reduce((n, [, group]) => n + group.length, 0);
   out.push(
     finding(
       rule,
       `${dupes.length} ${label}(s) are shared by ${pagesAffected} pages.`,
       {
-        fix: others.flatMap((p) => fixFor(p) ?? []).slice(0, MAX_EDITS),
+        fix: dupes
+          .flatMap(([, group]) => pagesToChange(group, versionOf))
+          .flatMap((p) => fixFor(p) ?? [])
+          .slice(0, MAX_EDITS),
         evidence: {
           groups: cap(
-            dupes.map(([k, urls]) => ({
+            dupes.map(([k, group]) => ({
               value: (written.get(k) ?? k).slice(0, 120),
-              pages: cap(urls, 5),
-              count: urls.length,
+              pages: cap(
+                group.map((p) => p.url),
+                5
+              ),
+              count: group.length,
             }))
           ),
         },

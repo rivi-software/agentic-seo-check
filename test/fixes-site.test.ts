@@ -1262,6 +1262,8 @@ describe("duplicate titles, descriptions and H1s of language versions", () => {
   const findings = runSiteRules(
     context({
       pages: [
+        // Not a version of the contact page, and reached before it: it shares the title with both.
+        titled(contactUs, "Contact"),
         // Translations whose title is the same word in both languages, and whose text is not.
         titled(contact, "Contact", contactLinks, `<p>${words("contact")}</p>`),
         titled(
@@ -1270,8 +1272,6 @@ describe("duplicate titles, descriptions and H1s of language versions", () => {
           contactLinks,
           `<p>${words("contact")}</p>`
         ),
-        // Not a version of the contact page: it shares the title with both.
-        titled(contactUs, "Contact"),
         // en and de do not name each other, but both are versions of the nl page.
         titled(
           `${ORIGIN}/authors/ada`,
@@ -1307,7 +1307,7 @@ describe("duplicate titles, descriptions and H1s of language versions", () => {
 
   it("does not group a page with its language versions", () => {
     const groups = [
-      { pages: [contact, nlContact, contactUs], count: 3 },
+      { pages: [contactUs, contact, nlContact], count: 3 },
       { pages: [openSource, nlOpenSource], count: 2 },
       { pages: [help, support], count: 2 },
     ];
@@ -1324,7 +1324,8 @@ describe("duplicate titles, descriptions and H1s of language versions", () => {
     expect(groupsOf("site.duplicate-descriptions")).toMatchObject(groups);
   });
 
-  it("retitles the pages that are no version of the first, and not the versions", () => {
+  // In the open source and help pairs each page is a version of its own: the first keeps the title.
+  it("retitles the page that shares a title with translations, not the translations", () => {
     expect(fixOf(findings, "site.duplicate-titles")).toMatchObject([
       { url: contactUs, current: "<title>Contact</title>" },
       { url: nlOpenSource, current: "<title>Open source</title>" },
