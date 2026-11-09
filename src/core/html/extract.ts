@@ -17,6 +17,11 @@ import {
 } from "./dom.js";
 import type { Document } from "./dom.js";
 import { extractHeadSignals, isHtmlElement } from "./head.js";
+import {
+  extractMissingFragments,
+  extractResources,
+  upgradesInsecureRequests,
+} from "./resources.js";
 import { extractStructuredData } from "./structured-data.js";
 import { collapseWhitespace, wordCount } from "./text.js";
 
@@ -207,6 +212,9 @@ export const extractPage = (
     images,
     links,
     hreflang,
+    resources: extractResources(doc, base),
+    upgradesInsecureRequests: upgradesInsecureRequests(doc),
+    missingFragments: extractMissingFragments(doc),
     structuredData: structured.items,
     structuredDataErrors: structured.errors,
     text: bodyText,
