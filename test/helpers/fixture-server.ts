@@ -6,12 +6,16 @@ export interface Route {
   status?: number;
   headers?: Record<string, string>;
   body?: string;
+  /** Answer 403 to a request whose User-Agent contains one of these, as a CDN that blocks bots does. */
+  blockUserAgents?: string[];
 }
 
 export interface FixtureServer {
   origin: string;
   close: () => Promise<void>;
   requests: string[];
+  /** The User-Agent of each request, in the order of `requests`. */
+  userAgents: string[];
 }
 
 const page = (title: string, body: string, extraHead = "") =>
@@ -80,12 +84,22 @@ export const startFixtureServer = async (
   routes: Record<string, Route>
 ): Promise<FixtureServer> => {
   const requests: string[] = [];
+  const userAgents: string[] = [];
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
+    const userAgent = req.headers["user-agent"] ?? "";
     requests.push(url.pathname);
+    userAgents.push(userAgent);
     const route = routes[url.pathname];
     const origin = originOf(server);
+
+    if (route?.blockUserAgents?.some((bot) => userAgent.includes(bot))) {
+      res.writeHead(403, { "content-type": "text/html" });
+      res.end("<html><head><title>Access denied</title></head></html>");
+
+      return;
+    }
 
     if (!route) {
       res.writeHead(404, { "content-type": "text/html" });
@@ -116,6 +130,7 @@ export const startFixtureServer = async (
   return {
     origin: originOf(server),
     requests,
+    userAgents,
     close: () => server[Symbol.asyncDispose](),
   };
 };

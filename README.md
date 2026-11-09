@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  SEO analysis built for coding agents: a CLI and an MCP server that audit URLs,<br>
+  SEO and AEO analysis built for coding agents: a CLI and an MCP server that audit URLs,<br>
   static build output or raw HTML, and return findings an agent can act on.<br>
   Open source, from <a href="https://rivi.software">RIVI Software</a>.
 </p>
@@ -39,13 +39,17 @@
 agentic-seo-check is one core with two interfaces:
 
 - **CLI** `agentic-seo-check` with JSON (default when piped) or Markdown output and CI-friendly exit codes.
-- **MCP server** exposing five tools for Claude Code, Cursor, Codex and any other MCP client.
+- **MCP server** exposing six tools for Claude Code, Cursor, Codex and any other MCP client.
 
 It audits **URLs** (production, staging, `localhost` dev servers), **static build output** (`dist/`, `out/`, `build/`) and **raw HTML**, and returns findings an agent can act on: a stable rule id, severity, what is wrong, the fix, a CSS selector for where it lives, and evidence with the current values.
 
+Two audits share that core: the **SEO audit** (`audit`, `crawl`) for search engines, and the **AEO audit** (`aeo`, answer engine optimization) for AI answer engines such as ChatGPT search, Claude, Perplexity, Google AI Overviews and AI Mode, Copilot and Gemini. Each has its own rules and its own score, so adding one never changes the other.
+
 ## What it checks
 
-| Area | Examples (123 rules in total, `agentic-seo-check rules` lists them) |
+### SEO audit
+
+| Area | Examples (123 rules, `agentic-seo-check rules` lists them) |
 | --- | --- |
 | On-page basics | title missing/long/short/placeholder ("React App"), meta description, H1 and heading outline, canonical (missing, conflicting, relative, pointing elsewhere), robots meta and `X-Robots-Tag`, `lang`, viewport, charset, doctype |
 | Social | Open Graph completeness, absolute `og:image`, `og:url` vs canonical, Twitter card |
@@ -57,6 +61,16 @@ It audits **URLs** (production, staging, `localhost` dev servers), **static buil
 | Site-level (crawl or directory) | robots.txt (missing, blocking, disallowed pages), sitemap (missing, invalid, noindex/non-canonical/broken/redirecting URLs, pages not in sitemap, orphan pages), broken internal links with their sources, redirected links and chains, duplicate titles/descriptions/H1s/content, deep pages, soft 404, http→https and www redirects, hreflang return links |
 | Rendering (`--render`, Playwright) | title/description/canonical/H1/content/links/structured data that only exist after JavaScript runs; noindex injected or removed by JavaScript; console errors |
 | Performance (`--lighthouse`, Chrome) | LCP, CLS, TBT, FCP, Speed Index, TTFB with Core Web Vitals thresholds, Lighthouse opportunities with estimated savings, failed Lighthouse SEO and agentic-browsing audits |
+
+### AEO audit
+
+| Area | Examples (30 rules, `agentic-seo-check rules --category aeo` lists them) |
+| --- | --- |
+| AI crawler access | robots.txt checked per bot: search crawlers whose index AI answers draw on (Googlebot, Bingbot, Applebot; blocked is an error), answer bots (OAI-SearchBot, ChatGPT-User, Claude-SearchBot, Claude-User, PerplexityBot, Perplexity-User, Google-Extended, DuckAssistBot, MistralAI-User; a warning) and training bots (GPTBot, ClaudeBot, Applebot-Extended, CCBot, meta-externalagent; info, since opting out of training is a legitimate choice). Also an unreachable robots.txt, `Content-Signal` lines (`ai-input=no`, invalid values), the shared training opt-out `User-Agent: __usage_ai-training`, and `/llms.txt` (missing, no H1 title, no links) |
+| Server blocks (`--ai-bots`) | requests the page with each AI bot's User-Agent and reports 403s, 429s and challenge pages that a CDN or firewall serves while robots.txt allows the bot |
+| Snippet and AI opt-outs | noindex, `nosnippet` and `max-snippet` (Google AI Overviews and AI Mode), `noarchive` and `nocache` (Bing's controls for Copilot), `noai`/`noimageai`, `data-nosnippet` over a large share of the text; meta tags per crawler and scoped `X-Robots-Tag` values |
+| Answer-ready content | an empty JavaScript app shell (most AI crawlers do not run JavaScript), question headings without a short direct answer, long text without subheadings, lists or tables, FAQPage/QAPage/HowTo markup whose questions, answers or steps the page does not show |
+| Entity and freshness | article author missing or a bare name without url/sameAs, missing datePublished/dateModified, a structured-data date the page does not show, a home page without Organization or Person markup, entities without sameAs links |
 
 ## Install
 
@@ -96,10 +110,19 @@ agentic-seo-check audit https://www.example.com/widgets --keyword "blue widgets"
 # CI: exit 1 when errors exist, smaller output
 agentic-seo-check audit https://staging.example.com --crawl --fail-on error --compact --no-info
 
+# AEO: AI crawler access, opt-outs and answer-ready content, with its own score
+agentic-seo-check aeo https://www.example.com/guide
+agentic-seo-check aeo https://www.example.com --crawl --max-pages 50
+agentic-seo-check aeo https://www.example.com --ai-bots          # also catch CDN/firewall blocks
+agentic-seo-check aeo ./dist --base-url https://www.example.com  # reads dist/robots.txt and dist/llms.txt
+
 # rule reference
 agentic-seo-check rules --category structured-data
+agentic-seo-check rules --category aeo
 agentic-seo-check rules --rule canonical.multiple
 ```
+
+`aeo` takes the same targets and output, crawl and request options as `audit`, plus `--ai-bots`; it has no `--keyword`, `--render`, `--lighthouse` or `--check-external`. With `--ai-bots`, the requests come from your machine with each bot's User-Agent, not from the bots' own IP ranges: a CDN that verifies bots may treat the real crawler differently, and the findings say so. Search crawlers and robots.txt-only tokens (Google-Extended, Applebot-Extended) are never impersonated.
 
 Exit codes: `0` success, `1` findings at or above `--fail-on`, `2` usage or runtime error. Progress goes to stderr, the report to stdout.
 
@@ -126,6 +149,7 @@ Or `claude mcp add agentic-seo-check -- npx -y @rivi-software/agentic-seo-check 
 | `seo_crawl_site` | Crawl and audit a site. Options: `maxPages`, `maxDepth`, `concurrency`, `delayMs`, `respectRobots`, `includeSubdomains`, `checkExternalLinks`, `includePatterns`, `excludePatterns`, `pageDetail`. |
 | `seo_audit_directory` | Audit built HTML files in a directory. Options: `dir`, `baseUrl`, `maxPages`, `pageDetail`. |
 | `seo_lighthouse` | Lighthouse performance + SEO + agentic-browsing for one URL. |
+| `seo_aeo_audit` | AEO audit of one of `url` (with `crawl` for a site), `html` or `dir`. Options: `aiBots`, `baseUrl`, `maxPages`, `maxDepth`, `concurrency`, `respectRobots`, `includeSubdomains`, `pageDetail`, `includeInfo`, `disableRules`, `headers`, `format`, `detail`. |
 | `seo_list_rules` | Rule reference, filter by `category` or `rule`. |
 
 All tools are read-only. Results are returned both as text (JSON or Markdown) and as `structuredContent`.
@@ -164,21 +188,53 @@ All tools are read-only. Results are returned both as text (JSON or Markdown) an
 
 Site audits add `crawl` stats, `robotsTxt`, `sitemaps`, `siteFindings`, `issues` (page findings rolled up per rule with example URLs) and `pages`.
 
+An AEO audit has `kind: "aeo"` and its own score:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "kind": "aeo",
+  "target": "https://www.example.com/guide",
+  "url": "https://www.example.com/guide",
+  "source": "url",                   // or "crawl", "directory", "file", "html"
+  "score": 89,                       // average page score minus weighted site-wide findings
+  "counts": { "error": 0, "warning": 2, "info": 1 },
+  "summary": {
+    "pages": 1, "robotsTxt": "found", "llmsTxt": "missing",
+    "searchCrawlersBlocked": [], "answerBotsBlocked": ["Google-Extended"], "trainingBotsBlocked": ["GPTBot"],
+    "trainingPreference": "none",     // the __usage_ai-training group: "allowed", "disallowed" or "none"
+    "blockedByServer": null,          // with --ai-bots: the bots the server refused
+    "page": { "indexable": true, "googleSnippets": "allowed", "copilotAnswers": "allowed", "questions": 4, "...": "…" }
+  },
+  "findings": [ { "rule": "aeo.robots-blocks-answer-bot", "severity": "warning", "...": "…" } ],
+  "crawlers": { "robotsTxt": "https://www.example.com/robots.txt", "status": "found", "contentSignals": [], "bots": [
+    { "name": "OAI-SearchBot", "operator": "OpenAI", "purpose": "answer", "usedFor": "ChatGPT search results", "robotsGroup": "wildcard", "allowed": true, "blockedPages": 0 }
+  ] },
+  "llmsTxt": { "url": "https://www.example.com/llms.txt", "status": "missing", "...": "…" }
+}
+```
+
+A crawl or directory adds `pages` (each page's score and summary) and `issues`. `findings` holds the site-wide findings plus every page finding, except for a site audited with `pageDetail: "summary"` (the MCP default), where page findings are only rolled up in `issues`.
+
 ## Library
 
 ```ts
-import { auditUrl, auditSite, auditDirectory, auditHtml, renderMarkdown } from '@rivi-software/agentic-seo-check';
+import { auditUrl, auditSite, auditAeoUrl, renderMarkdown, renderAeoMarkdown } from '@rivi-software/agentic-seo-check';
 
 const page = await auditUrl('https://www.example.com/', { keyword: 'example', render: true });
 const site = await auditSite('https://www.example.com/', { maxPages: 100 });
 console.log(renderMarkdown(site));
+
+const aeo = await auditAeoUrl('https://www.example.com/guide', { aiBots: true });
+console.log(renderAeoMarkdown(aeo));
 ```
 
 ## Scope of this first version
 
 - Crawls are breadth-first, same-site, HTML only, and obey robots.txt by default. `--render`/`--lighthouse` apply to the start page only during a crawl.
 - Scores are indicative. Thresholds (title 30-60 chars, description 70-160, thin content 300 words, slow response 2 s, deep page depth 3) are configurable through the library `thresholds` option.
-- Not included yet: gzip sitemaps, rendering every page in a crawl, field (CrUX) data, rank tracking, backlink data, AI-generated copy suggestions.
+- The AEO audit reads what answer engines document: robots.txt tokens, Content-Signal, snippet controls, structured data. Whether an engine cites a page also depends on things no audit can see from outside (its index, its ranking, the question asked), so the AEO score says how ready a site is, not how often it is cited. llms.txt is reported at info level: no major answer engine has said it reads one.
+- Not included yet: gzip sitemaps, rendering every page in a crawl, field (CrUX) data, rank tracking, backlink data, AI-generated copy suggestions, tracking of citations in AI answers.
 
 ## Contributing
 

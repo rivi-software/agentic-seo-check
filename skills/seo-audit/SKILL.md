@@ -1,11 +1,11 @@
 ---
 name: seo-audit
-description: Audit and fix SEO for a website or web project with the agentic-seo-check CLI/MCP tool. Use when asked to check, improve, or fix SEO, meta tags, titles, descriptions, canonicals, Open Graph, structured data, sitemaps, robots.txt, broken links, Core Web Vitals, or "why isn't this page indexed/ranking". Works on live URLs, localhost dev servers, static build output (dist/, out/) and raw HTML.
+description: Audit and fix SEO and AEO (answer engine optimization) for a website or web project with the agentic-seo-check CLI/MCP tool. Use when asked to check, improve, or fix SEO, meta tags, titles, descriptions, canonicals, Open Graph, structured data, sitemaps, robots.txt, broken links, Core Web Vitals, "why isn't this page indexed/ranking", or visibility in AI answers (ChatGPT search, Perplexity, Claude, Google AI Overviews, Copilot, Gemini), AI crawlers such as GPTBot or OAI-SearchBot, and llms.txt. Works on live URLs, localhost dev servers, static build output (dist/, out/) and raw HTML.
 ---
 
 # SEO audit workflow
 
-You have `agentic-seo-check` available either as MCP tools (`seo_audit_page`, `seo_crawl_site`, `seo_audit_directory`, `seo_lighthouse`, `seo_list_rules`) or as a CLI (`agentic-seo-check`, or `npx @rivi-software/agentic-seo-check`). Both return the same JSON: findings with `rule`, `severity`, `message`, `recommendation`, `selector`, `evidence`, plus a 0-100 `score`.
+You have `agentic-seo-check` available either as MCP tools (`seo_audit_page`, `seo_crawl_site`, `seo_audit_directory`, `seo_lighthouse`, `seo_aeo_audit`, `seo_list_rules`) or as a CLI (`agentic-seo-check`, or `npx @rivi-software/agentic-seo-check`). Both return the same JSON: findings with `rule`, `severity`, `message`, `recommendation`, `selector`, `evidence`, plus a 0-100 `score`.
 
 ## 1. Pick the target
 
@@ -18,6 +18,8 @@ You have `agentic-seo-check` available either as MCP tools (`seo_audit_page`, `s
 | Suspect client-side rendering hides content from crawlers | add `render: true` / `--render` |
 | Performance / Core Web Vitals | `seo_lighthouse { url }` or `lighthouse: true` / `--lighthouse` (slow, 20-60 s) |
 | Optimising for a specific search phrase | add `keyword` / `--keyword "blue widgets"` |
+| Visibility in AI answers (ChatGPT search, Perplexity, Claude, AI Overviews, Copilot), AI crawlers, llms.txt | `seo_aeo_audit { url }` / `agentic-seo-check aeo <url>`; a site: `crawl: true` / `--crawl`; build output: `{ dir, baseUrl }` / `aeo ./dist --base-url ...` |
+| AI bots blocked even though robots.txt allows them | add `aiBots: true` / `--ai-bots` to the AEO audit |
 
 Prefer auditing the running dev server or the build output over guessing from source: the tool sees exactly what crawlers see.
 
@@ -38,6 +40,8 @@ Find where the page's `<head>` is produced and change it there, per route:
 - SvelteKit: `<svelte:head>`; Remix/React Router: `meta` export; TanStack Start: `head()` on the route.
 - Plain HTML/static generators: the template partial that renders `<head>`.
 
+AEO mappings: `aeo.robots-*` → `robots.txt` (Next.js `app/robots.ts`, Astro/static `public/robots.txt`); `aeo.server-blocks-*` → the CDN or firewall's bot settings, not the code; `aeo.nosnippet`/`aeo.noarchive`/`aeo.noindex` → the robots metadata or the `X-Robots-Tag` header in the host config; `aeo.text-needs-javascript` → render on the server (SSR/SSG); `aeo.question-not-answered-first` → put a one- or two-sentence answer right under the question heading; `aeo.schema-text-not-visible` → build the FAQ/HowTo JSON-LD from the same data the page renders; `aeo.article-*` → Article JSON-LD with author as a Person with url, datePublished and dateModified, and a visible `<time>`; `aeo.llms-txt-*` → `public/llms.txt`.
+
 Typical mappings: `title.*`/`meta-description.*` → per-route metadata; `canonical.*` → absolute self-referencing canonical built from the site URL; `og.*`/`twitter.*` → social metadata with an absolute image URL; `structured-data.*` → JSON-LD emitted with `JSON.stringify`; `img.alt-missing` → alt props on image components; `site.broken-internal-links` → fix hrefs or add redirects; `site.sitemap-*` → generate the sitemap from the router so it stays in sync; `rendering.*` → move data fetching to the server (SSR/SSG) so the HTML carries the content.
 
 ## 4. Re-run and confirm
@@ -50,4 +54,6 @@ Run the same audit again. Report before/after score and the remaining findings. 
 - A localhost audit cannot verify https, www redirects or the production robots.txt/sitemap; run a crawl against the deployed site for those.
 - Scores are indicative (100 minus weighted deductions), not a ranking prediction.
 - Lighthouse numbers are lab measurements from this machine; field data (CrUX) may differ.
+- The AEO audit has its own score, separate from the SEO score. Blocked training bots (GPTBot, ClaudeBot, CCBot, ...) and a `__usage_ai-training` opt-out are info: opting out of training is the site owner's choice and does not keep the site out of AI answers. Ask before you "fix" one. Google-Extended blocks both Gemini training and Gemini Apps grounding; there is no token for one without the other.
+- `aiBots`/`--ai-bots` requests come from this machine with each bot's User-Agent, not from the bots' IP ranges. A CDN that verifies bots may treat the real crawler differently, so tell the user to confirm a server block in the CDN's bot logs before changing firewall rules.
 - `render` needs Playwright or an installed Google Chrome; `lighthouse` needs Chrome. If unavailable the audit still completes and adds a `tool.*` info finding with install instructions.

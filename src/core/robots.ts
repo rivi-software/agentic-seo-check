@@ -17,7 +17,25 @@ export interface RobotsResult {
   info: RobotsTxtInfo;
   /** Returns true when crawling the URL is allowed (unknown/missing robots.txt allows everything). */
   allows: (url: string) => boolean;
+  /** The robots.txt text up to the size crawlers must read (RFC 9309: 500 KiB), or null when there is none. */
+  text: string | null;
 }
+
+/** The part of a robots.txt file a crawler must read at least (RFC 9309 section 2.5). */
+const MAX_ROBOTS_BYTES = 512_000;
+
+/**
+ * Whether robots.txt at `url` lets the crawler with product token `agent` fetch `target`. A URL
+ * on another origin is allowed: this robots.txt has no say over it.
+ */
+export const agentMatcher = (
+  url: string,
+  text: string
+): ((target: string, agent: string) => boolean) => {
+  const robot = robotsParser(url, text.slice(0, MAX_ROBOTS_BYTES));
+
+  return (target, agent) => robot.isAllowed(target, agent) ?? true;
+};
 
 export const buildRobots = (
   url: string,
@@ -39,7 +57,7 @@ export const buildRobots = (
   }
 
   if (text === null) {
-    return { info, allows: () => true };
+    return { info, allows: () => true, text: null };
   }
 
   const robot = robotsParser(url, text);
@@ -47,6 +65,7 @@ export const buildRobots = (
 
   return {
     info,
+    text: text.slice(0, MAX_ROBOTS_BYTES),
     allows: (target: string) => {
       const allowed = robot.isAllowed(target, userAgent);
 

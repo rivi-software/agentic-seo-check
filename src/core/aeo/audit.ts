@@ -1,0 +1,517 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
+import {
+  DEFAULT_CRAWL,
+  readStdin,
+  resolveTarget,
+  rollupIssues,
+  trimFinding,
+} from "../audit.js";
+import type { ProgressEvent } from "../audit.js";
+import { crawlSite } from "../crawl.js";
+import { DEFAULT_USER_AGENT, fetchPage, toResponseInfo } from "../fetch.js";
+import type { FetchOptions } from "../fetch.js";
+import { extractPage } from "../html/extract.js";
+import { loadRobotsTxt } from "../robots.js";
+import { AEO_PAGE_RULES, runPageRules, sortFindings } from "../rules/index.js";
+import { pageScore, siteScore } from "../score.js";
+import type { PageRecord } from "../site-rules.js";
+import { scanDirectory } from "../static.js";
+import { countFindings, DEFAULT_THRESHOLDS } from "../types.js";
+import type {
+  AeoAudit,
+  AeoPage,
+  AiBotPurpose,
+  AiCrawlerReport,
+  Finding,
+  LlmsTxtInfo,
+  PageSource,
+  RobotsTxtInfo,
+  SeverityCounts,
+} from "../types.js";
+import { AI_BOTS, crawlerAccess } from "./bots.js";
+import { loadLlmsTxt, readLlmsTxt } from "./llms-txt.js";
+import { aeoPageSummary } from "./page.js";
+import { probeBots } from "./probe.js";
+import { aeoSiteFindings } from "./site-rules.js";
+
+export interface AeoOptions {
+  /** Crawl the site from a URL target instead of auditing one page. */
+  crawl?: boolean;
+  maxPages?: number;
+  maxDepth?: number;
+  concurrency?: number;
+  delayMs?: number;
+  respectRobots?: boolean;
+  includeSubdomains?: boolean;
+  includePatterns?: string[];
+  excludePatterns?: string[];
+  /** Base URL for inline HTML, files and directories (default http://localhost/). */
+  baseUrl?: string;
+  /** Also request the page with each AI bot's User-Agent, to catch CDN or firewall blocks. */
+  aiBots?: boolean;
+  /** Include info-level findings (default true). */
+  includeInfo?: boolean;
+  /** Rule ids to skip. */
+  disableRules?: string[];
+  /** Site audits: "summary" keeps page findings out of `findings`; they stay rolled up in `issues`. */
+  pageDetail?: "full" | "summary";
+  fetch?: FetchOptions;
+  onProgress?: (event: ProgressEvent) => void;
+}
+
+/** What a target gave the audit to work with, before any rule runs. */
+interface Collected {
+  target: string;
+  url: string;
+  source: AeoAudit["source"];
+  pageSource: PageSource;
+  records: PageRecord[];
+  robots: RobotsTxtInfo | null;
+  robotsText: string | null;
+  llmsTxt: LlmsTxtInfo | null;
+  /** The pages came over HTTP, so the bot probe can request them again. */
+  live: boolean;
+}
+
+interface EvaluatedPage {
+  record: PageRecord;
+  findings: Finding[];
+  counts: SeverityCounts;
+  score: number;
+}
+
+const userAgentOf = (options: AeoOptions): string =>
+  options.fetch?.userAgent ?? DEFAULT_USER_AGENT;
+
+/** robots.txt and llms.txt of the origin a page is served from. */
+const loadOrigin = async (pageUrl: string, options: AeoOptions) => {
+  const { origin } = new URL(pageUrl);
+
+  options.onProgress?.({
+    phase: "robots",
+    message: `Fetching ${origin}/robots.txt and ${origin}/llms.txt`,
+  });
+
+  const [robots, llmsTxt] = await Promise.all([
+    loadRobotsTxt(origin, userAgentOf(options), options.fetch),
+    loadLlmsTxt(origin, options.fetch),
+  ]);
+
+  return { robots: robots.info, robotsText: robots.text, llmsTxt };
+};
+
+const collectUrl = async (
+  url: string,
+  options: AeoOptions
+): Promise<Collected> => {
+  const res = await fetchPage(url, options.fetch ?? {});
+
+  const page = extractPage(res.body ?? "", {
+    url: res.finalUrl,
+    includeSubdomains: options.includeSubdomains,
+  });
+
+  // A page that never answered says nothing about the site; its robots.txt would fail the same way.
+  const site =
+    res.status === null ? null : await loadOrigin(res.finalUrl, options);
+
+  return {
+    target: url,
+    url: res.finalUrl,
+    source: "url",
+    pageSource: "url",
+    records: [
+      {
+        url: res.finalUrl,
+        requestedUrl: url,
+        page,
+        response: toResponseInfo(res),
+        depth: 0,
+      },
+    ],
+    robots: site?.robots ?? null,
+    robotsText: site?.robotsText ?? null,
+    llmsTxt: site?.llmsTxt ?? null,
+    live: true,
+  };
+};
+
+const collectSite = async (
+  url: string,
+  options: AeoOptions
+): Promise<Collected> => {
+  const result = await crawlSite(url, {
+    maxPages: options.maxPages ?? DEFAULT_CRAWL.maxPages,
+    maxDepth: options.maxDepth ?? DEFAULT_CRAWL.maxDepth,
+    concurrency: options.concurrency ?? DEFAULT_CRAWL.concurrency,
+    delayMs: options.delayMs ?? DEFAULT_CRAWL.delayMs,
+    respectRobots: options.respectRobots ?? true,
+    includeSubdomains: options.includeSubdomains ?? false,
+    checkExternalLinks: false,
+    // The AEO audit reads pages; broken links, sitemaps and redirect probes are the SEO crawl's job.
+    maxLinkChecks: 0,
+    siteChecks: false,
+    // oxlint-disable-next-line eslint/require-unicode-regexp -- the user's own patterns, in JavaScript's default syntax; the u flag would reject some of them
+    includePatterns: (options.includePatterns ?? []).map((p) => new RegExp(p)),
+    // oxlint-disable-next-line eslint/require-unicode-regexp -- the user's own patterns, in JavaScript's default syntax; the u flag would reject some of them
+    excludePatterns: (options.excludePatterns ?? []).map((p) => new RegExp(p)),
+    fetch: { ...options.fetch, userAgent: userAgentOf(options) },
+    onProgress: options.onProgress,
+  });
+
+  options.onProgress?.({ phase: "llms-txt", message: "Fetching llms.txt" });
+
+  return {
+    target: url,
+    url: result.startUrl,
+    source: "crawl",
+    pageSource: "url",
+    records: result.records,
+    robots: result.robots,
+    robotsText: result.robotsText ?? null,
+    llmsTxt: await loadLlmsTxt(new URL(result.startUrl).origin, options.fetch),
+    live: true,
+  };
+};
+
+const collectDirectory = async (
+  dir: string,
+  options: AeoOptions
+): Promise<Collected> => {
+  const baseUrl = options.baseUrl ?? "http://localhost/";
+
+  const result = await scanDirectory(dir, {
+    baseUrl,
+    includeSubdomains: options.includeSubdomains ?? false,
+    maxPages: options.maxPages ?? 500,
+    userAgent: options.fetch?.userAgent,
+  });
+
+  return {
+    target: dir,
+    url: dir,
+    source: "directory",
+    pageSource: "file",
+    records: result.records,
+    robots: result.robots,
+    robotsText: result.robotsText ?? null,
+    llmsTxt: await readLlmsTxt(dir, baseUrl),
+    live: false,
+  };
+};
+
+/** One page from HTML in hand: no site around it, so no robots.txt or llms.txt. */
+const collectHtml = (
+  html: string,
+  url: string,
+  target: string,
+  source: "html" | "file",
+  options: AeoOptions
+): Collected => ({
+  target,
+  url,
+  source,
+  pageSource: source,
+  records: [
+    {
+      url,
+      requestedUrl: url,
+      page: extractPage(html, {
+        url,
+        includeSubdomains: options.includeSubdomains,
+      }),
+      depth: 0,
+    },
+  ],
+  robots: null,
+  robotsText: null,
+  llmsTxt: null,
+  live: false,
+});
+
+const evaluatePage = (
+  record: PageRecord,
+  source: PageSource,
+  options: AeoOptions
+): EvaluatedPage => {
+  let findings = runPageRules(
+    {
+      page: record.page,
+      source,
+      response: record.response,
+      thresholds: DEFAULT_THRESHOLDS,
+      depth: record.depth,
+    },
+    { disable: new Set(options.disableRules), rules: AEO_PAGE_RULES }
+  );
+
+  if (options.includeInfo === false) {
+    findings = findings.filter((f) => f.severity !== "info");
+  }
+
+  const counts = countFindings(findings);
+
+  return { record, findings, counts, score: pageScore(counts) };
+};
+
+/**
+ * Requests the start page as each AI bot and records the answers on `crawlers`. Returns why the
+ * probe could not run, when it could not.
+ */
+const runProbe = async (
+  c: Collected,
+  start: EvaluatedPage | undefined,
+  crawlers: AiCrawlerReport | null,
+  options: AeoOptions
+): Promise<string | undefined> => {
+  const response = start?.record.response;
+
+  if (!c.live || !response) {
+    return "it needs a live URL, and this target is HTML, a file or a directory";
+  }
+
+  if (response.error || response.status === null || response.status >= 400) {
+    return `the audit's own request got ${response.status === null ? "no answer" : `HTTP ${response.status}`}, so a refusal could not be told apart from a page that fails for everyone`;
+  }
+
+  if (!crawlers) {
+    return "robots.txt could not be read";
+  }
+
+  options.onProgress?.({
+    phase: "ai-bots",
+    message: `Requesting ${response.finalUrl} with AI bot User-Agents`,
+  });
+
+  const probes = await probeBots(response.finalUrl, AI_BOTS, options.fetch);
+  crawlers.probeBaseline = {
+    userAgent: userAgentOf(options),
+    status: response.status,
+  };
+
+  for (const bot of crawlers.bots) {
+    const probe = probes.get(bot.name);
+
+    if (probe) {
+      bot.probe = probe;
+    }
+  }
+
+  return undefined;
+};
+
+const blockedBots = (
+  crawlers: AiCrawlerReport | null,
+  purpose: AiBotPurpose
+): string[] =>
+  crawlers
+    ? crawlers.bots
+        .filter(
+          (b) => b.purpose === purpose && (!b.allowed || b.blockedPages > 0)
+        )
+        .map((b) => b.name)
+    : [];
+
+const pageEntry = (p: EvaluatedPage): AeoPage => {
+  // url and depth lead the entry, the way a reader scans a list of pages.
+  const head: Pick<AeoPage, "url" | "depth"> = {
+    url: p.record.file ?? p.record.url,
+  };
+
+  if (p.record.depth >= 0) {
+    head.depth = p.record.depth;
+  }
+
+  return {
+    ...head,
+    score: p.score,
+    counts: p.counts,
+    summary: aeoPageSummary(p.record.page, p.record.response),
+  };
+};
+
+const buildAudit = async (
+  c: Collected,
+  options: AeoOptions
+): Promise<AeoAudit> => {
+  const isSite = c.source === "crawl" || c.source === "directory";
+  const pages = c.records.map((r) => evaluatePage(r, c.pageSource, options));
+  const start = pages.find((p) => p.record.depth === 0) ?? pages[0];
+
+  const crawlers = c.robots
+    ? crawlerAccess(
+        c.robots,
+        c.robotsText,
+        start?.record.url ?? c.url,
+        c.records.map((r) => r.url)
+      )
+    : null;
+
+  const probeSkipped = options.aiBots
+    ? await runProbe(c, start, crawlers, options)
+    : undefined;
+
+  const disabled = new Set(options.disableRules);
+
+  let siteFindings = aeoSiteFindings({
+    crawlers,
+    llmsTxt: c.llmsTxt,
+    pageCount: pages.length,
+    probeSkipped,
+  }).filter((f) => !disabled.has(f.rule));
+
+  if (options.includeInfo === false) {
+    siteFindings = siteFindings.filter((f) => f.severity !== "info");
+  }
+
+  const pageFindings = pages.flatMap((p) => p.findings);
+
+  const audit: AeoAudit = {
+    schemaVersion: 1,
+    kind: "aeo",
+    target: c.target,
+    url: c.url,
+    source: c.source,
+    score: siteScore(pages, siteFindings),
+    counts: countFindings([...siteFindings, ...pageFindings]),
+    auditedAt: new Date().toISOString(),
+    summary: {
+      pages: pages.length,
+      robotsTxt: crawlers?.status ?? null,
+      searchCrawlersBlocked: blockedBots(crawlers, "search"),
+      answerBotsBlocked: blockedBots(crawlers, "answer"),
+      trainingBotsBlocked: blockedBots(crawlers, "training"),
+      trainingPreference: crawlers?.trainingPreference ?? null,
+      blockedByServer: crawlers?.probeBaseline
+        ? crawlers.bots.filter((b) => b.probe?.blocked).map((b) => b.name)
+        : null,
+      llmsTxt: c.llmsTxt?.status ?? null,
+      page: start
+        ? aeoPageSummary(start.record.page, start.record.response)
+        : null,
+    },
+    findings: sortFindings(
+      isSite && options.pageDetail === "summary"
+        ? siteFindings
+        : [...siteFindings, ...pageFindings]
+    ),
+    crawlers,
+    llmsTxt: c.llmsTxt,
+  };
+
+  if (isSite) {
+    audit.pages = pages
+      .toSorted((a, b) => a.record.depth - b.record.depth || a.score - b.score)
+      .map(pageEntry);
+    audit.issues = rollupIssues(
+      pages.map((p) => ({
+        url: p.record.file ?? p.record.url,
+        findings: p.findings,
+      }))
+    );
+  }
+
+  return audit;
+};
+
+/** AEO audit of an HTML string. `url` is where the HTML would be served, for links and display. */
+// oxlint-disable-next-line eslint/require-await -- public API: it returns a promise like the other audit functions, so a throw reaches callers as a rejection
+export const auditAeoHtml = async (
+  html: string,
+  input: { url?: string; target?: string } = {},
+  options: AeoOptions = {}
+): Promise<AeoAudit> => {
+  const url = input.url ?? options.baseUrl ?? "http://localhost/";
+
+  return buildAudit(
+    collectHtml(html, url, input.target ?? url, "html", options),
+    options
+  );
+};
+
+/** AEO audit of one live page, with its site's robots.txt and llms.txt. */
+export const auditAeoUrl = async (
+  url: string,
+  options: AeoOptions = {}
+): Promise<AeoAudit> => buildAudit(await collectUrl(url, options), options);
+
+/** AEO audit of a site, crawled from `startUrl`. */
+export const auditAeoSite = async (
+  startUrl: string,
+  options: AeoOptions = {}
+): Promise<AeoAudit> =>
+  buildAudit(await collectSite(startUrl, options), options);
+
+/** AEO audit of a directory of built HTML, with the robots.txt and llms.txt in it. */
+export const auditAeoDirectory = async (
+  dir: string,
+  options: AeoOptions = {}
+): Promise<AeoAudit> =>
+  buildAudit(await collectDirectory(dir, options), options);
+
+/** AEO audit of a URL (a crawl with `crawl`), a directory, an .html file, or "-" for stdin. */
+export const auditAeoTarget = async (
+  target: string,
+  options: AeoOptions & { stdinHtml?: string } = {}
+): Promise<AeoAudit> => {
+  if (target === "-" || options.stdinHtml !== undefined) {
+    const html = options.stdinHtml ?? (await readStdin());
+
+    return auditAeoHtml(
+      html,
+      { url: options.baseUrl, target: "stdin" },
+      options
+    );
+  }
+
+  const resolved = await resolveTarget(target);
+
+  switch (resolved.kind) {
+    case "url": {
+      return options.crawl
+        ? auditAeoSite(resolved.url, options)
+        : auditAeoUrl(resolved.url, options);
+    }
+
+    case "directory": {
+      return auditAeoDirectory(resolved.path, options);
+    }
+
+    default: {
+      const base = options.baseUrl ?? "http://localhost/";
+
+      const url = new URL(
+        `/${path.basename(target)}`,
+        base.endsWith("/") ? base : `${base}/`
+      ).href;
+
+      return buildAudit(
+        collectHtml(
+          await fs.readFile(target, "utf-8"),
+          url,
+          target,
+          "file",
+          options
+        ),
+        options
+      );
+    }
+  }
+};
+
+/** Drops bulky detail to save tokens when an LLM reads the result. */
+export const compactAeoAudit = (audit: AeoAudit): AeoAudit => ({
+  ...audit,
+  findings: audit.findings.map(trimFinding),
+  crawlers: audit.crawlers
+    ? {
+        ...audit.crawlers,
+        contentSignals: audit.crawlers.contentSignals.slice(0, 3),
+      }
+    : null,
+  llmsTxt: audit.llmsTxt
+    ? { ...audit.llmsTxt, sections: audit.llmsTxt.sections.slice(0, 5) }
+    : null,
+});

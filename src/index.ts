@@ -19,16 +19,32 @@ export type {
   ProgressEvent,
 } from "./core/audit.js";
 
+export {
+  auditAeoHtml,
+  auditAeoUrl,
+  auditAeoSite,
+  auditAeoDirectory,
+  auditAeoTarget,
+  compactAeoAudit,
+} from "./core/aeo/audit.js";
+
+export type { AeoOptions } from "./core/aeo/audit.js";
+
+export { AI_BOTS } from "./core/aeo/bots.js";
+
+export type { AiBot } from "./core/aeo/bots.js";
+
 export { extractPage } from "./core/html/extract.js";
 
 export {
   ALL_RULES,
+  AEO_PAGE_RULES,
   PAGE_RULES,
   findRule,
   runPageRules,
 } from "./core/rules/index.js";
 
-export { renderMarkdown } from "./core/report/markdown.js";
+export { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 
 export {
   runLighthouse,

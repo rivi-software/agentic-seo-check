@@ -1,6 +1,15 @@
 import { MAKER, MAKER_URL, REPOSITORY_URL } from "../../brand.js";
 import { VERSION } from "../../version.js";
-import type { Audit, Finding, PageAudit, SiteAudit } from "../types.js";
+import type {
+  AeoAudit,
+  AiBotAccess,
+  AiCrawlerReport,
+  Audit,
+  Finding,
+  LlmsTxtInfo,
+  PageAudit,
+  SiteAudit,
+} from "../types.js";
 
 const cell = (value: string | null | undefined): string => {
   if (!value) {
@@ -245,6 +254,167 @@ const siteMarkdown = (audit: SiteAudit): string => {
 
 /** One line under every report: which tool and version wrote it, and who makes it. */
 const footer = `_Audited with [agentic-seo-check](${REPOSITORY_URL}) ${VERSION}, made by [${MAKER}](${MAKER_URL})._`;
+
+const robotsCell = (bot: AiBotAccess, pages: number): string => {
+  if (!bot.allowed) {
+    return "**blocked**";
+  }
+
+  return bot.blockedPages > 0
+    ? `blocked on ${bot.blockedPages} of ${pages} pages`
+    : "allowed";
+};
+
+const probeCell = (bot: AiBotAccess): string => {
+  if (!bot.probe) {
+    return "—";
+  }
+
+  return bot.probe.blocked
+    ? `**${cell(bot.probe.reason)}**`
+    : String(bot.probe.status ?? "—");
+};
+
+const llmsTxtLine = (llms: LlmsTxtInfo | null): string => {
+  if (!llms) {
+    return "not checked";
+  }
+
+  if (llms.status === "found") {
+    return `found ("${cell(llms.title)}", ${llms.links} links)`;
+  }
+
+  return llms.status === "invalid"
+    ? `invalid (${cell(llms.problems.join("; "))})`
+    : "not found";
+};
+
+const crawlerLines = (
+  crawlers: AiCrawlerReport,
+  llms: LlmsTxtInfo | null,
+  pages: number
+): string[] => {
+  const probed = Boolean(crawlers.probeBaseline);
+
+  const lines = [
+    "## AI crawler access",
+    "",
+    `robots.txt ${crawlers.status}${crawlers.httpStatus ? ` (HTTP ${crawlers.httpStatus})` : ""} · shared AI training preference (\`__usage_ai-training\`): ${crawlers.trainingPreference} · llms.txt ${llmsTxtLine(llms)}`,
+    "",
+    `| Bot | Operator | Purpose | Used for | robots.txt |${probed ? " Server |" : ""}`,
+    `| --- | --- | --- | --- | --- |${probed ? " --- |" : ""}`,
+  ];
+
+  for (const bot of crawlers.bots) {
+    lines.push(
+      `| ${bot.name} | ${bot.operator} | ${bot.purpose} | ${cell(bot.usedFor)} | ${robotsCell(bot, pages)} |${probed ? ` ${probeCell(bot)} |` : ""}`
+    );
+  }
+
+  if (crawlers.probeBaseline) {
+    lines.push(
+      "",
+      `Server column: what the server answered each bot's User-Agent, sent from this machine (the audit's own request got HTTP ${crawlers.probeBaseline.status ?? "—"}).`
+    );
+  }
+
+  if (crawlers.contentSignals.length) {
+    lines.push("", "Content-Signal lines:", "");
+
+    for (const signal of crawlers.contentSignals) {
+      lines.push(
+        `- ${signal.userAgents.join(", ") || "(no user agent)"}${signal.path ? ` on ${signal.path}` : ""}: ${
+          Object.entries(signal.signals)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ") || "(empty)"
+        }`
+      );
+    }
+  }
+
+  lines.push("");
+
+  return lines;
+};
+
+const aeoPageLines = (audit: AeoAudit): string[] => {
+  const s = audit.summary.page;
+
+  if (!s) {
+    return [];
+  }
+
+  return [
+    audit.pages ? "## Start page" : "## Page",
+    "",
+    "| Field | Value |",
+    "| --- | --- |",
+    `| Indexable | ${s.indexable ? "yes" : "no"} |`,
+    `| Google snippets and AI Overviews | ${s.googleSnippets} |`,
+    `| Copilot answers | ${s.copilotAnswers} |`,
+    `| Words in the HTML | ${s.wordCount} |`,
+    `| Question headings | ${s.questions} |`,
+    `| Structured data | ${s.structuredDataTypes.length ? s.structuredDataTypes.join(", ") : "—"} |`,
+    `| Author | ${cell(s.author)} |`,
+    `| Published / modified | ${cell(s.datePublished)} / ${cell(s.dateModified)} |`,
+    "",
+  ];
+};
+
+const aeoMarkdown = (audit: AeoAudit): string => {
+  const lines: string[] = [
+    `# AEO audit: ${audit.source === "directory" || audit.source === "crawl" ? audit.target : audit.url}`,
+    "",
+    `AEO score **${audit.score}/100** · ${countsLine(audit.counts)} · ${audit.summary.pages} page(s) audited`,
+    "",
+  ];
+
+  if (audit.crawlers) {
+    lines.push(
+      ...crawlerLines(audit.crawlers, audit.llmsTxt, audit.summary.pages)
+    );
+  }
+
+  lines.push(...aeoPageLines(audit), ...findingsSection(audit.findings, "#"));
+
+  if (audit.issues?.length) {
+    lines.push(
+      "",
+      "## Page issues by rule",
+      "",
+      "| Severity | Rule | Pages | Example |",
+      "| --- | --- | --- | --- |"
+    );
+
+    for (const i of audit.issues) {
+      lines.push(
+        `| ${i.severity} | \`${i.rule}\` | ${i.pages} | ${i.examples[0] ?? ""} |`
+      );
+    }
+  }
+
+  if (audit.pages?.length) {
+    lines.push(
+      "",
+      "## Pages",
+      "",
+      "| AEO score | E/W/I | URL | Snippets | Copilot | Questions |",
+      "| --- | --- | --- | --- | --- | --- |"
+    );
+
+    for (const p of audit.pages) {
+      lines.push(
+        `| ${p.score} | ${p.counts.error}/${p.counts.warning}/${p.counts.info} | ${p.url} | ${p.summary.googleSnippets} | ${p.summary.copilotAnswers} | ${p.summary.questions} |`
+      );
+    }
+  }
+
+  return lines.join("\n");
+};
+
+/** The Markdown report of an AEO audit. */
+export const renderAeoMarkdown = (audit: AeoAudit): string =>
+  `${aeoMarkdown(audit).trimEnd()}\n\n---\n\n${footer}\n`;
 
 export const renderMarkdown = (audit: Audit): string => {
   const body =

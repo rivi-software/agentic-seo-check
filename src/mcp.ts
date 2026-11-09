@@ -4,6 +4,14 @@ import { z } from "zod";
 
 import { MAKER, MCP_ICONS, REPOSITORY_URL } from "./brand.js";
 import {
+  auditAeoDirectory,
+  auditAeoHtml,
+  auditAeoSite,
+  auditAeoUrl,
+  compactAeoAudit,
+} from "./core/aeo/audit.js";
+import type { AeoOptions } from "./core/aeo/audit.js";
+import {
   auditDirectory,
   auditHtml,
   auditSite,
@@ -13,9 +21,14 @@ import {
 import type { CrawlOptions } from "./core/audit.js";
 import { runLighthouse } from "./core/lighthouse.js";
 import { performanceFindings } from "./core/performance-rules.js";
-import { renderMarkdown } from "./core/report/markdown.js";
+import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 import { ALL_RULES } from "./core/rules/index.js";
-import type { Audit, Finding, PerformanceResult } from "./core/types.js";
+import type {
+  AeoAudit,
+  Audit,
+  Finding,
+  PerformanceResult,
+} from "./core/types.js";
 import { VERSION } from "./version.js";
 
 export const MCP_SERVER_NAME = "agentic-seo-check";
@@ -108,6 +121,24 @@ const respond = (
   };
 };
 
+const respondAeo = (
+  audit: AeoAudit,
+  fmt: "json" | "markdown",
+  det: "full" | "compact"
+) => {
+  const report = det === "compact" ? compactAeoAudit(audit) : audit;
+
+  const text =
+    fmt === "markdown"
+      ? renderAeoMarkdown(report)
+      : JSON.stringify(report, null, 2);
+
+  return {
+    content: [{ type: "text" as const, text }],
+    structuredContent: { ...report },
+  };
+};
+
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
 const fail = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
@@ -168,7 +199,7 @@ export const createMcpServer = (): McpServer => {
     title: `agentic-seo-check by ${MAKER}`,
     version: MCP_SERVER_VERSION,
     description:
-      "SEO audits for coding agents: pages, sites, build output and raw HTML, with findings an agent can act on.",
+      "SEO and AEO audits for coding agents: pages, sites, build output and raw HTML, checked for search engines and AI answer engines, with findings an agent can act on.",
     websiteUrl: REPOSITORY_URL,
     icons: MCP_ICONS,
   });
@@ -454,6 +485,147 @@ export const createMcpServer = (): McpServer => {
   );
 
   server.registerTool(
+    "seo_aeo_audit",
+    {
+      title: "Audit a page or site for answer engines (AEO)",
+      description:
+        "Answer engine optimization audit: can AI answer engines (ChatGPT search, Claude, Perplexity, Google AI Overviews and AI Mode, Copilot, Gemini) reach, quote and trust the content? " +
+        "Checks robots.txt for each AI crawler (search crawlers, answer bots, training bots), Content-Signal lines and the shared `__usage_ai-training` opt-out, /llms.txt, nosnippet/max-snippet/data-nosnippet, Bing's noarchive/nocache for Copilot, noai, content that needs JavaScript, question headings without a direct answer, FAQPage/HowTo markup that the page does not show, article author and dates, and Organization/Person entities with sameAs. " +
+        "Returns its own AEO score, a per-bot `crawlers` table and findings with rule ids (aeo.*). " +
+        "Provide one of `url` (one page, or a site with `crawl: true`), `html` or `dir` (build output). " +
+        "Set `aiBots: true` to also request the page with each AI bot's User-Agent and catch CDN or firewall blocks that robots.txt does not show.",
+      inputSchema: {
+        url: z
+          .string()
+          .url()
+          .optional()
+          .describe(
+            "Absolute http(s) URL to audit (the start URL with `crawl`)."
+          ),
+        html: z
+          .string()
+          .optional()
+          .describe(
+            "Raw HTML to audit instead of fetching a URL. Page checks only: there is no site to read robots.txt or llms.txt from."
+          ),
+        dir: z
+          .string()
+          .optional()
+          .describe(
+            "Build output directory to audit, with the robots.txt and llms.txt in it."
+          ),
+        baseUrl: z
+          .string()
+          .url()
+          .optional()
+          .describe(
+            "With `html` or `dir`: the origin the HTML is served from (default http://localhost/)."
+          ),
+        crawl: z
+          .boolean()
+          .default(false)
+          .describe("With `url`: crawl internal links and audit every page."),
+        aiBots: z
+          .boolean()
+          .default(false)
+          .describe(
+            "With `url`: request the page with each AI bot's User-Agent (from this machine, not the bots' IPs) to find CDN or firewall blocks."
+          ),
+        maxPages: z
+          .number()
+          .int()
+          .min(1)
+          .max(5000)
+          .optional()
+          .describe(
+            "Crawl or directory: maximum pages to audit (default 25 for a crawl, 500 for a directory)."
+          ),
+        maxDepth: z
+          .number()
+          .int()
+          .min(0)
+          .max(10)
+          .default(3)
+          .describe("Crawl: maximum link depth from the start URL."),
+        concurrency: z
+          .number()
+          .int()
+          .min(1)
+          .max(10)
+          .default(4)
+          .describe("Crawl: parallel requests."),
+        respectRobots: z
+          .boolean()
+          .default(true)
+          .describe("Crawl: obey robots.txt disallow rules."),
+        includeSubdomains: z
+          .boolean()
+          .default(false)
+          .describe("Crawl: treat subdomains of the start host as internal."),
+        pageDetail: z
+          .enum(["summary", "full"])
+          .default("summary")
+          .describe(
+            "Crawl or directory: summary keeps page findings rolled up in `issues`; full lists every page finding in `findings`."
+          ),
+        includeInfo: commonOptions.includeInfo,
+        disableRules: commonOptions.disableRules,
+        timeoutMs: commonOptions.timeoutMs,
+        userAgent: commonOptions.userAgent,
+        headers: commonOptions.headers,
+        format,
+        detail,
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async (input) => {
+      try {
+        const options: AeoOptions = {
+          ...toOptions(input),
+          baseUrl: input.baseUrl,
+          aiBots: input.aiBots,
+          maxPages: input.maxPages ?? (input.dir === undefined ? 25 : 500),
+          maxDepth: input.maxDepth,
+          concurrency: input.concurrency,
+          respectRobots: input.respectRobots,
+          includeSubdomains: input.includeSubdomains,
+          pageDetail: input.pageDetail,
+        };
+
+        const given = [input.url, input.html, input.dir].filter(
+          (v) => v !== undefined
+        );
+
+        if (given.length !== 1) {
+          throw new Error("Provide exactly one of `url`, `html` or `dir`.");
+        }
+
+        let audit: AeoAudit;
+
+        if (input.html !== undefined) {
+          audit = await auditAeoHtml(
+            input.html,
+            { url: input.baseUrl, target: "inline-html" },
+            options
+          );
+        } else if (input.dir !== undefined) {
+          audit = await auditAeoDirectory(input.dir, options);
+        } else if (input.url && input.crawl) {
+          audit = await auditAeoSite(input.url, options);
+        } else if (input.url) {
+          audit = await auditAeoUrl(input.url, options);
+        } else {
+          throw new Error("Provide `url`, `html` or `dir`.");
+        }
+
+        return respondAeo(audit, input.format, input.detail);
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
+  server.registerTool(
     "seo_list_rules",
     {
       title: "List SEO rules",
@@ -464,7 +636,7 @@ export const createMcpServer = (): McpServer => {
           .string()
           .optional()
           .describe(
-            "Filter by category (title, meta, headings, canonical, indexing, document, social, images, links, international, structured-data, content, keyword, response, rendering, performance, site)."
+            "Filter by category (title, meta, headings, canonical, indexing, document, social, images, links, international, structured-data, content, keyword, response, rendering, performance, site, aeo)."
           ),
         rule: z.string().optional().describe("Return only this rule id."),
       },

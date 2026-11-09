@@ -3,8 +3,9 @@
  * arethetypeswrong then reads the entry point's types under Node's ESM and bundler resolution, and
  * plain npm installs the tarball in an empty project, without the optional peers (Playwright,
  * Lighthouse, chrome-launcher), so nothing may need them to load. In that project it imports the
- * entry point, audits a page through the CLI, and opens an MCP session with the server, whose
- * stdout must carry JSON-RPC and nothing else. Run it after `pnpm run build`.
+ * entry point, audits a page through the CLI with both the SEO and the AEO audit, and opens an MCP
+ * session with the server, whose stdout must carry JSON-RPC and nothing else. Run it after
+ * `pnpm run build`.
  *   node scripts/check-package.ts
  */
 import { execFileSync, spawn } from "node:child_process";
@@ -112,7 +113,7 @@ try {
       "--input-type=module",
       "--eval",
       `const m = await import("@rivi-software/agentic-seo-check");
-       for (const name of ["auditUrl", "auditSite", "auditDirectory", "auditHtml", "renderMarkdown"])
+       for (const name of ["auditUrl", "auditSite", "auditDirectory", "auditHtml", "renderMarkdown", "auditAeoTarget", "renderAeoMarkdown"])
          if (typeof m[name] !== "function") throw new Error(name + " is not exported");
        console.log(Object.keys(m).length);`,
     ],
@@ -144,6 +145,22 @@ try {
   }
 
   console.log("ok  agentic-seo-check audit - prints a page audit");
+
+  // SAFETY: every field is typed unknown and checked just below before it is trusted.
+  const aeo = JSON.parse(
+    run(
+      bin("agentic-seo-check"),
+      ["aeo", "-", "--format", "json", "--base-url", "https://example.com/"],
+      project,
+      "<!doctype html><html lang=en><head><title>A page</title></head><body><h1>A page</h1></body></html>"
+    )
+  ) as { kind?: unknown; findings?: unknown };
+
+  if (aeo.kind !== "aeo" || !Array.isArray(aeo.findings)) {
+    fail("agentic-seo-check aeo - did not print an AEO audit.");
+  }
+
+  console.log("ok  agentic-seo-check aeo - prints an AEO audit");
 
   const line = await firstMcpLine(bin("agentic-seo-check-mcp"), project);
 
