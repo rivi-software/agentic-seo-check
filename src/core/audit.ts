@@ -355,6 +355,7 @@ const buildSiteAudit = (
     externalChecks: result.externalChecks,
     externalSources: result.externalSources,
     robots: result.robots,
+    robotsText: result.robotsText ?? null,
     robotsAllows: result.robotsAllows,
     blockedByRobots: result.blockedByRobots,
     sitemaps: result.sitemaps,

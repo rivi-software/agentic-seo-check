@@ -6,8 +6,16 @@ import { DEFAULT_USER_AGENT } from "./fetch.js";
 import { extractPage } from "./html/extract.js";
 import { buildRobots } from "./robots.js";
 import type { RobotsResult } from "./robots.js";
+import { isLocalHost } from "./rules/canonical.js";
 import type { LinkCheck, PageRecord } from "./site-rules.js";
-import { parseSitemap } from "./sitemap.js";
+import {
+  emptySitemapProblems,
+  inspectSitemap,
+  parseSitemap,
+  SITEMAP_MAX_BYTES,
+  SITEMAP_READ_BYTES,
+  sitemapText,
+} from "./sitemap.js";
 import type { SitemapInfo } from "./types.js";
 import { hostOf, normalizePath, normalizeUrl } from "./url.js";
 
@@ -268,28 +276,33 @@ const assignDepths = (
 const readSitemaps = async (
   root: string,
   base: URL,
-  robots: RobotsResult
+  robots: RobotsResult,
+  includeSubdomains: boolean
 ): Promise<SitemapInfo> => {
   const sitemaps: SitemapInfo = {
     sources: [],
     urls: [],
     urlCount: 0,
     errors: [],
+    problems: emptySitemapProblems(),
   };
 
   const candidates = [
     ...new Set([...robots.info.sitemaps, new URL("/sitemap.xml", base).href]),
-  ];
+  ].map((url) => ({ url, fromIndex: false }));
 
   const seen = new Set<string>();
   const urls = new Set<string>();
+  const now = Date.now();
 
   while (seen.size < 25) {
-    const candidate = candidates.shift();
+    const next = candidates.shift();
 
-    if (candidate === undefined) {
+    if (next === undefined) {
       break;
     }
+
+    const { url: candidate, fromIndex } = next;
 
     if (seen.has(candidate)) {
       continue;
@@ -307,10 +320,32 @@ const readSitemaps = async (
 
     const file = path.join(root, pathname);
 
-    // oxlint-disable-next-line eslint/no-await-in-loop -- a sitemap index adds the sitemaps it lists to the candidates, so each read decides what comes next
-    const xml = await fs.readFile(file, "utf-8").catch(() => null);
+    // robots.txt and sitemap indexes come from the site; a decoded "%2e%2e" must not leave the directory.
+    if (!file.startsWith(`${root}${path.sep}`)) {
+      sitemaps.errors.push(`${candidate}: points outside the output directory`);
+      continue;
+    }
 
-    if (xml === null) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- a sitemap index adds the sitemaps it lists to the candidates, so each read decides what comes next
+    const stat = await fs.stat(file).catch(() => null);
+
+    if (stat?.isFile() && stat.size > SITEMAP_READ_BYTES) {
+      sitemaps.problems.oversized.push({
+        sitemap: candidate,
+        urls: null,
+        bytes: stat.size,
+        overLimit: stat.size > SITEMAP_MAX_BYTES,
+      });
+
+      continue;
+    }
+
+    const bytes = stat?.isFile()
+      ? // oxlint-disable-next-line eslint/no-await-in-loop -- read right after the size check above
+        await fs.readFile(file).catch(() => null)
+      : null;
+
+    if (bytes === null) {
       if (robots.info.sitemaps.includes(candidate)) {
         sitemaps.errors.push(
           `${candidate}: declared in robots.txt but ${pathname} is not in the output directory`
@@ -320,7 +355,25 @@ const readSitemaps = async (
       continue;
     }
 
-    const parsed = parseSitemap(xml);
+    // oxlint-disable-next-line eslint/no-await-in-loop -- one sitemap at a time, as above
+    const text = await sitemapText(bytes);
+
+    if ("error" in text) {
+      if (text.tooLarge) {
+        sitemaps.problems.oversized.push({
+          sitemap: candidate,
+          urls: null,
+          bytes: null,
+          overLimit: false,
+        });
+      } else {
+        sitemaps.errors.push(`${pathname}: ${text.error}`);
+      }
+
+      continue;
+    }
+
+    const parsed = parseSitemap(text.text);
 
     if (parsed.kind === "unknown") {
       sitemaps.errors.push(`${pathname}: could not parse as a sitemap`);
@@ -329,8 +382,18 @@ const readSitemaps = async (
 
     sitemaps.sources.push(candidate);
 
+    // With the placeholder localhost base every production URL would count as another host.
+    inspectSitemap(sitemaps.problems, candidate, parsed, text.bytes, {
+      fromIndex,
+      siteHost: isLocalHost(base.href) ? null : base.hostname,
+      includeSubdomains,
+      now,
+    });
+
     if (parsed.kind === "sitemapindex") {
-      candidates.push(...parsed.locs);
+      candidates.push(
+        ...parsed.locs.map((loc) => ({ url: loc, fromIndex: true }))
+      );
     } else {
       for (const loc of parsed.locs) {
         urls.add(loc);
@@ -440,7 +503,13 @@ export const scanDirectory = async (
     options.userAgent ?? DEFAULT_USER_AGENT
   );
 
-  const sitemaps = await readSitemaps(root, base, robots);
+  const sitemaps = await readSitemaps(
+    root,
+    base,
+    robots,
+    options.includeSubdomains
+  );
+
   checkSitemapUrls(sitemaps.urls, base, fileByPathKey, linkChecks);
 
   return {

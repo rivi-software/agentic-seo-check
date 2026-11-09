@@ -49,7 +49,7 @@ Two audits share that core: the **SEO audit** (`audit`, `crawl`) for search engi
 
 ### SEO audit
 
-| Area | Examples (152 rules, `agentic-seo-check rules` lists them) |
+| Area | Examples (160 rules, `agentic-seo-check rules` lists them) |
 | --- | --- |
 | On-page basics | title missing/long/short/placeholder ("React App"), meta description, H1 and heading outline, canonical (missing, conflicting, relative, pointing elsewhere), robots meta and `X-Robots-Tag`, `lang`, viewport, charset, doctype |
 | Head and indexing | an element that ends `<head>` early (a pixel `<img>`, an `<iframe>`, stray text) so Google ignores the metadata after it, canonical, description or hreflang in `<body>`, meta refresh redirects, a charset declared past the first 1024 bytes, contradicting (`index` and `noindex`) or misspelled (`no-index`) robots directives, an HTTP `Link` canonical that disagrees with the HTML one |
@@ -61,7 +61,7 @@ Two audits share that core: the **SEO audit** (`audit`, `crawl`) for search engi
 | Content | empty or thin content, "lorem ipsum", readability, keyword presence in title/H1/body/description/URL and density |
 | Response | 4xx/5xx, redirects and chains, slow HTML response, non-HTML content type, http instead of https |
 | Loading (no browser needed) | HTML sent without gzip or Brotli, scripts in `<head>` without `async`/`defer`, `loading="lazy"` on the first large image (or with `fetchpriority="high"`), wide images without `srcset`, a home page without an icon link for Google's search results |
-| Site-level (crawl or directory) | robots.txt (missing, blocking, disallowed pages), sitemap (missing, invalid, noindex/non-canonical/broken/redirecting URLs, pages not in sitemap, orphan pages), broken internal links with their sources, redirected links and chains, duplicate titles/descriptions/H1s/content, deep pages, soft 404, http→https and www redirects, hreflang return links; canonicals that point to a broken, redirecting or noindex URL or to a page that names another canonical, hreflang alternates that are broken, redirect, noindex or not canonical, noindex pages the site links to |
+| Site-level (crawl or directory) | robots.txt (missing, blocking, disallowed pages, over 500 KiB, `noindex:` and `crawl-delay` lines Google ignores, CSS and JavaScript kept from Googlebot), sitemap (missing, invalid, noindex/non-canonical/broken/redirecting URLs, pages not in sitemap, orphan pages, over 50,000 URLs or 50 MB, an index inside an index, `lastmod` that is not W3C Datetime or lies in the future, URLs on another host; gzip sitemaps are read), broken internal links with their sources, redirected links and chains, duplicate titles/descriptions/H1s/content, deep pages, soft 404, http→https and www redirects, hreflang return links; canonicals that point to a broken, redirecting or noindex URL or to a page that names another canonical, hreflang alternates that are broken, redirect, noindex or not canonical, noindex pages the site links to |
 | Rendering (`--render`, Playwright) | title/description/canonical/H1/content/links/structured data that only exist after JavaScript runs; noindex injected or removed by JavaScript; console errors |
 | Performance (`--lighthouse`, Chrome) | LCP, CLS, TBT, FCP, Speed Index, TTFB with Core Web Vitals thresholds, Lighthouse opportunities with estimated savings, failed Lighthouse SEO and agentic-browsing audits |
 
@@ -237,7 +237,8 @@ console.log(renderAeoMarkdown(aeo));
 - Crawls are breadth-first, same-site, HTML only, and obey robots.txt by default. `--render`/`--lighthouse` apply to the start page only during a crawl.
 - Scores are indicative. Thresholds (title 30-60 chars, description 70-160, thin content 300 words, slow response 2 s, deep page depth 3) are configurable through the library `thresholds` option.
 - The AEO audit reads what answer engines document: robots.txt tokens, Content-Signal, snippet controls, structured data. Whether an engine cites a page also depends on things no audit can see from outside (its index, its ranking, the question asked), so the AEO score says how ready a site is, not how often it is cited. llms.txt is reported at info level: no major answer engine has said it reads one.
-- Not included yet: gzip sitemaps, rendering every page in a crawl, field (CrUX) data, rank tracking, backlink data, AI-generated copy suggestions, tracking of citations in AI answers.
+- Sitemaps are read up to 15 MB each (uncompressed), and at most 25 of them; a larger one is reported, not checked.
+- Not included yet: rendering every page in a crawl, field (CrUX) data, rank tracking, backlink data, AI-generated copy suggestions, tracking of citations in AI answers.
 
 ## Contributing
 

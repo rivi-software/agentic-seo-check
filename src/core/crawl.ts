@@ -11,7 +11,7 @@ import { extractPage } from "./html/extract.js";
 import { loadRobotsTxt } from "./robots.js";
 import { isLocalHost } from "./rules/canonical.js";
 import type { LinkCheck, PageRecord, ProbeResults } from "./site-rules.js";
-import { loadSitemaps } from "./sitemap.js";
+import { emptySitemapProblems, loadSitemaps } from "./sitemap.js";
 import type {
   CrawlStats,
   LinkInfo,
@@ -249,6 +249,7 @@ export const crawlSite = async (
     urls: [],
     urlCount: 0,
     errors: [],
+    problems: emptySitemapProblems(),
   };
 
   if (siteChecks) {
@@ -261,7 +262,10 @@ export const crawlSite = async (
       ]),
     ];
 
-    sitemaps = await loadSitemaps(sitemapCandidates, options.fetch);
+    sitemaps = await loadSitemaps(sitemapCandidates, options.fetch, {
+      siteHost: startHost,
+      includeSubdomains: options.includeSubdomains,
+    });
   }
 
   const visited = new Set<string>([startUrl]);

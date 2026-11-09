@@ -50,6 +50,7 @@ export const buildRobots = (
     found: text !== null,
     sitemaps: [],
     text: text ? text.slice(0, 20_000) : null,
+    bytes: text === null ? null : Buffer.byteLength(text),
   };
 
   if (error) {
