@@ -23,6 +23,8 @@ export interface FixtureServer {
   requests: string[];
   /** The User-Agent of each request, in the order of `requests`. */
   userAgents: string[];
+  /** The headers of each request, in the order of `requests`. */
+  requestHeaders: http.IncomingHttpHeaders[];
 }
 
 const page = (title: string, body: string, extraHead = "") =>
@@ -92,6 +94,7 @@ export const startFixtureServer = async (
 ): Promise<FixtureServer> => {
   const requests: string[] = [];
   const userAgents: string[] = [];
+  const requestHeaders: http.IncomingHttpHeaders[] = [];
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -99,6 +102,7 @@ export const startFixtureServer = async (
     const earlier = requests.filter((p) => p === url.pathname).length;
     requests.push(url.pathname);
     userAgents.push(userAgent);
+    requestHeaders.push(req.headers);
     const route = routes[url.pathname];
     const origin = originOf(server);
     const delay = route?.delaysMs?.[earlier] ?? 0;
@@ -151,6 +155,7 @@ export const startFixtureServer = async (
     origin: originOf(server),
     requests,
     userAgents,
+    requestHeaders,
     close: () => server[Symbol.asyncDispose](),
   };
 };

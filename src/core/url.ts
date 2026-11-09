@@ -201,6 +201,17 @@ export const looksLikeHtml = (url: string): boolean => {
 };
 
 /** `/dir/index.html` -> `/dir/`, `/page.html` -> `/page`, trailing slash dropped except root. */
+/** The string without its trailing slashes. A loop, not /\/+$/, which backtracks on a long run. */
+export const trimTrailingSlashes = (value: string): string => {
+  let end = value.length;
+
+  while (end > 0 && value[end - 1] === "/") {
+    end -= 1;
+  }
+
+  return value.slice(0, end);
+};
+
 export const normalizePath = (pathname: string): string => {
   let p = pathname;
 

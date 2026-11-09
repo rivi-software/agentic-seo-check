@@ -2,7 +2,7 @@ import { normalizeForComparison, shingles, jaccard } from "./html/text.js";
 import { agentMatcher } from "./robots.js";
 import { robotsDirectives } from "./rules/indexing.js";
 import { finding, GOOGLE_DOCS, cap } from "./rules/rule.js";
-import { SAME_TEXT } from "./site-probes.js";
+import { MIN_COMPARABLE_WORDS, SAME_TEXT } from "./site-probes.js";
 import type {
   ExtractedPage,
   Finding,
@@ -13,7 +13,7 @@ import type {
   Thresholds,
   CrawlStats,
 } from "./types.js";
-import { normalizeUrl, normalizePath } from "./url.js";
+import { normalizeUrl, normalizePath, trimTrailingSlashes } from "./url.js";
 
 const meta = (
   id: string,
@@ -1572,7 +1572,7 @@ const hreflangTargetFindings = (scope: SiteScope): Finding[] => {
 const spellingKey = (url: string): string => {
   try {
     const u = new URL(url);
-    const pathname = u.pathname.toLowerCase().replace(/\/+$/u, "") || "/";
+    const pathname = trimTrailingSlashes(u.pathname.toLowerCase()) || "/";
 
     return `${u.origin}${pathname}${u.search}`;
   } catch {
@@ -1580,9 +1580,19 @@ const spellingKey = (url: string): string => {
   }
 };
 
-/** How two spellings of one URL differ: only in the trailing slash, or in the case of letters. */
+const pathnameOf = (url: string): string => {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+};
+
+/** How two spellings of one URL differ: only in the path's trailing slash, or in its letter case. */
 const spellingDifference = (a: string, b: string): UrlVariantProbe["kind"] =>
-  a.replace(/\/+$/u, "") === b.replace(/\/+$/u, "") ? "trailing-slash" : "case";
+  trimTrailingSlashes(pathnameOf(a)) === trimTrailingSlashes(pathnameOf(b))
+    ? "trailing-slash"
+    : "case";
 
 /** Pages the crawl reached under two spellings of one URL, both answering as a canonical page. */
 const crawledVariants = ({
@@ -1600,6 +1610,7 @@ const crawledVariants = ({
   for (const p of okPages) {
     if (
       isIndexable(p) &&
+      p.page.wordCount >= MIN_COMPARABLE_WORDS &&
       (!p.page.canonical || key(p.page.canonical) === key(p.url))
     ) {
       const k = spellingKey(p.url);
@@ -1693,7 +1704,7 @@ const parameterDuplicateFindings = ({
     if (
       !isIndexable(p) ||
       (canonical && key(canonical) !== key(p.url)) ||
-      p.page.wordCount < 50
+      p.page.wordCount < MIN_COMPARABLE_WORDS
     ) {
       continue;
     }

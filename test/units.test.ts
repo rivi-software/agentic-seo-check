@@ -17,6 +17,7 @@ import {
   normalizePath,
   normalizeUrl,
   resolveUrl,
+  trimTrailingSlashes,
 } from "../src/core/url.js";
 import { VERSION } from "../src/version.js";
 
@@ -135,5 +136,16 @@ describe("scoring and reports", () => {
     expect(md.trimEnd().split("\n").at(-1)).toBe(
       `_Audited with [agentic-seo-check](https://github.com/rivi-software/agentic-seo-check) ${VERSION}, made by [RIVI Software](https://rivi.software)._`
     );
+  });
+});
+
+describe(trimTrailingSlashes, () => {
+  it("trims a long run of slashes in linear time", () => {
+    const url = `/a${"/".repeat(50_000)}b${"/".repeat(50_000)}`;
+    const started = performance.now();
+
+    expect(trimTrailingSlashes(url)).toBe(`/a${"/".repeat(50_000)}b`);
+    expect(performance.now() - started).toBeLessThan(200);
+    expect(trimTrailingSlashes("///")).toBe("");
   });
 });

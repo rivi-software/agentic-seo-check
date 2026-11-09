@@ -6,7 +6,7 @@ import { jaccard, shingles } from "./html/text.js";
 import { isLocalHost } from "./rules/canonical.js";
 import { robotsDirectives } from "./rules/indexing.js";
 import type { LinkCheck, PageRecord, UrlVariantProbe } from "./site-rules.js";
-import { looksLikeHtml, normalizeUrl } from "./url.js";
+import { hostOf, isSameSite, looksLikeHtml, normalizeUrl } from "./url.js";
 
 export interface ProbeOptions {
   fetch: FetchOptions;
@@ -14,7 +14,15 @@ export interface ProbeOptions {
   delayMs: number;
   /** robots.txt lets the crawler fetch the URL. */
   allows: (url: string) => boolean;
+  /** The crawl's start URL: images on its site are checked, and only its origin gets `fetch.headers`. */
+  startUrl: string;
+  includeSubdomains: boolean;
+  /** Also check images on other hosts, as `checkExternalLinks` does for links. */
+  checkExternal: boolean;
 }
+
+/** Pages with fewer words in their HTML (an app shell) give no text to compare. */
+export const MIN_COMPARABLE_WORDS = 50;
 
 export interface ImageCheckResult {
   imageChecks: Map<string, LinkCheck>;
@@ -53,16 +61,35 @@ export const checkImages = async (
   const imageSources = imageSourcesOf(records);
   const imageChecks = new Map<string, LinkCheck>();
 
+  const startHost = hostOf(options.startUrl) ?? "";
+  const startOrigin = new URL(options.startUrl).origin;
+
+  // A page can point an <img> anywhere; the crawl requests other hosts only when asked to.
   const targets = [...imageSources]
     .toSorted((a, b) => b[1].size - a[1].size)
-    .flatMap(([url]) => (options.allows(url) ? [url] : []))
+    .flatMap(([url]) =>
+      options.allows(url) &&
+      (options.checkExternal ||
+        isSameSite(url, startHost, options.includeSubdomains))
+        ? [url]
+        : []
+    )
     .slice(0, limit);
 
   await mapConcurrent(targets, options.concurrency, async (url) => {
-    const res = await probeUrl(url, {
-      ...options.fetch,
+    // The user's headers (a staging password, a cookie) go to the audited origin only.
+    const { headers, ...rest } = options.fetch;
+
+    const fetchOptions: FetchOptions = {
+      ...rest,
       timeoutMs: Math.min(options.fetch.timeoutMs ?? 15_000, 10_000),
-    });
+    };
+
+    if (headers && new URL(url).origin === startOrigin) {
+      fetchOptions.headers = headers;
+    }
+
+    const res = await probeUrl(url, fetchOptions);
 
     imageChecks.set(url, {
       url,
@@ -138,6 +165,7 @@ export const probeUrlVariants = async (
 
       return (
         pathname !== "/" &&
+        r.page.wordCount >= MIN_COMPARABLE_WORDS &&
         isIndexablePage(r) &&
         looksLikeHtml(r.url) &&
         !/\.[a-z\d]{2,5}$/iu.test(pathname)

@@ -574,6 +574,9 @@ export const crawlSite = async (
       concurrency: options.concurrency,
       delayMs: options.delayMs,
       allows,
+      startUrl,
+      includeSubdomains: options.includeSubdomains,
+      checkExternal: options.checkExternalLinks,
     };
 
     progress({ phase: "links", message: "Checking images" });
