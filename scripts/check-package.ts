@@ -1,14 +1,14 @@
 /**
  * Checks the package as a user gets it from npm. It packs it the way `pnpm publish` does;
  * arethetypeswrong then reads the entry point's types under Node's ESM and bundler resolution, and
- * plain npm installs the tarball in an empty project, without the optional peers (Playwright,
- * Lighthouse, chrome-launcher), so nothing may need them to load. In that project it imports the
- * entry point, audits a page through the CLI with both the SEO and the AEO audit, and opens an MCP
- * session with the server, whose stdout must carry JSON-RPC and nothing else. Run it after
- * `pnpm run build`.
+ * plain npm installs the tarball in an empty project, without the optional dependency (Playwright)
+ * and the optional peers (Lighthouse, chrome-launcher), so nothing may need them to load. In that
+ * project it imports the entry point, audits a page through the CLI with both the SEO and the AEO
+ * audit, checks that `install-browser` says Playwright is missing, and opens an MCP session with
+ * the server, whose stdout must carry JSON-RPC and nothing else. Run it after `pnpm run build`.
  *   node scripts/check-package.ts
  */
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -102,10 +102,17 @@ try {
   );
   run(
     "npm",
-    ["install", "--no-audit", "--no-fund", "--loglevel=error", tarball],
+    [
+      "install",
+      "--omit=optional",
+      "--no-audit",
+      "--no-fund",
+      "--loglevel=error",
+      tarball,
+    ],
     project
   );
-  console.log("ok  installed without the optional peers");
+  console.log("ok  installed without Playwright and the optional peers");
 
   const exports = run(
     "node",
@@ -161,6 +168,24 @@ try {
   }
 
   console.log("ok  agentic-seo-check aeo - prints an AEO audit");
+
+  const install = spawnSync(bin("agentic-seo-check"), ["install-browser"], {
+    cwd: project,
+    encoding: "utf-8",
+  });
+
+  if (
+    install.status !== 2 ||
+    !install.stderr.includes("Playwright is not installed")
+  ) {
+    fail(
+      `agentic-seo-check install-browser without Playwright exited with ${install.status}: ${install.stderr}`
+    );
+  }
+
+  console.log(
+    "ok  agentic-seo-check install-browser says Playwright is missing"
+  );
 
   const line = await firstMcpLine(bin("agentic-seo-check-mcp"), project);
 

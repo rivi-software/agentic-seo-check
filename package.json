@@ -82,19 +82,18 @@
     "robots-parser": "^3.0.1",
     "zod": "^4.6.7"
   },
+  "optionalDependencies": {
+    "playwright": "^1.65.0"
+  },
   "peerDependencies": {
     "chrome-launcher": "^1.2.3",
-    "lighthouse": "^13.6.0",
-    "playwright": "^1.65.0"
+    "lighthouse": "^13.6.0"
   },
   "peerDependenciesMeta": {
     "chrome-launcher": {
       "optional": true
     },
     "lighthouse": {
-      "optional": true
-    },
-    "playwright": {
       "optional": true
     }
   },
@@ -107,7 +106,6 @@
     "lighthouse": "^13.6.0",
     "oxfmt": "0.75.0",
     "oxlint": "1.90.0",
-    "playwright": "^1.65.0",
     "tsx": "^4.20.0",
     "typescript": "^7.0.2",
     "ultracite": "8.1.1",

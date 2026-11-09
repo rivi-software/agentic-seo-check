@@ -1,3 +1,9 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { promises as fs } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+
 import type { Browser } from "playwright";
 import type * as Playwright from "playwright";
 
@@ -26,7 +32,59 @@ export interface RenderOutput {
 }
 
 export const RENDER_INSTALL_HINT =
-  "Install Playwright to enable rendering: `pnpm add -D playwright && pnpm exec playwright install chromium` (or npm/npx equivalents).";
+  "Playwright installs with agentic-seo-check as an optional dependency, so it is missing only where optional dependencies were left out (`--omit=optional`, `--no-optional`): reinstall with them, or add `playwright` next to agentic-seo-check.";
+
+export const BROWSER_INSTALL_HINT =
+  "Install Google Chrome, or download the Chromium build this Playwright expects with `agentic-seo-check install-browser` (`npx @rivi-software/agentic-seo-check install-browser` with npx).";
+
+/**
+ * Downloads the Chromium build the installed Playwright expects, through Playwright's own CLI: a
+ * build fetched by `npx playwright install` for another Playwright version does not launch.
+ */
+export const installBrowser = async (
+  options: { withDeps?: boolean } = {}
+): Promise<void> => {
+  let manifestPath: string;
+
+  try {
+    manifestPath = createRequire(import.meta.url).resolve(
+      "playwright/package.json"
+    );
+  } catch {
+    throw new RenderUnavailableError(
+      `Playwright is not installed. ${RENDER_INSTALL_HINT}`
+    );
+  }
+
+  // SAFETY: the manifest of an installed package; a missing bin fails the spawn below.
+  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf-8")) as {
+    bin?: { playwright?: string };
+  };
+
+  const cli = path.join(
+    path.dirname(manifestPath),
+    manifest.bin?.playwright ?? "cli.js"
+  );
+
+  const args = [cli, "install", "chromium"];
+
+  if (options.withDeps) {
+    args.push("--with-deps");
+  }
+
+  // Playwright's progress goes to stderr, like the CLI's own: stdout is for reports.
+  const child = spawn(process.execPath, args, {
+    stdio: ["inherit", 2, "inherit"],
+  });
+
+  await once(child, "close");
+
+  if (child.exitCode !== 0) {
+    throw new Error(
+      `playwright install chromium exited with ${child.exitCode ?? child.signalCode}.`
+    );
+  }
+};
 
 const launchSystemBrowser = async (
   playwright: typeof Playwright
@@ -71,7 +129,7 @@ export const renderPage = async (
 
     if (!fallback) {
       throw new RenderUnavailableError(
-        `Could not launch Chromium: ${firstLine(error instanceof Error ? error.message : String(error))}. ${RENDER_INSTALL_HINT}`
+        `Could not launch Chromium: ${firstLine(error instanceof Error ? error.message : String(error))}. ${BROWSER_INSTALL_HINT}`
       );
     }
 

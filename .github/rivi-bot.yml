@@ -16,8 +16,9 @@ review:
     - Secrets: headers the user passes (`headers`, `--header`) are meant for the audited origin and never go into a
       report.
     - MCP: the server's stdout carries JSON-RPC only; progress and logs go to stderr. Tools stay read-only.
-    - Optional peers: playwright, lighthouse and chrome-launcher load only behind `--render`/`--lighthouse`, through a
-      dynamic import, and never from the package's entry point or its declarations.
+    - Optional packages: playwright (an optional dependency), lighthouse and chrome-launcher (optional peers) load only
+      behind `--render`/`--lighthouse`, through a dynamic import, and never from the package's entry point or its
+      declarations.
 
 # On request only: `@rivi-bot describe`, `@rivi-bot triage`, or a question or a fix in plain words.
 describe:

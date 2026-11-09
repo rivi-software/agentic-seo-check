@@ -3,6 +3,7 @@ import type { Flags as LighthouseFlags } from "lighthouse";
 import { z } from "zod";
 
 import { quote } from "./html/dom.js";
+import { BROWSER_INSTALL_HINT } from "./render.js";
 import type {
   LcpElement,
   LighthouseAuditSummary,
@@ -27,8 +28,12 @@ export interface LighthouseRunOptions {
   headers?: Record<string, string>;
 }
 
-export const LIGHTHOUSE_INSTALL_HINT =
-  "Install Lighthouse and a Chrome: `pnpm add -D lighthouse chrome-launcher` plus Google Chrome, or `pnpm exec playwright install chromium` (the Playwright Chromium is used automatically when found).";
+/** The peers `--lighthouse` loads, at the majors `peerDependencies` in package.json allows. */
+export const LIGHTHOUSE_PEERS = ["lighthouse@13", "chrome-launcher@1"];
+
+// Lighthouse is a peer and not a dependency because it is some 180 MB that every install and npx
+// run would fetch for one option.
+export const LIGHTHOUSE_INSTALL_HINT = `Lighthouse is an optional peer, so install it next to agentic-seo-check: \`npm i -D ${LIGHTHOUSE_PEERS.join(" ")}\` in a project, \`npm i -g @rivi-software/agentic-seo-check ${LIGHTHOUSE_PEERS.join(" ")}\` for a global install, or with npx run \`npx -y -p @rivi-software/agentic-seo-check ${LIGHTHOUSE_PEERS.map((p) => `-p ${p}`).join(" ")} agentic-seo-check …\`.`;
 
 /** Audits we already cover with our own rules; Lighthouse duplicates are suppressed. */
 const COVERED_SEO_AUDITS = new Set([
@@ -704,7 +709,7 @@ export const runLighthouse = async (
     chrome = await launch(launchOptions);
   } catch (error) {
     throw new LighthouseUnavailableError(
-      `Could not launch Chrome: ${error instanceof Error ? error.message : String(error)}. ${LIGHTHOUSE_INSTALL_HINT}`
+      `Could not launch Chrome: ${error instanceof Error ? error.message : String(error)}. ${BROWSER_INSTALL_HINT}`
     );
   }
 
