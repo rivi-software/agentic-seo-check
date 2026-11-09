@@ -98,10 +98,33 @@ const metadataElements = (root: AnyNode): BodyMetadata[] =>
 const metadataIn = (root: AnyNode): string[] =>
   metadataElements(root).map((m) => m.described);
 
+/** Characters that look like whitespace but end <head>, by the name a reader recognizes. */
+const INVISIBLE_NAMES = new Map([
+  [0xfe_ff, "byte order mark"],
+  [0xa0, "no-break space, &nbsp;"],
+]);
+
+/** "U+FEFF (byte order mark)" for the characters in text that is not ASCII whitespace. */
+const invisibleCharacters = (data: string): string =>
+  [...new Set([...data].filter((c) => !"\t\n\f\r ".includes(c)))]
+    .slice(0, 3)
+    .map((c) => {
+      const code = c.codePointAt(0) ?? 0;
+      const name = INVISIBLE_NAMES.get(code);
+      const hex = code.toString(16).toUpperCase().padStart(4, "0");
+
+      return name ? `U+${hex} (${name})` : `U+${hex}`;
+    })
+    .join(", ");
+
 /** The source of an element's start tag, or a text node's first words. */
 const quote = (node: AnyNode, source: string): string => {
   if (isText(node)) {
     const words = collapseWhitespace(node.data);
+
+    if (!words) {
+      return `invisible character ${invisibleCharacters(node.data)}`;
+    }
 
     return `text "${words.length > 40 ? `${words.slice(0, 40)}…` : words}"`;
   }
@@ -142,9 +165,10 @@ const parseHead = (prefix: string, scriptingEnabled: boolean): HeadParse => {
 
   const body = queryOne(doc, "body");
 
+  // Only ASCII whitespace keeps <head> open; a stray byte order mark or &nbsp; ends it.
   const closedBy =
     body?.children.find(
-      (node) => isTag(node) || (isText(node) && node.data.trim() !== "")
+      (node) => isTag(node) || (isText(node) && /[^\t\n\f\r ]/u.test(node.data))
     ) ?? null;
 
   return {

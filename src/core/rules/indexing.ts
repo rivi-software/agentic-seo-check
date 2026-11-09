@@ -22,6 +22,7 @@ export interface ScopedDirective {
 export const parseRobotsHeader = (value: string): ScopedDirective[] => {
   const out: ScopedDirective[] = [];
   let agent: string | null = null;
+  let scoped = new Set<string>();
 
   for (const piece of value.toLowerCase().split(",")) {
     let directive = piece.trim();
@@ -30,11 +31,24 @@ export const parseRobotsHeader = (value: string): ScopedDirective[] => {
 
     if (name && !VALUE_DIRECTIVES.has(name)) {
       agent = name;
+      scoped = new Set();
       directive = match.groups?.rest?.trim() ?? "";
     }
 
+    directive = directive.replaceAll(/\s+/gu, "");
+
+    /*
+     * Two X-Robots-Tag headers arrive joined with ", ", so "GPTBot: noindex" and a plain "noindex"
+     * read as "gptbot: noindex, noindex". A directive that repeats under one agent cannot belong to
+     * it twice: it starts a header for every crawler.
+     */
+    if (agent !== null && scoped.has(directive)) {
+      agent = null;
+    }
+
     if (directive) {
-      out.push({ agent, directive: directive.replaceAll(/\s+/gu, "") });
+      scoped.add(directive);
+      out.push({ agent, directive });
     }
   }
 

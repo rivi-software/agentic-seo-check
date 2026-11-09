@@ -87,6 +87,21 @@ describe("head and indexing signals", () => {
     expect(f?.evidence).toMatchObject({ closedBy: 'text "}}"' });
   });
 
+  it("head.closed-early names a byte order mark that ends <head>, not the element after it", async () => {
+    const [f] = await findingsOf(
+      "head.closed-early",
+      page(
+        '<meta charset="utf-8">\uFEFF<title>Blue widgets for home workshops</title><link rel="canonical" href="https://www.example.com/widgets/blue/">'
+      )
+    );
+
+    expect(f?.evidence).toMatchObject({
+      closedBy: "invisible character U+FEFF (byte order mark)",
+      metadataAfter: ["<title>", '<link rel="canonical">'],
+    });
+    expect(f?.recommendation).toContain("without BOM");
+  });
+
   it("head.closed-early is info for a pixel inside <noscript>", async () => {
     const [f] = await findingsOf(
       "head.closed-early",
@@ -251,6 +266,14 @@ describe("head and indexing signals", () => {
     );
 
     expect(bing.findings.map((f) => f.rule)).toContain("robots.noindex");
+
+    // Two headers, joined by fetch: "GPTBot: noindex" and a plain "noindex".
+    const joined = await audit(
+      page("<title>Blue widgets for home workshops</title>"),
+      { "x-robots-tag": "GPTBot: noindex, noindex" }
+    );
+
+    expect(joined.findings.map((f) => f.rule)).toContain("robots.noindex");
   });
 
   it("robots.conflicting names both sides and what Google applies", async () => {

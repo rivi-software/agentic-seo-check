@@ -48,10 +48,16 @@ export const headRules = [
         (m) => m === '<meta name="viewport">'
       );
 
+      // An invisible character is removed, not moved: it usually comes from a file saved with a BOM.
+      const invisible = closedBy.startsWith("invisible character");
+
       return make(
         `<head> ends at ${closedBy}, so Google ignores the ${plural(afterClose.length, "metadata element")} after it: ${cap(afterClose, 5).join(", ")}.`,
         {
           severity: onlyViewport ? "warning" : "error",
+          recommendation: invisible
+            ? "Remove the invisible character from <head>. A U+FEFF byte order mark usually comes from a template or include file saved as UTF-8 with BOM: save it as UTF-8 without BOM. A U+00A0 comes from an &nbsp; in the template's <head>."
+            : undefined,
           selector: "head",
           evidence: {
             closedBy,
