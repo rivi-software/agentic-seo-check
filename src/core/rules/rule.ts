@@ -1,6 +1,7 @@
 import type {
   ExtractedPage,
   Finding,
+  FixEdit,
   PageSource,
   ResponseInfo,
   RuleMeta,
@@ -25,9 +26,26 @@ export interface Rule {
 export interface FindingExtras {
   severity?: Severity;
   recommendation?: string;
+  /** The edits that resolve this finding here. */
+  fix?: FixEdit[];
+  /**
+   * What this finding is about, when a rule can report more than one per page (a JSON-LD type, a
+   * sitemap URL). It goes into the finding's id only, so two findings of one rule keep apart. It
+   * stays with the object `finding()` returns: set `url` on that object rather than copying it.
+   */
+  key?: string;
   selector?: string;
   evidence?: Finding["evidence"];
 }
+
+export const cap = <T>(items: T[], max = 10): T[] =>
+  items.length > max ? items.slice(0, max) : items;
+
+const findingKeys = new WeakMap<Finding, string>();
+
+/** The `key` a finding was made with, for its id. */
+export const findingKey = (f: Finding): string | undefined =>
+  findingKeys.get(f);
 
 /** Build a finding from rule metadata, overriding only what differs for this instance. */
 export const finding = (
@@ -42,6 +60,14 @@ export const finding = (
     message,
     recommendation: extras.recommendation ?? meta.recommendation,
   };
+
+  if (extras.fix?.length) {
+    f.fix = cap(extras.fix);
+  }
+
+  if (extras.key) {
+    findingKeys.set(f, extras.key);
+  }
 
   if (extras.selector) {
     f.selector = extras.selector;
@@ -78,9 +104,6 @@ export const defineRule = (
     return Array.isArray(result) ? result : [result];
   },
 });
-
-export const cap = <T>(items: T[], max = 10): T[] =>
-  items.length > max ? items.slice(0, max) : items;
 
 export const GOOGLE_DOCS = {
   titles: "https://developers.google.com/search/docs/appearance/title-link",

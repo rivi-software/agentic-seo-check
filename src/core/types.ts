@@ -52,6 +52,46 @@ export interface RuleMeta {
   requires?: Requirement;
 }
 
+/**
+ * What a fix edits: `html` is the page as served (change the template, component or file that
+ * renders it), `http` the server's response for a URL (status line, headers, redirects: server, CDN
+ * or framework config), `robots.txt`, `sitemap` and `llms.txt` those files, and `asset` another file
+ * the site serves, such as an image or a script.
+ */
+export type FixTarget =
+  | "html"
+  | "http"
+  | "robots.txt"
+  | "sitemap"
+  | "llms.txt"
+  | "asset";
+
+/**
+ * One edit of a fix. `current` is quoted from what the server sent, so an agent can find it in the
+ * source; `code` is what to write instead. A quote cut short at 500 characters ends in "…".
+ */
+export interface FixEdit {
+  in: FixTarget;
+  /** `replace` swaps `current` for `code`, `add` writes `code` at `at`, `remove` deletes `current`. */
+  action: "add" | "replace" | "remove";
+  /** The URL whose file or response to change, when it is not the finding's own page. */
+  url?: string;
+  /**
+   * Where in the file: a CSS selector in HTML ("head" for an edit that adds to <head>), a header
+   * name, a robots.txt group ("User-agent: *"), a JSON-LD object ("Product").
+   */
+  at?: string;
+  /** What is there now: the tag, header, line or value to replace or remove, as the server sent it. */
+  current?: string;
+  /**
+   * The code to write. Text in `{{` `}}` is a slot for words only the author can write, such as a
+   * title; `write` says what goes in it. Everything else is exact.
+   */
+  code?: string;
+  /** What goes in the `{{…}}` slots, or the part of the edit code cannot show. */
+  write?: string;
+}
+
 /** One actionable problem. Designed to be read by an agent that will edit code. */
 export interface Finding {
   rule: string;
@@ -61,14 +101,49 @@ export interface Finding {
   message: string;
   /** What to change. Concrete and framework-agnostic. */
   recommendation: string;
-  /** Page URL or file path the finding belongs to (absent for site-wide findings that list pages in evidence). */
-  url?: string;
+  /**
+   * The edits that resolve this finding on this page or site; apply all of them. At most 10: a
+   * re-check shows what is left. Absent when there is nothing on the site to change.
+   */
+  fix?: FixEdit[];
   /** CSS selector or location hint for where the problem lives in the HTML. */
   selector?: string;
   /** Current values, counts, offending items (capped lists). */
   // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- free-form JSON for the reader: each rule records whatever values it found
   evidence?: Record<string, unknown>;
   docs?: string;
+  /** Page URL or file path the finding belongs to (absent for site-wide findings that list pages in evidence). */
+  url?: string;
+  /**
+   * Stable across audits of the same page: `rule@hash`, from the rule, the URL and what the finding
+   * is about. A re-check with `baseline` matches findings by it. Findings the rule cannot tell
+   * apart are numbered (`~1`, `~2`), and a re-check never calls those fixed.
+   */
+  id?: string;
+}
+
+/** A finding of the earlier audit that this one no longer reports. */
+export interface FixedFinding {
+  id: string;
+  rule: string;
+  /** Known when the baseline was an audit rather than a list of ids. */
+  url?: string;
+  message?: string;
+}
+
+/**
+ * How this audit compares with an earlier one (`baseline`): which findings a fix resolved, which
+ * are still open and which are new. Only findings this audit could check are compared: those whose
+ * rule ran again on a page it audited again.
+ */
+export interface BaselineComparison {
+  fixed: FixedFinding[];
+  /** Ids of findings both audits report. */
+  open: string[];
+  /** Ids of findings only this audit reports: a new problem, or one a fix caused. */
+  new: string[];
+  /** Findings of the earlier audit this one did not check: their rule did not run, or their page was not audited. */
+  notChecked: number;
 }
 
 export interface SeverityCounts {
@@ -92,6 +167,8 @@ export interface ImageInfo {
   /** The image sits in a <picture>, whose <source> elements offer other sizes or formats. */
   inPicture: boolean;
   fetchpriority: string | null;
+  /** The `<img>` tag as the HTML writes it, for a fix to quote. */
+  tag: string;
   /**
    * Words of visible text before the image, a rough measure of how far down the page it is; null
    * for an image that does not render where it is written (inside <template>, <noscript>, <svg>).
@@ -109,12 +186,16 @@ export interface LinkInfo {
   nofollow: boolean;
   /** True when the link has visible text, an aria-label, a title, or an image with alt text. */
   hasAccessibleName: boolean;
+  /** The `<a>` start tag as the HTML writes it, for a fix to quote. */
+  tag: string;
 }
 
 export interface HreflangInfo {
   lang: string;
   href: string;
   url: string | null;
+  /** The `<link>` tag as the HTML writes it, for a fix to quote. */
+  tag: string;
 }
 
 export interface StructuredDataItem {
@@ -221,6 +302,34 @@ export interface HeadSignals {
   icons: string[];
 }
 
+/**
+ * Tags as the HTML writes them, so a fix can quote what to replace. Elements the parser added
+ * itself (an `<html>` or `<head>` the page leaves out) have no tag: null.
+ */
+export interface PageMarkup {
+  /** The `<html>` start tag. */
+  html: string | null;
+  /** The `<head>` start tag. */
+  head: string | null;
+  /** Each `<title>` element, in the order of `titles`. */
+  titles: string[];
+  /** Each meta description tag, in the order of `metaDescriptions`. */
+  metaDescriptions: string[];
+  /** Each robots meta tag (robots, googlebot, googlebot-news, bingbot), empty ones included. */
+  metaRobots: string[];
+  /** Each `<link rel="canonical">`, in the order of `canonicals`. */
+  canonicals: string[];
+  /** Each heading element, in the order of `headings`. */
+  headings: string[];
+  viewport: string | null;
+  /** The `<meta charset>` or `<meta http-equiv="content-type">` tag. */
+  charset: string | null;
+  /** The tag of each Open Graph and Twitter property, keyed as in `og` and `twitter` with its prefix ("og:image"). */
+  social: Record<string, string>;
+  /** Each `<script type="application/ld+json">` start tag, in document order. */
+  jsonLd: string[];
+}
+
 /** Everything the extractor pulls out of one HTML document. Rules read only this. */
 export interface ExtractedPage {
   /** URL used to resolve relative links (the final URL after redirects, or the base URL for files/inline HTML). */
@@ -258,6 +367,7 @@ export interface ExtractedPage {
   htmlBytes: number;
   hasBaseHref: boolean;
   head: HeadSignals;
+  markup: PageMarkup;
   /** Signals the AEO audit reads; the SEO rules do not use them. */
   answer: AnswerSignals;
 }
@@ -372,6 +482,8 @@ export interface PageAudit {
   auditedAt: string;
   response?: ResponseInfo;
   summary: PageSummary;
+  /** With `baseline`: what changed since the earlier audit. */
+  baseline?: BaselineComparison;
   findings: Finding[];
   counts: SeverityCounts;
   /** 0-100. Indicative only: 100 minus weighted deductions per finding. */
@@ -465,6 +577,8 @@ export interface SiteAudit {
   robotsTxt: RobotsTxtInfo | null;
   sitemaps: SitemapInfo;
   pages: PageAudit[];
+  /** With `baseline`: what changed since the earlier audit, over site and page findings. */
+  baseline?: BaselineComparison;
   /** Findings that span pages (duplicates, broken links, sitemap mismatches, ...). */
   siteFindings: Finding[];
   /** Page-level findings rolled up by rule, most severe and most frequent first. */
@@ -607,6 +721,8 @@ export interface AeoAudit {
   counts: SeverityCounts;
   auditedAt: string;
   summary: AeoSummary;
+  /** With `baseline`: what changed since the earlier audit, over site and page findings. */
+  baseline?: BaselineComparison;
   /**
    * Site-wide findings (robots.txt, llms.txt, bot probes), then the page findings: all of them for
    * one page or with `pageDetail: "full"`, none for a site with `pageDetail: "summary"` (see `issues`).

@@ -21,6 +21,7 @@ import {
 import type { CrawlOptions } from "./core/audit.js";
 import { runLighthouse } from "./core/lighthouse.js";
 import { performanceFindings } from "./core/performance-rules.js";
+import { assignIds, baselineFromIds } from "./core/recheck.js";
 import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 import { ALL_RULES } from "./core/rules/index.js";
 import type {
@@ -67,6 +68,18 @@ const commonOptions = {
     .describe(
       'Rule ids to skip, e.g. ["twitter.card-missing"]. Use seo_list_rules to see ids.'
     ),
+  rules: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Run only these rule ids, e.g. ["img.alt-missing"] to re-check the findings a fix was for. Use with `baseline`.'
+    ),
+  baseline: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "The `id` of every finding of the earlier audit. The result then has `baseline`: the ids since fixed, still open and new (a new one may be a problem a fix caused). Re-check with the same options; for a crawl or directory, run both audits with pageDetail full so page findings have ids."
+    ),
   timeoutMs: z
     .number()
     .int()
@@ -89,6 +102,8 @@ const toOptions = (input: {
   keyword?: string;
   includeInfo?: boolean;
   disableRules?: string[];
+  rules?: string[];
+  baseline?: string[];
   timeoutMs?: number;
   userAgent?: string;
   headers?: Record<string, string>;
@@ -96,6 +111,8 @@ const toOptions = (input: {
   keyword: input.keyword,
   includeInfo: input.includeInfo,
   disableRules: input.disableRules,
+  onlyRules: input.rules,
+  baseline: input.baseline ? baselineFromIds(input.baseline) : undefined,
   fetch: {
     timeoutMs: input.timeoutMs,
     userAgent: input.userAgent,
@@ -209,12 +226,12 @@ export const createMcpServer = (): McpServer => {
     {
       title: "Audit one page for SEO",
       description:
-        "Audit a single page and return prioritised, actionable findings (rule id, severity, message, recommendation, CSS selector, evidence). " +
+        "Audit a single page and return prioritised, actionable findings (rule id, severity, message, recommendation, CSS selector, evidence) with a `fix` for each: the exact edits that resolve it, quoting the code to replace (`{{…}}` marks words the author writes). " +
         "Checks title, meta description, headings, canonical, robots/noindex, viewport/lang, Open Graph/Twitter cards, images, links, hreflang, structured data (JSON-LD/microdata), content quality and the HTTP response. " +
         "Provide either `url` (live site, staging or http://localhost dev server) or `html` (raw HTML string, e.g. from a template or test render). " +
         "Set `render: true` to also load the page in headless Chromium and report content that only exists after JavaScript runs (SPA/CSR problems). " +
         "Set `lighthouse: true` for Core Web Vitals (LCP, CLS, TBT) and Lighthouse SEO audits; this takes 20-60 seconds. " +
-        "Typical workflow: audit, fix the errors and warnings in the source code, re-audit to confirm.",
+        "Typical workflow: audit, apply the `fix` of each error and warning in the source code, then re-check with `rules` (the rules you fixed) and `baseline` (the finding ids) to confirm they are fixed and nothing new appeared.",
       inputSchema: {
         url: z
           .string()
@@ -467,6 +484,7 @@ export const createMcpServer = (): McpServer => {
         });
 
         const findings = performanceFindings(result);
+        assignIds(findings);
         const payload = { ...result, findings };
 
         const text =
@@ -570,6 +588,8 @@ export const createMcpServer = (): McpServer => {
           ),
         includeInfo: commonOptions.includeInfo,
         disableRules: commonOptions.disableRules,
+        rules: commonOptions.rules,
+        baseline: commonOptions.baseline,
         timeoutMs: commonOptions.timeoutMs,
         userAgent: commonOptions.userAgent,
         headers: commonOptions.headers,

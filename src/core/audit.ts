@@ -12,9 +12,22 @@ import type { FetchOptions } from "./fetch.js";
 import { extractPage } from "./html/extract.js";
 import { runLighthouse, LighthouseUnavailableError } from "./lighthouse.js";
 import { performanceFindings } from "./performance-rules.js";
+import {
+  assignIds,
+  compareWithBaseline,
+  insertBefore,
+  recordUrls,
+  ruleRanWith,
+} from "./recheck.js";
+import type { Baseline } from "./recheck.js";
 import { compareRender } from "./render-rules.js";
 import { renderPage, RenderUnavailableError } from "./render.js";
-import { runPageRules, sortFindings } from "./rules/index.js";
+import {
+  checkRuleIds,
+  runPageRules,
+  SEO_RULES,
+  sortFindings,
+} from "./rules/index.js";
 import { pageScore, siteScore } from "./score.js";
 import { runSiteRules } from "./site-rules.js";
 import type { PageRecord } from "./site-rules.js";
@@ -23,10 +36,12 @@ import { buildSummary } from "./summary.js";
 import { countFindings, DEFAULT_THRESHOLDS } from "./types.js";
 import type {
   Audit,
+  BaselineComparison,
   Finding,
   IssueRollup,
   PageAudit,
   PageSource,
+  Requirement,
   ResponseInfo,
   SiteAudit,
   Thresholds,
@@ -47,6 +62,13 @@ export interface AuditOptions {
   includeInfo?: boolean;
   /** Rule ids to skip. */
   disableRules?: string[];
+  /** Run only these rule ids: a re-check of the rules a fix was for. */
+  onlyRules?: string[];
+  /**
+   * The findings of an earlier audit. The result then has `baseline`: the findings since fixed,
+   * still open and new.
+   */
+  baseline?: Baseline;
   thresholds?: Partial<Thresholds>;
   fetch?: FetchOptions;
   /** Base URL for inline HTML, files and directories (default http://localhost/). */
@@ -94,6 +116,156 @@ const toolFinding = (rule: string, message: string, url: string): Finding => ({
     "Install the optional dependency (see message) or run without this option. The rest of the audit is complete.",
   url,
 });
+
+/**
+ * Info findings that `includeInfo: false` left out of an audit. They are still on the page, so the
+ * re-check keeps them: an earlier finding that is only hidden now is not fixed.
+ */
+const hiddenInfo = new WeakMap<PageAudit | SiteAudit, Finding[]>();
+
+const hiddenOf = (audit: PageAudit | SiteAudit): Finding[] => {
+  let hidden = hiddenInfo.get(audit);
+
+  if (!hidden) {
+    hidden = [];
+    hiddenInfo.set(audit, hidden);
+  }
+
+  return hidden;
+};
+
+/**
+ * Findings the options leave in: not disabled, among `onlyRules`, and info only when asked for.
+ * The info findings left out go to `hidden`.
+ */
+const selected = (
+  findings: Finding[],
+  options: AuditOptions,
+  hidden: Finding[]
+): Finding[] => {
+  const disabled = new Set(options.disableRules);
+  const only = options.onlyRules ? new Set(options.onlyRules) : null;
+  const shown: Finding[] = [];
+
+  for (const f of findings) {
+    if (disabled.has(f.rule) || (only && !only.has(f.rule))) {
+      continue;
+    }
+
+    (options.includeInfo === false && f.severity === "info"
+      ? hidden
+      : shown
+    ).push(f);
+  }
+
+  return shown;
+};
+
+const ruleFilter = (options: AuditOptions) => ({
+  disable: new Set(options.disableRules),
+  only: options.onlyRules ? new Set(options.onlyRules) : undefined,
+});
+
+/** The capabilities an SEO audit ran with, which decide the rules that ran. */
+const seoCapabilities = (
+  options: AuditOptions,
+  site: boolean
+): Set<Requirement> => {
+  const active = new Set<Requirement>();
+
+  if (site) {
+    active.add("crawl");
+  }
+
+  if (options.render) {
+    active.add("render");
+  }
+
+  if (options.lighthouse) {
+    active.add("lighthouse");
+  }
+
+  if (options.keyword) {
+    active.add("keyword");
+  }
+
+  return active;
+};
+
+/**
+ * Gives every finding its id and, with `baseline`, compares them with the earlier audit's.
+ * `urls` are the pages this audit checked, in every form a finding may name them.
+ */
+const recheck = (
+  findings: Finding[],
+  options: AuditOptions,
+  scope: { urls: Iterable<string>; site: boolean; hidden: Finding[] }
+): BaselineComparison | null => {
+  assignIds([...findings, ...scope.hidden]);
+
+  if (!options.baseline) {
+    return null;
+  }
+
+  return compareWithBaseline(findings, options.baseline, {
+    urls: scope.urls,
+    site: scope.site,
+    hidden: scope.hidden,
+    ruleRan: ruleRanWith(
+      {
+        onlyRules: options.onlyRules,
+        disableRules: options.disableRules,
+        active: seoCapabilities(options, scope.site),
+      },
+      SEO_RULES
+    ),
+  });
+};
+
+const finishPage = (audit: PageAudit, options: AuditOptions): PageAudit => {
+  const urls = [audit.url, audit.target];
+
+  if (audit.response) {
+    urls.push(audit.response.finalUrl);
+  }
+
+  const comparison = recheck(audit.findings, options, {
+    urls,
+    site: false,
+    hidden: hiddenInfo.get(audit) ?? [],
+  });
+
+  return comparison
+    ? insertBefore(audit, "findings", "baseline", comparison)
+    : audit;
+};
+
+const finishSite = (
+  site: SiteAudit,
+  options: AuditOptions,
+  urls: Iterable<string>
+): SiteAudit => {
+  const comparison = recheck(
+    [...site.siteFindings, ...site.pages.flatMap((p) => p.findings)],
+    options,
+    {
+      urls,
+      site: true,
+      hidden: [site, ...site.pages].flatMap((a) => hiddenInfo.get(a) ?? []),
+    }
+  );
+
+  return comparison
+    ? insertBefore(site, "siteFindings", "baseline", comparison)
+    : site;
+};
+
+/** Fails on `onlyRules` that name no SEO rule. */
+const checkOptions = (options: AuditOptions): void => {
+  if (options.onlyRules) {
+    checkRuleIds(options.onlyRules, SEO_RULES, "SEO");
+  }
+};
 
 // The raw HTML is not kept on the audit (too large); re-fetch it for the render comparison.
 const rawHtmlFor = async (
@@ -211,10 +383,11 @@ const enrichPage = async (
   }
 
   if (extra.length) {
-    const filtered =
-      options.includeInfo === false
-        ? extra.filter((f) => f.severity !== "info")
-        : extra;
+    for (const f of extra) {
+      f.url ??= url;
+    }
+
+    const filtered = selected(extra, options, hiddenOf(audit));
 
     audit.findings = sortFindings([...audit.findings, ...filtered]);
     audit.counts = countFindings(audit.findings);
@@ -238,12 +411,11 @@ const auditRecord = (
       thresholds,
       depth: record.depth,
     },
-    { disable: new Set(options.disableRules) }
+    ruleFilter(options)
   );
 
-  if (options.includeInfo === false) {
-    findings = findings.filter((f) => f.severity !== "info");
-  }
+  const hidden: Finding[] = [];
+  findings = selected(findings, options, hidden);
 
   const audit: PageAudit = {
     schemaVersion: 1,
@@ -258,6 +430,8 @@ const auditRecord = (
     score: 0,
     depth: record.depth,
   };
+
+  hiddenInfo.set(audit, hidden);
 
   if (record.response) {
     audit.response = record.response;
@@ -368,14 +542,8 @@ const buildSiteAudit = (
     imageSources: result.imageSources,
   });
 
-  const disabled = new Set(options.disableRules);
-  siteFindings = sortFindings(
-    siteFindings.filter((f) => !disabled.has(f.rule))
-  );
-
-  if (options.includeInfo === false) {
-    siteFindings = siteFindings.filter((f) => f.severity !== "info");
-  }
+  const hiddenSite: Finding[] = [];
+  siteFindings = sortFindings(selected(siteFindings, options, hiddenSite));
 
   const site: SiteAudit = {
     schemaVersion: 1,
@@ -395,6 +563,7 @@ const buildSiteAudit = (
     score: 0,
   };
 
+  hiddenInfo.set(site, hiddenSite);
   recomputeSite(site);
 
   return site;
@@ -413,13 +582,12 @@ const applyPageDetail = (site: SiteAudit, options: CrawlOptions): SiteAudit => {
   return site;
 };
 
-/** Audit an HTML string. `url` is used to resolve links and for display. */
-// oxlint-disable-next-line eslint/require-await -- public API: it returns a promise like the other audit functions, so a throw reaches callers as a rejection
-export const auditHtml = async (
+/** The page audit of an HTML string, before ids and the baseline comparison. */
+const auditHtmlPage = (
   html: string,
-  input: HtmlAuditInput = {},
-  options: AuditOptions = {}
-): Promise<PageAudit> => {
+  input: HtmlAuditInput,
+  options: AuditOptions
+): PageAudit => {
   const url = input.url ?? options.baseUrl ?? "http://localhost/";
 
   const page = extractPage(html, {
@@ -439,12 +607,11 @@ export const auditHtml = async (
       thresholds,
       depth: input.depth,
     },
-    { disable: new Set(options.disableRules) }
+    ruleFilter(options)
   );
 
-  if (options.includeInfo === false) {
-    findings = findings.filter((f) => f.severity !== "info");
-  }
+  const hidden: Finding[] = [];
+  findings = selected(findings, options, hidden);
 
   const audit: PageAudit = {
     schemaVersion: 1,
@@ -459,6 +626,8 @@ export const auditHtml = async (
     score: 0,
   };
 
+  hiddenInfo.set(audit, hidden);
+
   if (input.response) {
     audit.response = input.response;
   }
@@ -472,15 +641,28 @@ export const auditHtml = async (
   return audit;
 };
 
+/** Audit an HTML string. `url` is used to resolve links and for display. */
+// oxlint-disable-next-line eslint/require-await -- public API: it returns a promise like the other audit functions, so a throw reaches callers as a rejection
+export const auditHtml = async (
+  html: string,
+  input: HtmlAuditInput = {},
+  options: AuditOptions = {}
+): Promise<PageAudit> => {
+  checkOptions(options);
+
+  return finishPage(auditHtmlPage(html, input, options), options);
+};
+
 /** Fetch and audit one URL. Optionally render and/or run Lighthouse. */
 export const auditUrl = async (
   url: string,
   options: AuditOptions = {}
 ): Promise<PageAudit> => {
+  checkOptions(options);
   const res = await fetchPage(url, options.fetch ?? {});
   const response = toResponseInfo(res);
 
-  const audit = await auditHtml(
+  const audit = auditHtmlPage(
     res.body ?? "",
     { url: res.finalUrl, response, source: "url", target: url },
     options
@@ -500,12 +682,12 @@ export const auditUrl = async (
     audit.counts = countFindings(audit.findings);
     audit.score = pageScore(audit.counts);
 
-    return audit;
+    return finishPage(audit, options);
   }
 
   await enrichPage(audit, options);
 
-  return audit;
+  return finishPage(audit, options);
 };
 
 /** Audit a single .html file from disk. */
@@ -529,6 +711,7 @@ export const auditSite = async (
   startUrl: string,
   options: CrawlOptions = {}
 ): Promise<SiteAudit> => {
+  checkOptions(options);
   const fetchOpts: FetchOptions = { ...options.fetch };
   fetchOpts.userAgent ??= DEFAULT_USER_AGENT;
 
@@ -559,7 +742,10 @@ export const auditSite = async (
     recomputeSite(site);
   }
 
-  return applyPageDetail(site, options);
+  return applyPageDetail(
+    finishSite(site, options, recordUrls(result.records)),
+    options
+  );
 };
 
 /** Audit a directory of built HTML files (dist/, out/, build/). */
@@ -567,6 +753,8 @@ export const auditDirectory = async (
   dir: string,
   options: CrawlOptions = {}
 ): Promise<SiteAudit> => {
+  checkOptions(options);
+
   const result = await scanDirectory(dir, {
     baseUrl: options.baseUrl ?? "http://localhost/",
     includeSubdomains: options.includeSubdomains ?? false,
@@ -576,7 +764,10 @@ export const auditDirectory = async (
 
   const site = buildSiteAudit(result, "directory", dir, options);
 
-  return applyPageDetail(site, options);
+  return applyPageDetail(
+    finishSite(site, options, recordUrls(result.records)),
+    options
+  );
 };
 
 export type ResolvedTarget =

@@ -108,9 +108,49 @@ export const wordsBeforeImages = (root: AnyNode): Map<Element, number> => {
   return out;
 };
 
-/** Parse a full HTML document with the WHATWG algorithm (parse5), scripting enabled like a browser. */
+/**
+ * Parse a full HTML document with the WHATWG algorithm (parse5), scripting enabled like a browser.
+ * Elements keep where they sit in `html`, so a fix can quote them (`sourceOf`).
+ */
 export const parseDocument = (html: string): Document =>
-  parse(html, { scriptingEnabled: true, treeAdapter: adapter });
+  parse(html, {
+    scriptingEnabled: true,
+    sourceCodeLocationInfo: true,
+    treeAdapter: adapter,
+  });
+
+/** Longest quote of the source a fix carries; a page with a 50 KB data: URI in a tag gets a prefix. */
+export const MAX_QUOTE_CHARS = 500;
+
+/** `text` cut to `MAX_QUOTE_CHARS`, ending in "…" when cut. */
+export const quote = (text: string): string =>
+  text.length > MAX_QUOTE_CHARS
+    ? `${text.slice(0, MAX_QUOTE_CHARS - 1)}…`
+    : text;
+
+/**
+ * The element as `html` writes it: its start tag (`start`) or the whole element (`outer`), cut to
+ * `MAX_QUOTE_CHARS`. Null for an element the parser added itself, such as a missing <head>.
+ */
+export const sourceOf = (
+  el: Element,
+  html: string,
+  part: "start" | "outer" = "start"
+): string | null => {
+  const location = el.sourceCodeLocation;
+
+  if (!location) {
+    return null;
+  }
+
+  if (part === "start") {
+    const start = location.startTag;
+
+    return start ? quote(html.slice(start.startOffset, start.endOffset)) : null;
+  }
+
+  return quote(html.slice(location.startOffset, location.endOffset));
+};
 
 /** Descendants of `root` matching a CSS selector, in document order. */
 export const queryAll = (root: AnyNode, selector: string): Element[] =>

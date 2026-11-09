@@ -1,7 +1,35 @@
 import { normalizeForComparison } from "../html/text.js";
+import type { ExtractedPage, FixEdit } from "../types.js";
+import { addHtml, removeHtml, setAttributeEdit, slot } from "./fix.js";
 import { defineRule, GOOGLE_DOCS } from "./rule.js";
 
 const SELECTOR = 'head > meta[name="description"]';
+
+/** The meta description search engines read: the first one with text. */
+const descriptionIndex = (page: ExtractedPage): number =>
+  page.metaDescription === null
+    ? -1
+    : page.metaDescriptions.indexOf(page.metaDescription);
+
+/** The edit that sets the page's meta description: rewrites the tag it has, or adds one. */
+const writeDescription = (
+  page: ExtractedPage,
+  hint: string,
+  write: string
+): FixEdit => {
+  const tag = page.markup.metaDescriptions[Math.max(descriptionIndex(page), 0)];
+
+  return tag === undefined
+    ? addHtml(
+        "head",
+        `<meta name="description" content="${slot(hint)}">`,
+        write
+      )
+    : setAttributeEdit(tag, SELECTOR, "content", slot(hint), write);
+};
+
+const DESCRIBE =
+  "A summary of this page in 70-160 characters that tells a searcher what they get by clicking.";
 
 export const metaRules = [
   defineRule(
@@ -17,7 +45,10 @@ export const metaRules = [
     ({ page }, make) =>
       page.metaDescription
         ? null
-        : make("Page has no meta description.", { selector: SELECTOR })
+        : make("Page has no meta description.", {
+            fix: [writeDescription(page, "page description", DESCRIBE)],
+            selector: SELECTOR,
+          })
   ),
   defineRule(
     {
@@ -29,16 +60,25 @@ export const metaRules = [
         "Keep a single meta description; remove or merge the others.",
       docs: GOOGLE_DOCS.snippets,
     },
-    ({ page }, make) =>
-      page.metaDescriptions.length > 1
-        ? make(
-            `Page has ${page.metaDescriptions.length} meta description tags.`,
-            {
-              selector: SELECTOR,
-              evidence: { descriptions: page.metaDescriptions },
-            }
-          )
-        : null
+    ({ page }, make) => {
+      if (page.metaDescriptions.length <= 1) {
+        return null;
+      }
+
+      // Keep the description search engines read now; remove the others.
+      const keep = Math.max(descriptionIndex(page), 0);
+
+      return make(
+        `Page has ${page.metaDescriptions.length} meta description tags.`,
+        {
+          fix: page.markup.metaDescriptions.flatMap((tag, i) =>
+            i === keep ? [] : [removeHtml(tag, SELECTOR)]
+          ),
+          selector: SELECTOR,
+          evidence: { descriptions: page.metaDescriptions },
+        }
+      );
+    }
   ),
   defineRule(
     {
@@ -57,6 +97,13 @@ export const metaRules = [
         ? make(
             `Meta description is ${page.metaDescription.length} characters (max ${thresholds.descriptionMaxChars}).`,
             {
+              fix: [
+                writeDescription(
+                  page,
+                  "shorter description",
+                  `The current description in at most ${thresholds.descriptionMaxChars} characters, the key message first.`
+                ),
+              ],
               selector: SELECTOR,
               evidence: {
                 description: page.metaDescription,
@@ -84,6 +131,13 @@ export const metaRules = [
         ? make(
             `Meta description is only ${page.metaDescription.length} characters (recommended at least ${thresholds.descriptionMinChars}).`,
             {
+              fix: [
+                writeDescription(
+                  page,
+                  "longer description",
+                  `The current description grown to ${thresholds.descriptionMinChars}-${thresholds.descriptionMaxChars} characters with what the page offers and why it is worth the click.`
+                ),
+              ],
               selector: SELECTOR,
               evidence: {
                 description: page.metaDescription,
@@ -110,6 +164,13 @@ export const metaRules = [
       normalizeForComparison(page.metaDescription) ===
         normalizeForComparison(page.title)
         ? make("Meta description repeats the title verbatim.", {
+            fix: [
+              writeDescription(
+                page,
+                "page description",
+                "A description that adds to the title: what the page covers or offers, in 70-160 characters."
+              ),
+            ],
             selector: SELECTOR,
             evidence: {
               title: page.title,

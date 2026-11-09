@@ -1,0 +1,455 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { auditAeoDirectory, auditAeoHtml } from "../src/core/aeo/audit.js";
+import { auditDirectory, auditHtml } from "../src/core/audit.js";
+import {
+  assignIds,
+  baselineFromAudit,
+  baselineFromIds,
+  compareWithBaseline,
+} from "../src/core/recheck.js";
+import { renderMarkdown } from "../src/core/report/markdown.js";
+import type { Finding } from "../src/core/types.js";
+
+const page = (title: string, body = "<p>Text</p>") =>
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title></head><body><h1>Heading</h1>${body}</body></html>`;
+
+const URL_A = "https://www.example.com/a";
+
+/** An Offer whose price has a currency symbol, which structured-data.invalid-value reports. */
+const ld = (price: string) =>
+  `<script type="application/ld+json">{"@context":"https://schema.org","@type":"Offer","price":"${price}","priceCurrency":"EUR"}</script>`;
+
+const idsOf = (findings: Finding[]): string[] =>
+  findings.flatMap((f) => (f.id ? [f.id] : []));
+
+/** A finding as a rule without a `key` would make it, for the id tests. */
+const bare = (message: string): Finding => ({
+  rule: "title.generic",
+  severity: "warning",
+  category: "title",
+  message,
+  recommendation: "",
+  url: URL_A,
+});
+
+describe("finding ids", () => {
+  it("stay the same across audits of the same page", async () => {
+    const first = await auditHtml(page("React App"), { url: URL_A });
+    const second = await auditHtml(page("React App"), { url: URL_A });
+
+    expect(first.findings.map((f) => f.id)).toStrictEqual(
+      second.findings.map((f) => f.id)
+    );
+    expect(first.findings.find((f) => f.rule === "title.generic")?.id).toMatch(
+      /^title\.generic@[\da-f]{8}$/u
+    );
+  });
+
+  it("differ between pages", async () => {
+    const a = await auditHtml(page("React App"), { url: URL_A });
+
+    const b = await auditHtml(page("React App"), {
+      url: "https://www.example.com/b",
+    });
+
+    const idOf = (findings: typeof a.findings) =>
+      findings.find((f) => f.rule === "title.generic")?.id;
+
+    expect(idOf(a.findings)).not.toBe(idOf(b.findings));
+  });
+
+  it("are unique when a rule reports more than one finding on a page", async () => {
+    const audit = await auditHtml(
+      page("A title long enough to pass", ld("€5") + ld("€6")),
+      {
+        url: URL_A,
+      }
+    );
+
+    const ids = audit.findings
+      .filter((f) => f.rule === "structured-data.invalid-value")
+      .map((f) => f.id);
+
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+});
+
+describe("a re-check against a baseline", () => {
+  it("reports what a fix resolved, what is still open and what it broke", async () => {
+    const before = await auditHtml(page("React App"), { url: URL_A });
+
+    const baseline = baselineFromIds(
+      before.findings.flatMap((f) => (f.id ? [f.id] : []))
+    );
+
+    // The title is fixed, but the fix left the page without its <h1>.
+    const after = await auditHtml(
+      page("Blue widgets for every workshop | Acme").replace(
+        "<h1>Heading</h1>",
+        ""
+      ),
+      { url: URL_A },
+      { baseline }
+    );
+
+    expect(after.baseline?.fixed.map((f) => f.rule)).toStrictEqual(
+      expect.arrayContaining(["title.generic", "title.too-short"])
+    );
+    expect(after.baseline?.new).toContain(
+      after.findings.find((f) => f.rule === "h1.missing")?.id
+    );
+    expect(after.baseline?.open).toStrictEqual(
+      after.findings.flatMap((f) =>
+        f.id && baseline.some((b) => b.id === f.id) ? [f.id] : []
+      )
+    );
+    // The comparison reads before the findings it is about.
+    expect(Object.keys(after).indexOf("baseline")).toBe(
+      Object.keys(after).indexOf("findings") - 1
+    );
+  });
+
+  it("calls nothing fixed that it did not check again", async () => {
+    const before = await auditHtml(page("React App"), { url: URL_A });
+
+    const baseline = baselineFromIds(
+      before.findings.flatMap((f) => (f.id ? [f.id] : []))
+    );
+
+    // Only title.generic ran, and on another page: no other finding can count as fixed.
+    const onlyTitle = await auditHtml(
+      page("React App"),
+      { url: URL_A },
+      {
+        baseline,
+        onlyRules: ["title.generic"],
+      }
+    );
+
+    expect(onlyTitle.findings.map((f) => f.rule)).toStrictEqual([
+      "title.generic",
+    ]);
+    expect(onlyTitle.baseline).toMatchObject({
+      fixed: [],
+      new: [],
+      notChecked: baseline.length - 1,
+    });
+
+    const otherPage = await auditHtml(
+      page("Blue widgets for every workshop | Acme"),
+      { url: "https://www.example.com/b" },
+      { baseline }
+    );
+
+    expect(otherPage.baseline?.fixed).toStrictEqual([]);
+    expect(otherPage.baseline?.notChecked).toBe(baseline.length);
+  });
+
+  it("leaves info rules unchecked when info findings are left out", async () => {
+    const before = await auditHtml(page("React App"), { url: URL_A });
+
+    const baseline = baselineFromIds(
+      before.findings.flatMap((f) => (f.id ? [f.id] : []))
+    );
+
+    const after = await auditHtml(
+      page("React App"),
+      { url: URL_A },
+      { baseline, includeInfo: false }
+    );
+
+    expect(after.baseline?.fixed).toStrictEqual([]);
+  });
+
+  it("gives the page and message of a fixed finding when the baseline is an audit", async () => {
+    const before = await auditHtml(page("React App"), { url: URL_A });
+
+    const after = await auditHtml(
+      page("Blue widgets for every workshop | Acme"),
+      { url: URL_A },
+      { baseline: baselineFromAudit(JSON.stringify(before)) }
+    );
+
+    expect(after.baseline?.fixed).toContainEqual({
+      id: before.findings.find((f) => f.rule === "title.generic")?.id,
+      rule: "title.generic",
+      url: URL_A,
+      message:
+        'Title "React App" looks like a placeholder or framework default.',
+    });
+    expect(renderMarkdown(after)).toContain("## Re-check");
+  });
+
+  it("refuses rule ids it does not know, and AEO rules in the SEO audit", async () => {
+    await expect(
+      auditHtml(page("x"), {}, { onlyRules: ["title.too-lng"] })
+    ).rejects.toThrow(/Unknown rule id\(s\): title\.too-lng/u);
+    await expect(
+      auditHtml(page("x"), {}, { onlyRules: ["aeo.nosnippet"] })
+    ).rejects.toThrow(/not SEO rules; run the AEO audit/u);
+    await expect(
+      auditAeoHtml(page("x"), {}, { onlyRules: ["title.missing"] })
+    ).rejects.toThrow(/not AEO rules/u);
+  });
+});
+
+describe("a re-check of a build directory", () => {
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "recheck-"));
+    await writeFile(
+      path.join(dir, "index.html"),
+      page("React App", '<a href="/about.html">About</a>')
+    );
+    await writeFile(
+      path.join(dir, "about.html"),
+      page("React App", '<a href="/">Home</a>')
+    );
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("compares site and page findings, and refuses a baseline without page findings", async () => {
+    const before = await auditDirectory(dir);
+
+    await writeFile(
+      path.join(dir, "about.html"),
+      page("About Acme: who builds the blue widgets", '<a href="/">Home</a>')
+    );
+
+    const after = await auditDirectory(dir, {
+      baseline: baselineFromAudit(JSON.stringify(before)),
+    });
+
+    const fixedRules = after.baseline?.fixed.map((f) => f.rule) ?? [];
+    expect(fixedRules).toContain("title.generic");
+    expect(fixedRules).toContain("site.duplicate-titles");
+    expect(after.baseline?.notChecked).toBe(0);
+
+    const summary = await auditDirectory(dir, { pageDetail: "summary" });
+
+    expect(() => baselineFromAudit(JSON.stringify(summary))).toThrow(
+      /--page-detail full/u
+    );
+  });
+
+  it("refuses an AEO baseline without page findings too", async () => {
+    const summary = await auditAeoDirectory(dir, { pageDetail: "summary" });
+    const full = await auditAeoDirectory(dir, { pageDetail: "full" });
+
+    expect(full.findings.some((f) => f.url !== undefined)).toBeTruthy();
+    expect(() => baselineFromAudit(JSON.stringify(summary))).toThrow(
+      /--page-detail full/u
+    );
+    expect(baselineFromAudit(JSON.stringify(full))).toHaveLength(
+      full.findings.length
+    );
+  });
+
+  it("calls a site finding about llms.txt fixed once the file is there", async () => {
+    const before = await auditAeoDirectory(dir, { pageDetail: "full" });
+
+    expect(before.findings.map((f) => f.rule)).toContain(
+      "aeo.llms-txt-missing"
+    );
+
+    await writeFile(
+      path.join(dir, "llms.txt"),
+      "# Acme\n\n> Blue widgets.\n\n## Pages\n\n- [Home](http://localhost/): the home page\n"
+    );
+
+    const after = await auditAeoDirectory(dir, {
+      pageDetail: "full",
+      baseline: baselineFromAudit(JSON.stringify(before)),
+    });
+
+    expect(after.baseline?.fixed.map((f) => f.rule)).toContain(
+      "aeo.llms-txt-missing"
+    );
+  });
+});
+
+describe("a re-check of a rule that reports several findings on a page", () => {
+  it("calls the fixed one fixed and keeps the other's id", async () => {
+    const before = await auditHtml(
+      page("A title long enough to pass", ld("€5") + ld("€6")),
+      { url: URL_A }
+    );
+
+    const offers = before.findings.filter(
+      (f) => f.rule === "structured-data.invalid-value"
+    );
+
+    expect(offers.map((f) => f.message)).toStrictEqual([
+      expect.stringContaining("€5"),
+      expect.stringContaining("€6"),
+    ]);
+
+    // The first Offer is fixed; the second, still wrong, must keep its id.
+    const after = await auditHtml(
+      page("A title long enough to pass", ld("5") + ld("€6")),
+      { url: URL_A },
+      {
+        baseline: baselineFromAudit(JSON.stringify(before)),
+        onlyRules: ["structured-data.invalid-value"],
+      }
+    );
+
+    expect(after.baseline?.fixed).toStrictEqual([
+      {
+        id: offers[0]?.id,
+        rule: "structured-data.invalid-value",
+        url: URL_A,
+        message: offers[0]?.message,
+      },
+    ]);
+    expect(after.baseline?.open).toStrictEqual([offers[1]?.id]);
+    expect(after.baseline?.new).toStrictEqual([]);
+  });
+
+  it("keeps the other's id when the fix deletes the first one's markup", async () => {
+    const before = await auditHtml(
+      page("A title long enough to pass", ld("€5") + ld("€6")),
+      { url: URL_A }
+    );
+
+    const offers = before.findings.filter(
+      (f) => f.rule === "structured-data.invalid-value"
+    );
+
+    // The "€5" Offer is gone, so the "€6" one is now the page's first structured data item.
+    const after = await auditHtml(
+      page("A title long enough to pass", ld("€6")),
+      { url: URL_A },
+      {
+        baseline: baselineFromAudit(JSON.stringify(before)),
+        onlyRules: ["structured-data.invalid-value"],
+      }
+    );
+
+    expect(after.baseline).toStrictEqual({
+      fixed: [
+        {
+          id: offers[0]?.id,
+          rule: "structured-data.invalid-value",
+          url: URL_A,
+          message: offers[0]?.message,
+        },
+      ],
+      open: [offers[1]?.id],
+      new: [],
+      // The other rules' findings: --rule left them out.
+      notChecked: expect.any(Number),
+    });
+  });
+
+  it("never calls a numbered finding fixed, since which is which can change", () => {
+    const scope = { urls: [URL_A], site: false, ruleRan: () => true };
+    const two = [bare("first"), bare("second")];
+    assignIds(two);
+
+    expect(idsOf(two)).toStrictEqual([
+      expect.stringMatching(/~1$/u),
+      expect.stringMatching(/~2$/u),
+    ]);
+
+    const one = [bare("second")];
+    assignIds(one);
+
+    // The one left was there before under a number: still open, not something a fix caused.
+    expect(
+      compareWithBaseline(one, baselineFromIds(idsOf(two)), scope)
+    ).toStrictEqual({
+      fixed: [],
+      open: idsOf(one),
+      new: [],
+      notChecked: 2,
+    });
+
+    // The other way round: one finding before, two numbered ones now.
+    expect(
+      compareWithBaseline(two, baselineFromIds(idsOf(one)), scope)
+    ).toStrictEqual({
+      fixed: [],
+      open: idsOf(two),
+      new: [],
+      notChecked: 1,
+    });
+  });
+
+  it("numbers only the findings that share a key, and keeps the rest's re-check exact", async () => {
+    const offers = (html: string) =>
+      auditHtml(page("A title long enough to pass", html), { url: URL_A });
+
+    const before = await offers(ld("€5") + ld("€5") + ld("€7"));
+
+    const ids = before.findings
+      .filter((f) => f.rule === "structured-data.invalid-value")
+      .map((f) => f.id);
+
+    expect(ids).toStrictEqual([
+      expect.stringMatching(/~1$/u),
+      expect.stringMatching(/~2$/u),
+      expect.not.stringMatching(/~/u),
+    ]);
+
+    // The "€7" Offer is fixed and a new "€8" one is added; the two "€5" ones stay numbered.
+    const after = await auditHtml(
+      page("A title long enough to pass", ld("€5") + ld("€5") + ld("€8")),
+      { url: URL_A },
+      {
+        baseline: baselineFromAudit(JSON.stringify(before)),
+        onlyRules: ["structured-data.invalid-value"],
+      }
+    );
+
+    const newOffer = after.findings.find((f) => f.message.includes("€8"));
+
+    expect(after.baseline).toMatchObject({
+      fixed: [{ id: ids[2] }],
+      open: [ids[0], ids[1]],
+      new: [newOffer?.id],
+    });
+  });
+});
+
+describe("a re-check with info findings left out", () => {
+  // head.metadata-in-body is a warning rule that reports streamed metadata as info.
+  const streamed = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Loading</title></head><body><h1>Blue widgets</h1><div hidden id="S:0"><title>Blue widgets for home workshops</title><meta name="description" content="Blue widgets."></div></body></html>`;
+
+  it("does not call an info finding fixed that it only hid", async () => {
+    const before = await auditHtml(streamed, { url: URL_A });
+
+    const info = before.findings.find(
+      (f) => f.rule === "head.metadata-in-body"
+    );
+
+    expect(info?.severity).toBe("info");
+
+    for (const baseline of [
+      baselineFromAudit(JSON.stringify(before)),
+      baselineFromIds(idsOf(before.findings)),
+    ]) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- two baselines, one after the other
+      const after = await auditHtml(
+        streamed,
+        { url: URL_A },
+        { baseline, includeInfo: false }
+      );
+
+      expect(after.findings.map((f) => f.rule)).not.toContain(
+        "head.metadata-in-body"
+      );
+      expect(after.baseline?.fixed).toStrictEqual([]);
+    }
+  });
+});

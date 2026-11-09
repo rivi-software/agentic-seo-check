@@ -64,6 +64,8 @@ export const ALL_RULES: RuleMeta[] = [
 export interface RunRulesOptions {
   /** Rule ids to skip. */
   disable?: Set<string>;
+  /** Run only these rule ids. */
+  only?: Set<string>;
   /** The rules to run (default: the SEO page rules). */
   rules?: Rule[];
 }
@@ -84,7 +86,10 @@ export const runPageRules = (
   const findings: Finding[] = [];
 
   for (const rule of options.rules ?? PAGE_RULES) {
-    if (options.disable?.has(rule.meta.id)) {
+    if (
+      options.disable?.has(rule.meta.id) ||
+      (options.only && !options.only.has(rule.meta.id))
+    ) {
       continue;
     }
 
@@ -118,3 +123,37 @@ export const runPageRules = (
 
 export const findRule = (id: string): RuleMeta | undefined =>
   ALL_RULES.find((r) => r.id === id);
+
+/** The rules the SEO audit evaluates (`audit`, `crawl`), the AEO rules left out. */
+export const SEO_RULES: RuleMeta[] = ALL_RULES.filter(
+  (r) => r.category !== "aeo"
+);
+
+/** The rules the AEO audit evaluates. */
+export const AEO_RULES: RuleMeta[] = ALL_RULES.filter(
+  (r) => r.category === "aeo"
+);
+
+/**
+ * Checks `--rule` ids against the rules an audit runs, so a typo fails loudly instead of running
+ * nothing. `kind` names the audit for the message.
+ */
+export const checkRuleIds = (
+  ids: readonly string[],
+  rules: readonly RuleMeta[],
+  kind: "SEO" | "AEO"
+): void => {
+  const known = new Set(rules.map((r) => r.id));
+  const unknown = ids.filter((id) => !known.has(id));
+
+  if (unknown.length) {
+    const other = kind === "SEO" ? AEO_RULES : SEO_RULES;
+    const elsewhere = unknown.filter((id) => other.some((r) => r.id === id));
+
+    throw new Error(
+      elsewhere.length === unknown.length
+        ? `${unknown.join(", ")} ${unknown.length === 1 ? "is" : "are"} not ${kind} rules; run ${kind === "SEO" ? "the AEO audit (aeo, seo_aeo_audit)" : "the SEO audit (audit, crawl)"} for ${unknown.length === 1 ? "it" : "them"}.`
+        : `Unknown rule id(s): ${unknown.join(", ")}. List the rules with \`agentic-seo-check rules\` or seo_list_rules.`
+    );
+  }
+};

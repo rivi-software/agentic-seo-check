@@ -41,7 +41,7 @@ agentic-seo-check is one core with two interfaces:
 - **CLI** `agentic-seo-check` with JSON (default when piped) or Markdown output and CI-friendly exit codes.
 - **MCP server** exposing six tools for Claude Code, Cursor, Codex and any other MCP client.
 
-It audits **URLs** (production, staging, `localhost` dev servers), **static build output** (`dist/`, `out/`, `build/`) and **raw HTML**, and returns findings an agent can act on: a stable rule id, severity, what is wrong, the fix, a CSS selector for where it lives, and evidence with the current values.
+It audits **URLs** (production, staging, `localhost` dev servers), **static build output** (`dist/`, `out/`, `build/`) and **raw HTML**, and returns findings an agent can act on: a stable rule id, severity, what is wrong, the fix, a CSS selector for where it lives, and evidence with the current values. Each finding carries the exact edits that fix it, quoting the code to replace, and an id, so an agent can re-check only the rules it fixed and see which findings are gone, still open or new.
 
 Two audits share that core: the **SEO audit** (`audit`, `crawl`) for search engines, and the **AEO audit** (`aeo`, answer engine optimization) for AI answer engines such as ChatGPT search, Claude, Perplexity, Google AI Overviews and AI Mode, Copilot and Gemini. Each has its own rules and its own score, so adding one never changes the other.
 
@@ -110,6 +110,10 @@ cat page.html | agentic-seo-check audit - --base-url https://www.example.com/pag
 # keyword focus, Lighthouse, Markdown report to a file
 agentic-seo-check audit https://www.example.com/widgets --keyword "blue widgets" --lighthouse -o report.md
 
+# fix, then re-check only the rules you fixed, compared with the first run
+agentic-seo-check audit ./out --base-url https://www.example.com --format json -o before.json
+agentic-seo-check audit ./out --base-url https://www.example.com --rule title.generic,img.alt-missing --baseline before.json
+
 # CI: exit 1 when errors exist, smaller output
 agentic-seo-check audit https://staging.example.com --crawl --fail-on error --compact --no-info
 
@@ -126,6 +130,8 @@ agentic-seo-check rules --rule canonical.multiple
 ```
 
 `aeo` takes the same targets and output, crawl and request options as `audit`, plus `--ai-bots`; it has no `--keyword`, `--render`, `--lighthouse` or `--check-external`. With `--ai-bots`, the requests come from your machine with each bot's User-Agent, not from the bots' own IP ranges: a CDN that verifies bots may treat the real crawler differently, and the findings say so. Search crawlers and robots.txt-only tokens (Google-Extended, Applebot-Extended) are never impersonated.
+
+`--rule` runs only the rules named (space- or comma-separated). `--baseline` reads an earlier audit's JSON and adds `baseline` to the result: the findings since fixed, still open and new. Re-check with the same target and options as the first run; a finding counts as fixed only when its rule ran again on its page, and the rest are counted as `notChecked`. A crawl or directory baseline needs `--page-detail full` (the CLI default), so its page findings have ids.
 
 Exit codes: `0` success, `1` findings at or above `--fail-on`, `2` usage or runtime error. Progress goes to stderr, the report to stdout.
 
@@ -148,18 +154,20 @@ Or `claude mcp add agentic-seo-check -- npx -y @rivi-software/agentic-seo-check 
 
 | Tool | Purpose |
 | --- | --- |
-| `seo_audit_page` | Audit one URL or an HTML string. Options: `keyword`, `render`, `lighthouse`, `formFactor`, `includeInfo`, `disableRules`, `headers`, `format` (json/markdown), `detail` (compact/full). |
+| `seo_audit_page` | Audit one URL or an HTML string. Options: `keyword`, `render`, `lighthouse`, `formFactor`, `includeInfo`, `disableRules`, `rules`, `baseline`, `headers`, `format` (json/markdown), `detail` (compact/full). |
 | `seo_crawl_site` | Crawl and audit a site. Options: `maxPages`, `maxDepth`, `concurrency`, `delayMs`, `respectRobots`, `includeSubdomains`, `checkExternalLinks`, `includePatterns`, `excludePatterns`, `pageDetail`. |
 | `seo_audit_directory` | Audit built HTML files in a directory. Options: `dir`, `baseUrl`, `maxPages`, `pageDetail`. |
 | `seo_lighthouse` | Lighthouse performance + SEO + agentic-browsing for one URL. |
-| `seo_aeo_audit` | AEO audit of one of `url` (with `crawl` for a site), `html` or `dir`. Options: `aiBots`, `baseUrl`, `maxPages`, `maxDepth`, `concurrency`, `respectRobots`, `includeSubdomains`, `pageDetail`, `includeInfo`, `disableRules`, `headers`, `format`, `detail`. |
+| `seo_aeo_audit` | AEO audit of one of `url` (with `crawl` for a site), `html` or `dir`. Options: `aiBots`, `baseUrl`, `maxPages`, `maxDepth`, `concurrency`, `respectRobots`, `includeSubdomains`, `pageDetail`, `includeInfo`, `disableRules`, `rules`, `baseline`, `headers`, `format`, `detail`. |
 | `seo_list_rules` | Rule reference, filter by `category` or `rule`. |
+
+Every audit tool also takes `rules` (run only these rule ids) and `baseline` (the `id` of each finding of the earlier audit) for a re-check, like `--rule` and `--baseline`. For a crawl or directory, run both audits with `pageDetail: "full"` so page findings have ids.
 
 All tools are read-only. Results are returned both as text (JSON or Markdown) and as `structuredContent`.
 
 ## Agent skill
 
-`skills/seo-audit/SKILL.md` teaches an agent the audit → fix → re-audit loop, how to map rule ids to framework code (Next.js, Astro, Nuxt, SvelteKit, Remix, TanStack Start), and the caveats (preview-host noindex, localhost limits). It also has the agent put the title, description or canonical the audit found next to the fixed one in its pull request, so a reviewer sees each mistake without opening the site. Copy it to `.claude/skills/seo-audit/` in a project or `~/.claude/skills/` to make it available; this repo links it under `.claude/skills/`.
+`skills/seo-audit/SKILL.md` teaches an agent the loop of audit, apply each finding's `fix`, then re-check the rules it fixed against the first run, how to map rule ids to framework code (Next.js, Astro, Nuxt, SvelteKit, Remix, TanStack Start), and the caveats (preview-host noindex, localhost limits). It also has the agent put the title, description or canonical the audit found next to the fixed one in its pull request, so a reviewer sees each mistake without opening the site. Copy it to `.claude/skills/seo-audit/` in a project or `~/.claude/skills/` to make it available; this repo links it under `.claude/skills/`.
 
 ## Output shape
 
@@ -178,9 +186,19 @@ All tools are read-only. Results are returned both as text (JSON or Markdown) an
       "category": "meta",
       "message": "Page has no meta description.",
       "recommendation": "Add a unique meta description (about 70-160 characters) …",
+      "fix": [                       // the exact edits that resolve this finding here; apply all of them
+        {
+          "in": "html",              // html, http (status, headers, redirects), robots.txt, sitemap, llms.txt or asset
+          "action": "add",           // add `code` at `at`; replace swaps `current` for `code`; remove deletes `current`
+          "at": "head",
+          "code": "<meta name=\"description\" content=\"{{page description}}\">",
+          "write": "A summary of this page in 70-160 characters …"   // what goes in the {{…}} slot
+        }
+      ],
       "selector": "head > meta[name=\"description\"]",
+      "docs": "https://developers.google.com/search/docs/appearance/snippet",
       "url": "https://www.example.com/",
-      "docs": "https://developers.google.com/search/docs/appearance/snippet"
+      "id": "meta-description.missing@1f2e3d4c"   // stable across audits of this page
     }
   ],
   "response": { "status": 200, "finalUrl": "…", "redirectChain": [], "timeMs": 142, "headers": { "content-type": "text/html" } },
@@ -188,6 +206,12 @@ All tools are read-only. Results are returned both as text (JSON or Markdown) an
   "rendering": { "raw": { "wordCount": 25 }, "rendered": { "wordCount": 137 }, "...": "…" }                         // with --render
 }
 ```
+
+A fix's `current` is quoted from the HTML the server sent, so an agent can find it in the template that renders it; a quote cut short at 500 characters ends in `…`. Text in `{{` `}}` is a slot for words only the author can write, such as a title or alt text; everything else in `code` is exact. The code is built from the page's own markup, so review an edit like any other change before you commit it.
+
+A fix holds at most 10 edits; a finding about more elements (23 skipped heading levels, 40 images without alt text) lists the first 10, and a re-check shows what is left. A few findings have no fix because there is nothing on the site to change: `site.crawl-limit-reached` and `aeo.bot-probe-inconclusive` describe the audit, `structured-data.retired-type` says Google stopped showing a rich result whose markup answer engines still read, and `tool.*` findings are about this machine.
+
+With `baseline`, the result has `"baseline": { "fixed": [{ "id", "rule", "url", "message" }], "open": [ids], "new": [ids], "notChecked": 3 }` just before the findings. A new id is a problem the earlier audit did not have in that form: one a fix caused, or what is left of a finding fixed in part (a JSON-LD object's other wrong value). An earlier finding counts as fixed only when this audit ran its rule on its page and does not report it, also not as an info finding that `--no-info` hides; a finding whose id is numbered (`~1`, for findings a rule cannot tell apart) is never called fixed, and one the earlier audit had under another number is open, not new.
 
 Site audits add `crawl` stats, `robotsTxt`, `sitemaps`, `siteFindings`, `issues` (page findings rolled up per rule with example URLs) and `pages`.
 
