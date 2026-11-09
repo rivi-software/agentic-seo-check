@@ -5,6 +5,7 @@ export const DEFAULT_USER_AGENT = `Mozilla/5.0 (compatible; agentic-seo-check/${
 
 const KEPT_HEADERS = [
   "content-type",
+  "content-encoding",
   "x-robots-tag",
   "link",
   "content-language",

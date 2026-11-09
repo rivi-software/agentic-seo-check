@@ -88,6 +88,12 @@ export interface ImageInfo {
   width: string | null;
   height: string | null;
   loading: string | null;
+  srcset: string | null;
+  /** The image sits in a <picture>, whose <source> elements offer other sizes or formats. */
+  inPicture: boolean;
+  fetchpriority: string | null;
+  /** Words of visible text before the image, a rough measure of how far down the page it is. */
+  wordsBefore: number;
 }
 
 export interface LinkInfo {
@@ -206,6 +212,10 @@ export interface HeadSignals {
   refresh: MetaRefresh[];
   /** Byte offset where the element declaring the character encoding ends, or null when none does. */
   charsetEndByte: number | null;
+  /** `src` of scripts in <head> without async, defer or type="module", which stop the parser. */
+  blockingScripts: string[];
+  /** `href` of icon links: rel icon, shortcut icon, apple-touch-icon(-precomposed). */
+  icons: string[];
 }
 
 /** Everything the extractor pulls out of one HTML document. Rules read only this. */

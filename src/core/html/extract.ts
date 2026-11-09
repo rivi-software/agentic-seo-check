@@ -1,3 +1,5 @@
+import { isTag } from "domhandler";
+
 import type {
   ExtractedPage,
   HeadingInfo,
@@ -14,8 +16,9 @@ import {
   queryOne,
   text,
   visibleText,
+  wordsBeforeImages,
 } from "./dom.js";
-import type { Document } from "./dom.js";
+import type { Document, Element } from "./dom.js";
 import { extractHeadSignals, isHtmlElement } from "./head.js";
 import {
   extractMissingFragments,
@@ -131,12 +134,20 @@ export const extractPage = (
     }
   }
 
+  const body = queryOne(doc, "body");
+  const position = body ? wordsBeforeImages(body) : new Map<Element, number>();
+
   const images: ImageInfo[] = queryAll(doc, "img").map((el) => ({
     src: attr(el, "src") ?? attr(el, "data-src") ?? null,
     alt: attr(el, "alt") ?? null,
     width: attr(el, "width") ?? null,
     height: attr(el, "height") ?? null,
     loading: attr(el, "loading") ?? null,
+    srcset: attr(el, "srcset") ?? null,
+    inPicture:
+      el.parent !== null && isTag(el.parent) && el.parent.name === "picture",
+    fetchpriority: attr(el, "fetchpriority")?.trim().toLowerCase() ?? null,
+    wordsBefore: position.get(el) ?? 0,
   }));
 
   const links: LinkInfo[] = queryAll(doc, "a[href]").map((el) => {
@@ -186,7 +197,6 @@ export const extractPage = (
 
   const structured = extractStructuredData(doc);
 
-  const body = queryOne(doc, "body");
   const bodyText = body ? visibleText(body) : "";
 
   const htmlEl = queryOne(doc, "html");

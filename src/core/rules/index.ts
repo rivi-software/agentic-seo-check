@@ -14,6 +14,7 @@ import { imageRules } from "./images.js";
 import { indexingRules } from "./indexing.js";
 import { keywordRules } from "./keyword.js";
 import { linkRules } from "./links.js";
+import { loadingRules } from "./loading.js";
 import { metaRules } from "./meta.js";
 import { responseRules } from "./response.js";
 import type { PageContext, Rule } from "./rule.js";
@@ -37,6 +38,7 @@ export const PAGE_RULES: Rule[] = [
   ...imageRules,
   ...linkRules,
   ...urlRules,
+  ...loadingRules,
   ...hreflangRules,
   ...structuredDataRules,
   ...contentRules,

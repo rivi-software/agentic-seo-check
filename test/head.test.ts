@@ -384,6 +384,8 @@ describe("head and indexing signals", () => {
       streamedInBody: [],
       refresh: [],
       charsetEndByte: 59,
+      blockingScripts: [],
+      icons: [],
     });
   });
 });
