@@ -304,12 +304,18 @@ const fetchSitemap = async (
 
   if (res.truncated) {
     const declared = Number(res.headers["content-length"]);
-    const bytes = Number.isFinite(declared) && declared > 0 ? declared : null;
+    const known = Number.isFinite(declared) && declared > 0 ? declared : null;
+
+    // Content-Length counts compressed bytes for a Content-Encoding response or a gzip file; the
+    // uncompressed size is then unknown, though it can only be larger.
+    const compressed =
+      Boolean(res.headers["content-encoding"]) ||
+      (res.bytes[0] === 0x1f && res.bytes[1] === 0x8b);
 
     return {
       kind: "oversized",
-      bytes,
-      overLimit: bytes !== null && bytes > SITEMAP_MAX_BYTES,
+      bytes: compressed ? null : known,
+      overLimit: known !== null && known > SITEMAP_MAX_BYTES,
     };
   }
 

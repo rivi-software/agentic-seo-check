@@ -142,6 +142,151 @@ describe("robots.txt and sitemaps of a crawled site", () => {
   });
 });
 
+const SITE_RULES_HERE = new Set([
+  "site.robots-txt-too-large",
+  "site.robots-txt-unsupported-rule",
+  "site.robots-blocks-resources",
+  "site.sitemap-too-large",
+  "site.sitemap-index-nested",
+  "site.sitemap-lastmod-invalid",
+  "site.sitemap-lastmod-future",
+  "site.sitemap-other-host",
+  "site.sitemap-error",
+  "site.sitemap-missing",
+]);
+
+/** A urlset with every lastmod form that passes: a date, a time with a zone, a time without one. */
+const validUrlset = (origin: string) =>
+  urlset(
+    `<url><loc>${origin}/</loc><lastmod>2026-11-01</lastmod></url><url><loc>${origin}/about</loc><lastmod>2026-11-02T09:30:00+01:00</lastmod></url><url><loc>${origin}/team</loc><lastmod>2026-11-03T09:30:00</lastmod></url>`
+  );
+
+const QUIET_ROBOTS = "User-agent: *\nDisallow: /private/\nAllow: /\n";
+
+describe("a valid site gives none of the robots.txt and sitemap findings", () => {
+  let server: FixtureServer;
+  let dir: string;
+
+  beforeAll(async () => {
+    const routes: Routes = {
+      "/": page(
+        "Home",
+        '<script src="/assets/app.js" defer></script><link rel="stylesheet" href="/assets/site.css">',
+        '<a href="/about">About</a> <a href="/team">Team</a>'
+      ),
+      "/about": page("About", "", '<a href="/">Home</a>'),
+      "/team": page("Team", "", '<a href="/">Home</a>'),
+      "/robots.txt": {
+        headers: { "content-type": "text/plain" },
+        body: `${QUIET_ROBOTS}Sitemap: __ORIGIN__/sitemap_index.xml\n`,
+      },
+      "/sitemap_index.xml": {
+        headers: { "content-type": "application/xml" },
+        body: '<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>__ORIGIN__/pages.xml.gz</loc><lastmod>2026-11-03</lastmod></sitemap></sitemapindex>',
+      },
+    };
+
+    server = await startFixtureServer(routes);
+    routes["/pages.xml.gz"] = {
+      headers: { "content-type": "application/gzip" },
+      body: gzipSync(validUrlset(server.origin)),
+    };
+
+    // The same site as build output, with the URLs on the www. host of the production base URL.
+    dir = await mkdtemp(path.join(os.tmpdir(), "agentic-seo-quiet-"));
+    await writeFile(
+      path.join(dir, "index.html"),
+      '<!DOCTYPE html><html lang="en"><head><title>Home of the quiet build</title><script src="/assets/app.js" defer></script></head><body><h1>Home</h1></body></html>'
+    );
+    await writeFile(
+      path.join(dir, "robots.txt"),
+      `${QUIET_ROBOTS}Sitemap: https://example.com/sitemap_index.xml\n`
+    );
+    await writeFile(
+      path.join(dir, "sitemap_index.xml"),
+      '<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>https://example.com/pages.xml.gz</loc></sitemap></sitemapindex>'
+    );
+    await writeFile(
+      path.join(dir, "pages.xml.gz"),
+      gzipSync(validUrlset("https://www.example.com"))
+    );
+  });
+
+  afterAll(async () => {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("in a crawl", async () => {
+    const site = await auditSite(server.origin, { maxPages: 10 });
+
+    expect(site.sitemaps.urlCount).toBe(3);
+    expect(
+      site.siteFindings.filter((f) => SITE_RULES_HERE.has(f.rule))
+    ).toStrictEqual([]);
+  });
+
+  it("in a directory audit with the production base URL", async () => {
+    const site = await auditDirectory(dir, {
+      baseUrl: "https://example.com",
+    });
+
+    expect(site.sitemaps.urlCount).toBe(3);
+    expect(
+      site.siteFindings.filter((f) => SITE_RULES_HERE.has(f.rule))
+    ).toStrictEqual([]);
+  });
+});
+
+describe("a compressed sitemap larger than the read limit", () => {
+  let server: FixtureServer;
+
+  beforeAll(async () => {
+    const big = urlset(
+      "<url><loc>https://www.example.com/</loc></url>".repeat(350_000)
+    );
+
+    server = await startFixtureServer({
+      "/": page("Home"),
+      "/robots.txt": {
+        headers: { "content-type": "text/plain" },
+        body: "User-agent: *\nAllow: /\nSitemap: __ORIGIN__/big.xml\n",
+      },
+      "/big.xml": {
+        headers: {
+          "content-type": "application/xml",
+          "content-encoding": "gzip",
+        },
+        body: gzipSync(big),
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  it("does not report the compressed Content-Length as the sitemap's size", async () => {
+    const site = await auditSite(server.origin, { maxPages: 2 });
+    const f = find(site.siteFindings, "site.sitemap-too-large");
+
+    expect(f?.severity).toBe("info");
+    expect(f?.evidence).toStrictEqual({
+      sitemaps: [
+        {
+          sitemap: `${server.origin}/big.xml`,
+          urls: null,
+          bytes: null,
+          overLimit: false,
+        },
+      ],
+    });
+    expect(site.siteFindings.map((x) => x.rule)).not.toContain(
+      "site.sitemap-missing"
+    );
+  });
+});
+
 describe("robots.txt over 500 KiB", () => {
   let server: FixtureServer;
 

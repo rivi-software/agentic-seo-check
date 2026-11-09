@@ -66,6 +66,22 @@ const walk = async (dir: string): Promise<string[]> => {
   return out;
 };
 
+/**
+ * Whether `full` lies inside the directory `root`. Paths come from pages, robots.txt and sitemaps,
+ * so a decoded "%2e%2e" can climb out; a sibling such as root + "2" is outside too. path.relative
+ * also holds when root is a filesystem or drive root ("/", "D:\\"), which ends in a separator.
+ */
+export const isInside = (root: string, full: string): boolean => {
+  const rel = path.relative(root, full);
+
+  return (
+    rel !== "" &&
+    rel !== ".." &&
+    !rel.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(rel)
+  );
+};
+
 const fileExists = async (root: string, pathname: string): Promise<boolean> => {
   let decoded = pathname;
 
@@ -86,7 +102,7 @@ const fileExists = async (root: string, pathname: string): Promise<boolean> => {
   for (const c of candidates) {
     const full = path.join(root, c);
 
-    if (!full.startsWith(root)) {
+    if (!isInside(root, full)) {
       continue;
     }
 
@@ -321,7 +337,7 @@ const readSitemaps = async (
     const file = path.join(root, pathname);
 
     // robots.txt and sitemap indexes come from the site; a decoded "%2e%2e" must not leave the directory.
-    if (!file.startsWith(`${root}${path.sep}`)) {
+    if (!isInside(root, file)) {
       sitemaps.errors.push(`${candidate}: points outside the output directory`);
       continue;
     }
