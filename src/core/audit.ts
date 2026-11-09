@@ -364,6 +364,8 @@ const buildSiteAudit = (
     thresholds,
     pathOnly: source === "directory",
     unlinkedPages: result.unlinkedPages,
+    imageChecks: result.imageChecks,
+    imageSources: result.imageSources,
   });
 
   const disabled = new Set(options.disableRules);

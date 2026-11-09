@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { setTimeout as wait } from "node:timers/promises";
 
 export interface Route {
   status?: number;
@@ -9,6 +10,8 @@ export interface Route {
   body?: string | Buffer;
   /** Answer 403 to a request whose User-Agent contains one of these, as a CDN that blocks bots does. */
   blockUserAgents?: string[];
+  /** Milliseconds to wait before answering the first, second, ... request to this path, to order races. */
+  delaysMs?: number[];
 }
 
 /** The site a fixture server serves, by path; a test may add a route once the server listens. */
@@ -90,13 +93,19 @@ export const startFixtureServer = async (
   const requests: string[] = [];
   const userAgents: string[] = [];
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const userAgent = req.headers["user-agent"] ?? "";
+    const earlier = requests.filter((p) => p === url.pathname).length;
     requests.push(url.pathname);
     userAgents.push(userAgent);
     const route = routes[url.pathname];
     const origin = originOf(server);
+    const delay = route?.delaysMs?.[earlier] ?? 0;
+
+    if (delay > 0) {
+      await wait(delay);
+    }
 
     if (route?.blockUserAgents?.some((bot) => userAgent.includes(bot))) {
       res.writeHead(403, { "content-type": "text/html" });
