@@ -156,6 +156,38 @@ export interface AnswerSignals {
   mentionsDate: boolean;
 }
 
+/** A `<meta http-equiv="refresh">`: reload or redirect after a number of seconds. */
+export interface MetaRefresh {
+  /** Seconds before it acts, or null when the content does not start with a number. */
+  seconds: number | null;
+  /** Where it redirects to as written, or null when it only reloads the page. */
+  url: string | null;
+}
+
+/** How <head> reads to a parser, and the metadata that sits outside it. */
+export interface HeadSignals {
+  /**
+   * The element or text that ended <head> before the author's `</head>` or `<body>`, quoted from
+   * the source (`<img src="/pixel.gif">`, `text "Loading"`), or null when <head> holds only
+   * elements that belong there.
+   */
+  closedBy: string | null;
+  /** `closedBy` sits in a `<noscript>`, which only parsers that do not run JavaScript read as markup. */
+  closedInNoscript: boolean;
+  /** Metadata written after `closedBy`, which a parser then puts in <body>: `<link rel="canonical">`. */
+  afterClose: string[];
+  /** Metadata written in <body> itself (after `</head>` or `<body>`). */
+  inBody: string[];
+  /**
+   * Metadata in <body> inside a hidden element: how React streams tags (Next.js streaming metadata)
+   * that its JavaScript then moves into <head>.
+   */
+  streamedInBody: string[];
+  refresh: MetaRefresh[];
+  /** Byte offset where the element declaring the character encoding ends, or null when none does. */
+  charsetEndByte: number | null;
+}
+
 /** Everything the extractor pulls out of one HTML document. Rules read only this. */
 export interface ExtractedPage {
   /** URL used to resolve relative links (the final URL after redirects, or the base URL for files/inline HTML). */
@@ -186,6 +218,7 @@ export interface ExtractedPage {
   wordCount: number;
   htmlBytes: number;
   hasBaseHref: boolean;
+  head: HeadSignals;
   /** Signals the AEO audit reads; the SEO rules do not use them. */
   answer: AnswerSignals;
 }

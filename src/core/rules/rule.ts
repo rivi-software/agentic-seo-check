@@ -98,6 +98,8 @@ export const GOOGLE_DOCS = {
   images: "https://developers.google.com/search/docs/appearance/google-images",
   links:
     "https://developers.google.com/search/docs/crawling-indexing/links-crawlable",
+  validMetadata:
+    "https://developers.google.com/search/docs/crawling-indexing/valid-page-metadata",
   structuredData:
     "https://developers.google.com/search/docs/appearance/structured-data/intro-structured-data",
   javascript:
