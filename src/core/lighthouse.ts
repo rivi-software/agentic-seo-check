@@ -1,8 +1,13 @@
 import type { Options as ChromeLaunchOptions } from "chrome-launcher";
 import type { Flags as LighthouseFlags } from "lighthouse";
+import { z } from "zod";
 
+import { quote } from "./html/dom.js";
 import type {
+  LcpElement,
   LighthouseAuditSummary,
+  LighthouseItem,
+  LighthouseNode,
   LighthouseOpportunity,
   PerformanceResult,
 } from "./types.js";
@@ -53,11 +58,8 @@ interface LhAudit {
   numericValue?: number;
   displayValue?: string;
   metricSavings?: Record<string, number | undefined>;
-  details?: {
-    type?: string;
-    overallSavingsMs?: number;
-    overallSavingsBytes?: number;
-  };
+  /** Read through `detailsOf`, which keeps the fields a fix needs. */
+  details?: object;
 }
 
 interface LhrLike {
@@ -81,6 +83,383 @@ const stripMarkdownLinks = (text: string): string =>
     )
     .trim();
 
+/** Rows a fix may name: enough to act on, few enough to keep the result small. */
+const MAX_ITEMS = 10;
+
+// Lighthouse reports what the page has, so every value is read leniently: a field of another
+// shape is dropped (`catch`) instead of failing the run.
+const optionalString = z.string().optional().catch(undefined);
+const optionalNumber = z.number().optional().catch(undefined);
+
+const lhNode = z.object({
+  type: optionalString,
+  lhId: optionalString,
+  path: optionalString,
+  selector: optionalString,
+  snippet: optionalString,
+  nodeLabel: optionalString,
+  value: optionalString,
+  boundingRect: z
+    .object({ width: optionalNumber, height: optionalNumber })
+    .optional()
+    .catch(undefined),
+});
+
+type LhNodeValue = z.infer<typeof lhNode>;
+
+const lhChecks = z.record(
+  z.string(),
+  z.object({ value: z.boolean().optional().catch(undefined) })
+);
+
+interface LhRow extends Omit<LhNodeValue, "value"> {
+  url?: string;
+  href?: string;
+  resourceType?: string;
+  node?: Omit<LhNodeValue, "value">;
+  totalBytes?: number;
+  wastedBytes?: number;
+  wastedMs?: number;
+  scripting?: number;
+  line?: string;
+  index?: number | string;
+  message?: string;
+  description?: string;
+  text?: string;
+  subpart?: string;
+  duration?: number;
+  items?: LhRow[] | z.infer<typeof lhChecks>;
+  /** A list section's details, read with `lhDetails` where a list has sections. */
+  value?: unknown;
+  subItems?: { items: { cause?: string; extra?: LhNodeValue }[] };
+}
+
+interface LhDetails {
+  type?: string;
+  overallSavingsMs?: number;
+  overallSavingsBytes?: number;
+  items?: LhRow[] | z.infer<typeof lhChecks>;
+  value?: LhDetails;
+}
+
+const lhRow: z.ZodType<LhRow> = z.lazy(() =>
+  lhNode.extend({
+    value: z.unknown().optional(),
+    url: optionalString,
+    href: optionalString,
+    resourceType: optionalString,
+    node: lhNode.optional().catch(undefined),
+    totalBytes: optionalNumber,
+    wastedBytes: optionalNumber,
+    wastedMs: optionalNumber,
+    scripting: optionalNumber,
+    line: optionalString,
+    index: z.union([z.number(), z.string()]).optional().catch(undefined),
+    message: optionalString,
+    description: optionalString,
+    text: optionalString,
+    subpart: optionalString,
+    duration: optionalNumber,
+    items: z
+      .union([z.array(lhRow), lhChecks])
+      .optional()
+      .catch(undefined),
+    subItems: z
+      .object({
+        items: z.array(
+          z.object({
+            cause: optionalString,
+            extra: lhNode.optional().catch(undefined),
+          })
+        ),
+      })
+      .optional()
+      .catch(undefined),
+  })
+);
+
+const lhDetails: z.ZodType<LhDetails> = z.lazy(() =>
+  z.object({
+    type: optionalString,
+    overallSavingsMs: optionalNumber,
+    overallSavingsBytes: optionalNumber,
+    items: z
+      .union([z.array(lhRow), lhChecks])
+      .optional()
+      .catch(undefined),
+    value: lhDetails.optional().catch(undefined),
+  })
+);
+
+/** The details of an audit, with only the fields a fix reads. */
+const detailsOf = (audit: LhAudit | undefined): LhDetails | undefined => {
+  const parsed = lhDetails.safeParse(audit?.details);
+
+  return parsed.success ? parsed.data : undefined;
+};
+
+const rowsIn = (items: LhDetails["items"]): LhRow[] =>
+  Array.isArray(items) ? items : [];
+
+/**
+ * The rows of an audit's details, whatever its shape: a table or opportunity has rows, a list
+ * holds tables, nodes and sections; checklists have none.
+ */
+const rowsOf = (details: LhDetails | undefined): LhRow[] => {
+  if (!details) {
+    return [];
+  }
+
+  if (details.type === "list") {
+    return rowsIn(details.items).flatMap((entry): LhRow[] => {
+      if (entry.type === "table") {
+        return rowsIn(entry.items);
+      }
+
+      if (entry.type === "list-section") {
+        const section = lhDetails.safeParse(entry.value);
+
+        return section.success ? rowsOf(section.data) : [];
+      }
+
+      return entry.type === "node" ? [{ node: entry }] : [];
+    });
+  }
+
+  return details.type === "table" || details.type === "opportunity"
+    ? rowsIn(details.items)
+    : [];
+};
+
+const httpUrl = (value: string | undefined): string | undefined =>
+  value && /^https?:\/\//u.test(value) ? value : undefined;
+
+const rounded = (value: number | undefined): number | null =>
+  value === undefined || !Number.isFinite(value) ? null : Math.round(value);
+
+/** The element name of a node: the end of its lhId ("page-0-IMG") or of its path ("…,0,IMG"). */
+const nodeName = (node: Omit<LhNodeValue, "value">): string | null => {
+  const id = node.lhId?.split("-").at(-1) ?? node.path?.split(",").at(-1);
+
+  return id && /^[a-z][\w-]*$/iu.test(id) ? id.toLowerCase() : null;
+};
+
+const nodeOf = (
+  value: Omit<LhNodeValue, "value"> | undefined
+): LighthouseNode | undefined => {
+  if (value?.type !== "node" || !value.selector) {
+    return undefined;
+  }
+
+  return {
+    selector: quote(value.selector),
+    snippet: quote(value.snippet ?? ""),
+    label: value.nodeLabel ? quote(value.nodeLabel) : null,
+    name: nodeName(value),
+    width: rounded(value.boundingRect?.width),
+    height: rounded(value.boundingRect?.height),
+  };
+};
+
+/** Causes of a layout shift (cls-culprits), and the font or frame they name. */
+const causesOf = (row: LhRow) => {
+  const causes = row.subItems?.items ?? [];
+  const text = causes.flatMap((c) => (c.cause ? [c.cause] : [])).join("; ");
+  const url = causes.map((c) => httpUrl(c.extra?.value)).find(Boolean);
+
+  return { text: text || undefined, url };
+};
+
+const SIZES = ["totalBytes", "wastedBytes", "wastedMs"] as const;
+
+const itemOf = (row: LhRow): LighthouseItem => {
+  const item: LighthouseItem = {};
+  const causes = causesOf(row);
+  const url = httpUrl(row.url) ?? httpUrl(row.href) ?? causes.url;
+  const node = nodeOf(row.node) ?? nodeOf(row);
+
+  if (url) {
+    item.url = quote(url);
+  }
+
+  if (node) {
+    item.node = node;
+  }
+
+  for (const key of SIZES) {
+    const value = row[key];
+
+    if (value !== undefined && value > 0) {
+      item[key] = Math.round(value);
+    }
+  }
+
+  if (row.line !== undefined) {
+    item.line = quote(row.line);
+  }
+
+  const lineNumber = Number(row.index);
+
+  if (row.index !== undefined && Number.isInteger(lineNumber)) {
+    item.lineNumber = lineNumber;
+  }
+
+  const text = row.message ?? row.description ?? row.text ?? causes.text;
+
+  if (text) {
+    item.text = quote(text);
+  }
+
+  return item;
+};
+
+/** The first rows of an audit that name something: a URL, an element, a line or a message. */
+const itemsOf = (audit: LhAudit | undefined): LighthouseItem[] =>
+  rowsOf(detailsOf(audit))
+    .flatMap((row) => {
+      const item = itemOf(row);
+
+      return (item.url ?? item.node ?? item.line ?? item.text) ? [item] : [];
+    })
+    .slice(0, MAX_ITEMS);
+
+/** The checks of the first checklist in an audit's list (lcp-discovery). */
+const checklistOf = (audit: LhAudit | undefined): Map<string, boolean> => {
+  const checks = new Map<string, boolean>();
+  const details = detailsOf(audit);
+  const lists = details?.type === "list" ? rowsIn(details.items) : [];
+  const checklist = lists.find((entry) => entry.type === "checklist");
+
+  if (checklist?.items && !Array.isArray(checklist.items)) {
+    for (const [name, check] of Object.entries(checklist.items)) {
+      if (check.value !== undefined) {
+        checks.set(name, check.value);
+      }
+    }
+  }
+
+  return checks;
+};
+
+/** The src an LCP <img> snippet names, without the "…" Lighthouse cuts long values with. */
+const snippetSrc = (snippet: string): { src: string; cut: boolean } | null => {
+  const raw = /\ssrc="(?<src>[^"]*)"/u.exec(snippet)?.groups?.src;
+
+  if (!raw) {
+    return null;
+  }
+
+  // The snippet is outerHTML, which writes an attribute's & as &amp; (and " < > as entities);
+  // the request URL has them plain. &amp; goes last, so "&amp;lt;" stays "&lt;".
+  const src = raw
+    .replaceAll("&quot;", '"')
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&amp;", "&");
+
+  return src.endsWith("…")
+    ? { src: src.slice(0, -1), cut: true }
+    : { src, cut: false };
+};
+
+/**
+ * The URL the LCP image was fetched from: the one image request in the network log that its src
+ * names (or starts with, when Lighthouse cut the src short). Null when none or several match.
+ */
+const lcpImageUrl = (
+  lhr: LhrLike,
+  node: LighthouseNode,
+  pageUrl: string
+): string | null => {
+  const found = snippetSrc(node.snippet);
+
+  if (!found || node.name !== "img") {
+    return null;
+  }
+
+  let { src } = found;
+
+  if (!found.cut) {
+    try {
+      src = new URL(src, pageUrl).href;
+    } catch {
+      return null;
+    }
+  }
+
+  const images = rowsOf(detailsOf(lhr.audits["network-requests"])).flatMap(
+    (r) => (r.resourceType === "Image" && r.url ? [r.url] : [])
+  );
+
+  const matches = [
+    ...new Set(
+      images.filter((u) => (found.cut ? u.startsWith(src) : u === src))
+    ),
+  ];
+
+  if (matches.length === 1 && matches[0]) {
+    return quote(matches[0]);
+  }
+
+  // The src only when the log has no images at all: when it has some and none is the src, the
+  // browser fetched another candidate (a <picture> <source>, AVIF or WebP), not this file.
+  return !found.cut && images.length === 0 && httpUrl(src) ? quote(src) : null;
+};
+
+/** The LCP element and what lcp-discovery and lcp-breakdown found about it. */
+const lcpElementOf = (
+  lhr: LhrLike,
+  pageUrl: string
+): LcpElement | undefined => {
+  const discovery = lhr.audits["lcp-discovery-insight"];
+  const breakdown = rowsOf(detailsOf(lhr.audits["lcp-breakdown-insight"]));
+
+  const node = [...rowsOf(detailsOf(discovery)), ...breakdown]
+    .map((r) => nodeOf(r.node))
+    .find(Boolean);
+
+  if (!node) {
+    return undefined;
+  }
+
+  const checks = checklistOf(discovery);
+  const phases: Record<string, number> = {};
+
+  for (const row of breakdown) {
+    if (row.subpart && row.duration !== undefined) {
+      phases[row.subpart] = Math.round(row.duration);
+    }
+  }
+
+  return {
+    node,
+    imageUrl: lcpImageUrl(lhr, node, pageUrl),
+    hasSrcset: /\ssrcset="/u.test(node.snippet),
+    fetchpriorityHigh: checks.get("priorityHinted") ?? null,
+    discoverable: checks.get("requestDiscoverable") ?? null,
+    notLazy: checks.get("eagerlyLoaded") ?? null,
+    phases,
+  };
+};
+
+/** Rows of an audit only when it failed: a passing audit's rows are not problems. */
+const failingItems = (audit: LhAudit | undefined): LighthouseItem[] =>
+  audit && audit.score !== null && audit.score < 0.9 ? itemsOf(audit) : [];
+
+/** Scripts by main-thread script evaluation time (bootup-time), most first. */
+const scriptsOf = (lhr: LhrLike): LighthouseItem[] =>
+  rowsOf(detailsOf(lhr.audits["bootup-time"]))
+    .flatMap((r): LighthouseItem[] => {
+      const url = httpUrl(r.url);
+
+      return url && r.scripting !== undefined && r.scripting > 0
+        ? [{ url: quote(url), wastedMs: Math.round(r.scripting) }]
+        : [];
+    })
+    .toSorted((a, b) => (b.wastedMs ?? 0) - (a.wastedMs ?? 0))
+    .slice(0, MAX_ITEMS);
+
 const percent = (score: number | null | undefined): number | null =>
   score === null || score === undefined ? null : Math.round(score * 100);
 
@@ -94,17 +473,19 @@ const opportunityOf = (audit: LhAudit): LighthouseOpportunity | null => {
     return value !== undefined && value > 0 ? [value] : [];
   });
 
+  const details = detailsOf(audit);
+
   const savingsMs =
-    audit.details?.overallSavingsMs ??
+    details?.overallSavingsMs ??
     (msValues.length > 0 ? Math.max(...msValues) : null);
 
-  const savingsBytes = audit.details?.overallSavingsBytes ?? null;
+  const savingsBytes = details?.overallSavingsBytes ?? null;
 
   const hasSavings =
     (savingsMs ?? 0) > 0 ||
     (savingsBytes ?? 0) > 0 ||
     (savings["CLS"] ?? 0) > 0 ||
-    audit.details?.type === "opportunity";
+    details?.type === "opportunity";
 
   if (!hasSavings) {
     return null;
@@ -117,6 +498,7 @@ const opportunityOf = (audit: LhAudit): LighthouseOpportunity | null => {
     score: audit.score,
     savingsMs: savingsMs ?? null,
     savingsBytes,
+    items: itemsOf(audit),
   };
 };
 
@@ -182,6 +564,7 @@ const failedAudits = (
       description: stripMarkdownLinks(audit.description),
       score: audit.score,
       displayValue: audit.displayValue ?? null,
+      items: itemsOf(audit),
     });
   }
 
@@ -199,12 +582,14 @@ export const summarize = (
     return value !== undefined && Number.isFinite(value) ? value : null;
   };
 
-  return {
+  const finalUrl = lhr.finalDisplayedUrl ?? lhr.finalUrl ?? requestedUrl;
+
+  const result: PerformanceResult = {
     tool: "lighthouse",
     lighthouseVersion: lhr.lighthouseVersion,
     formFactor,
     requestedUrl,
-    finalUrl: lhr.finalDisplayedUrl ?? lhr.finalUrl ?? requestedUrl,
+    finalUrl,
     metrics: {
       performanceScore: percent(lhr.categories["performance"]?.score),
       seoScore: percent(lhr.categories["seo"]?.score),
@@ -221,6 +606,40 @@ export const summarize = (
     failedSeoAudits: failedAudits(lhr, "seo", COVERED_SEO_AUDITS),
     agenticBrowsingAudits: failedAudits(lhr, "agentic-browsing", new Set()),
   };
+
+  const lcpElement = lcpElementOf(lhr, finalUrl);
+
+  if (lcpElement) {
+    result.lcpElement = lcpElement;
+  }
+
+  // The details a fix names, kept only when Lighthouse found something.
+  const unsizedImages = failingItems(lhr.audits["unsized-images"]);
+
+  const layoutShifts = itemsOf(lhr.audits["cls-culprits-insight"]).filter(
+    (i) => i.node
+  );
+
+  const renderBlocking = failingItems(lhr.audits["render-blocking-insight"]);
+  const scripts = scriptsOf(lhr);
+
+  if (unsizedImages.length) {
+    result.unsizedImages = unsizedImages;
+  }
+
+  if (layoutShifts.length) {
+    result.layoutShifts = layoutShifts;
+  }
+
+  if (renderBlocking.length) {
+    result.renderBlocking = renderBlocking;
+  }
+
+  if (scripts.length) {
+    result.scripts = scripts;
+  }
+
+  return result;
 };
 
 const playwrightChromiumPath = async (): Promise<string | undefined> => {

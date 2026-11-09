@@ -1,11 +1,57 @@
 import { normalizeForComparison, shingles, jaccard } from "./html/text.js";
 import { agentMatcher } from "./robots.js";
+import {
+  escapeAttribute,
+  removeEdit,
+  setAttributeEdit,
+  slot,
+} from "./rules/fix.js";
 import { robotsDirectives } from "./rules/indexing.js";
 import { finding, GOOGLE_DOCS, cap } from "./rules/rule.js";
+import {
+  addLinkEdit,
+  addToSitemapFix,
+  blockedResourcesFix,
+  canonicalEdit,
+  imagesOf,
+  blockingRule,
+  lastmodFix,
+  locationOf,
+  linkSelector,
+  linksTo,
+  nestedIndexFix,
+  hrefLike,
+  onUrl,
+  otherHostFix,
+  redirectTo,
+  redescribeEdit,
+  removeNoindexEdits,
+  returnLinkEdit,
+  reheadEdit,
+  relinkEdit,
+  linesOf,
+  retitleEdit,
+  statusLine,
+  removeFromSitemap,
+  replaceInSitemap,
+  robotsBlocksAllFix,
+  robotsErrorFix,
+  robotsMissingFix,
+  robotsTooLargeFix,
+  robotsUnsupportedFix,
+  MAX_EDITS,
+  sitemapErrorFix,
+  sitemapMissingFix,
+  splitSitemapFix,
+} from "./site-fixes.js";
 import { MIN_COMPARABLE_WORDS, SAME_TEXT } from "./site-probes.js";
+import { sitemapLayout } from "./sitemap.js";
 import type {
   ExtractedPage,
   Finding,
+  FixEdit,
+  HreflangInfo,
+  LinkInfo,
   ResponseInfo,
   RobotsTxtInfo,
   RuleMeta,
@@ -453,14 +499,29 @@ const pathKey = (url: string): string => {
   }
 };
 
+/** The URL with its path lower-cased and trailing slashes dropped: one key for every spelling. */
+const spellingKey = (url: string): string => {
+  try {
+    const u = new URL(url);
+    const pathname = trimTrailingSlashes(u.pathname.toLowerCase()) || "/";
+
+    return `${u.origin}${pathname}${u.search}`;
+  } catch {
+    return url;
+  }
+};
+
 const pushDuplicates = (
   out: Finding[],
   rule: RuleMeta,
   pages: PageRecord[],
   pick: (p: PageRecord) => string | null,
-  label: string
+  label: string,
+  fixFor: (p: PageRecord) => FixEdit | null
 ): void => {
   const groups = new Map<string, string[]>();
+  // Every page but the first of a group gets a value of its own; the first keeps what it has.
+  const others: PageRecord[] = [];
   // Pages are grouped by a lowercased key, but the evidence quotes the value as the first page
   // wrote it, so a report or pull request shows the text a reviewer would find on the site.
   const written = new Map<string, string>();
@@ -476,7 +537,9 @@ const pushDuplicates = (
 
     pushTo(groups, k, p.url);
 
-    if (!written.has(k)) {
+    if (written.has(k)) {
+      others.push(p);
+    } else {
       written.set(k, value);
     }
   }
@@ -493,6 +556,7 @@ const pushDuplicates = (
       rule,
       `${dupes.length} ${label}(s) are shared by ${pagesAffected} pages.`,
       {
+        fix: others.flatMap((p) => fixFor(p) ?? []).slice(0, MAX_EDITS),
         evidence: {
           groups: cap(
             dupes.map(([k, urls]) => ({
@@ -505,6 +569,53 @@ const pushDuplicates = (
       }
     )
   );
+};
+
+/**
+ * The canonical each duplicate should name. The first page of a group is the shallowest the crawl
+ * reached: the others name it as canonical. Near-duplicates come in pairs, so a page can be in two
+ * groups (a~b and b~c, or a~c and b~c): each page gets one canonical, to a page that keeps its
+ * own, so the fix makes no chain and gives no page two.
+ */
+const duplicateCanonicalEdits = (
+  groups: { pages: string[] }[],
+  byUrl: Map<string, PageRecord>
+): FixEdit[] => {
+  const canonicalOf = new Map<string, string>();
+  const roots = new Set<string>();
+  const fix: FixEdit[] = [];
+
+  for (const {
+    pages: [first, ...rest],
+  } of groups) {
+    const root = first ? (canonicalOf.get(first) ?? first) : undefined;
+
+    for (const u of rest) {
+      const record = byUrl.get(u);
+
+      if (
+        !root ||
+        !record ||
+        u === root ||
+        canonicalOf.has(u) ||
+        roots.has(u)
+      ) {
+        continue;
+      }
+
+      canonicalOf.set(u, root);
+      roots.add(root);
+      fix.push(
+        canonicalEdit(
+          record,
+          root,
+          `If ${u} is meant to be a page of its own, make its text distinct instead.`
+        )
+      );
+    }
+  }
+
+  return fix;
 };
 
 const pushDuplicateContent = (out: Finding[], pages: PageRecord[]): void => {
@@ -557,11 +668,15 @@ const pushDuplicateContent = (out: Finding[], pages: PageRecord[]): void => {
   }
 
   if (groups.length) {
+    const byUrl = new Map(candidates.map((p) => [p.url, p]));
+
+    const fix = duplicateCanonicalEdits(groups, byUrl);
+
     out.push(
       finding(
         m("site.duplicate-content"),
         `${groups.length} group(s) of pages have (near-)identical body text.`,
-        { evidence: { groups: cap(groups) } }
+        { fix: fix.slice(0, MAX_EDITS), evidence: { groups: cap(groups) } }
       )
     );
   }
@@ -576,6 +691,8 @@ interface SiteScope {
   /** Pages that answered below 400. */
   okPages: PageRecord[];
   isIndexable: (p: PageRecord) => boolean;
+  /** The links on a page whose target has a key. */
+  linksTo: (p: PageRecord, targetKey: string) => LinkInfo[];
 }
 
 /** Google reads the first 500 KiB of robots.txt and ignores the rest. */
@@ -592,7 +709,7 @@ const unsupportedRobotsLines = (text: string): UnsupportedRobotsLines => {
   const retired: string[] = [];
   const crawlDelay: string[] = [];
 
-  for (const [i, raw] of text.split(/\r?\n/u).slice(0, 50_000).entries()) {
+  for (const [i, raw] of linesOf(text).slice(0, 50_000).entries()) {
     const line = raw.replace(/#.*$/u, "").trim();
 
     const field = /^(?<field>[a-z-]+)\s*:/iu
@@ -613,18 +730,23 @@ const unsupportedRobotsLines = (text: string): UnsupportedRobotsLines => {
 const robotsContentFindings = (ctx: SiteContext): Finding[] => {
   const out: Finding[] = [];
   const bytes = ctx.robots?.bytes ?? 0;
+  const text = ctx.robotsText ?? ctx.robots?.text;
+
+  const robotsUrl =
+    ctx.robots?.url ?? new URL("/robots.txt", ctx.startUrl).href;
 
   if (bytes > ROBOTS_MAX_BYTES) {
     out.push(
       finding(
         m("site.robots-txt-too-large"),
         `robots.txt is ${Math.round(bytes / 1024)} KiB; Google reads only the first 500 KiB.`,
-        { evidence: { url: ctx.robots?.url, bytes } }
+        {
+          fix: robotsTooLargeFix(robotsUrl, text ?? "", bytes),
+          evidence: { url: ctx.robots?.url, bytes },
+        }
       )
     );
   }
-
-  const text = ctx.robotsText ?? ctx.robots?.text;
 
   if (!text) {
     return out;
@@ -641,6 +763,7 @@ const robotsContentFindings = (ctx: SiteContext): Finding[] => {
           : `robots.txt sets crawl-delay, which Google ignores.`,
         {
           severity: retired.length > 0 ? "warning" : "info",
+          fix: robotsUnsupportedFix(robotsUrl, text),
           evidence: {
             url: ctx.robots?.url,
             retired: cap(retired),
@@ -720,15 +843,36 @@ const blockedResourceFindings = ({
         finding(
           m("site.robots-blocks-resources"),
           `robots.txt keeps Googlebot from ${list.length} script(s) or stylesheet(s) the pages load.`,
-          { evidence: { count: list.length, examples: cap(list) } }
+          {
+            fix: blockedResourcesFix(
+              robots.url,
+              text,
+              list.map((r) => r.url)
+            ),
+            evidence: { count: list.length, examples: cap(list) },
+          }
         ),
       ]
     : [];
 };
 
 /** Sitemaps over the protocol's limits, nested indexes, bad lastmod values and other hosts. */
+/** Parts of at most 45,000 URLs or 45 MB, and at least two. */
+const partsFor = (
+  urls: number | null,
+  bytes: number | null,
+  perPart: number
+): number =>
+  Math.max(
+    2,
+    Math.ceil((urls ?? 0) / 45_000),
+    Math.ceil((bytes ?? 0) / perPart)
+  );
+
 const sitemapProtocolFindings = (ctx: SiteContext): Finding[] => {
   const { problems } = ctx.sitemaps;
+  const layout = sitemapLayout(problems);
+  const today = new Date().toISOString().slice(0, 10);
   const out: Finding[] = [];
   const over = problems.oversized.filter((o) => o.overLimit);
   const unread = problems.oversized.filter((o) => !o.overLimit);
@@ -738,7 +882,17 @@ const sitemapProtocolFindings = (ctx: SiteContext): Finding[] => {
       finding(
         m("site.sitemap-too-large"),
         `${over.length} sitemap(s) exceed 50,000 URLs or 50 MB.`,
-        { evidence: { sitemaps: cap(over) } }
+        {
+          fix: over.map((o) =>
+            splitSitemapFix(
+              o.sitemap,
+              partsFor(o.urls, o.bytes, 45_000_000),
+              "Serve this sitemap index where the large sitemap was, and move its URLs into the files it lists, each under 50,000 URLs and 50 MB."
+            )
+          ),
+          key: "over-limit",
+          evidence: { sitemaps: cap(over) },
+        }
       )
     );
   }
@@ -752,6 +906,14 @@ const sitemapProtocolFindings = (ctx: SiteContext): Finding[] => {
           severity: "info",
           recommendation:
             "Check that each stays under 50 MB and 50,000 URLs; smaller sitemaps (10,000 URLs or fewer) are also quicker for search engines to fetch again.",
+          fix: unread.map((o) =>
+            splitSitemapFix(
+              o.sitemap,
+              partsFor(o.urls, o.bytes, 10_000_000),
+              "Serve this sitemap index where the large sitemap was, and move its URLs into the files it lists, 10,000 URLs or fewer each, so search engines (and this audit) can read each one quickly."
+            )
+          ),
+          key: "unread",
           evidence: { sitemaps: cap(unread) },
         }
       )
@@ -763,7 +925,10 @@ const sitemapProtocolFindings = (ctx: SiteContext): Finding[] => {
       finding(
         m("site.sitemap-index-nested"),
         `${problems.nestedIndexes.length} sitemap index(es) are listed by another sitemap index.`,
-        { evidence: { indexes: cap(problems.nestedIndexes) } }
+        {
+          fix: problems.nestedIndexes.map((n) => nestedIndexFix(layout, n)),
+          evidence: { indexes: cap(problems.nestedIndexes) },
+        }
       )
     );
   }
@@ -786,10 +951,20 @@ const sitemapProtocolFindings = (ctx: SiteContext): Finding[] => {
     ],
   ] as const;
 
+  const fixes = {
+    "site.sitemap-lastmod-invalid": (list: string[]) =>
+      lastmodFix(layout, list, "invalid", today),
+    "site.sitemap-lastmod-future": (list: string[]) =>
+      lastmodFix(layout, list, "future", today),
+    "site.sitemap-other-host": (list: string[]) =>
+      otherHostFix(layout, list, new URL(ctx.startUrl).origin),
+  };
+
   for (const [id, list, label] of examples) {
     if (list.count > 0) {
       out.push(
         finding(m(id), `${list.count} sitemap URL(s) ${label}.`, {
+          fix: fixes[id](list.examples),
           evidence: { count: list.count, examples: list.examples },
         })
       );
@@ -799,7 +974,76 @@ const sitemapProtocolFindings = (ctx: SiteContext): Finding[] => {
   return out;
 };
 
-const robotsFindings = (ctx: SiteContext): Finding[] => {
+/** The sitemap URL a robots.txt should name: the one found, else /sitemap.xml. */
+const sitemapUrlOf = (ctx: SiteContext): string =>
+  ctx.sitemaps.sources[0] ?? new URL("/sitemap.xml", ctx.startUrl).href;
+
+/**
+ * Keeps blocked pages out of the sitemap and stops crawlers following links to them; unblocking
+ * them could expose pages kept private on purpose, so the write names that rule instead.
+ */
+const blockedPageEdits = (scope: SiteScope, blocked: string): FixEdit[] => {
+  const { ctx, key, pagesByKey } = scope;
+  const k = key(blocked);
+
+  const rule =
+    ctx.robots && ctx.robotsText
+      ? blockingRule(ctx.robots.url, ctx.robotsText, blocked)
+      : null;
+
+  const unblock = `If the page belongs in search results, remove ${rule ? `"${rule}"` : "the rule that blocks it"} from robots.txt instead.`;
+  const listed = ctx.sitemaps.urls.find((u) => key(u) === k);
+
+  if (listed) {
+    return [
+      removeFromSitemap(
+        sitemapLayout(ctx.sitemaps.problems),
+        listed,
+        `robots.txt blocks it, so search engines cannot crawl it. ${unblock}`
+      ),
+    ];
+  }
+
+  const sources = [...ctx.linkSources].flatMap(([target, from]) =>
+    key(target) === k ? [...from] : []
+  );
+
+  const edits = sources.flatMap((source) => {
+    const record = pagesByKey.get(key(source));
+
+    return record
+      ? linksTo(record, k, key).map((link) =>
+          onUrl(
+            setAttributeEdit(
+              link.tag,
+              linkSelector(link),
+              "rel",
+              link.rel ? `${link.rel} nofollow` : "nofollow",
+              `So crawlers do not follow it to a page robots.txt blocks. ${unblock}`
+            ),
+            locationOf(record)
+          )
+        )
+      : [];
+  });
+
+  if (edits.length > 0 || !rule || !ctx.robots) {
+    return edits;
+  }
+
+  return [
+    {
+      in: "robots.txt",
+      action: "remove",
+      url: ctx.robots.url,
+      current: rule,
+      write: `Only if ${blocked} belongs in search results; if it is kept out on purpose, leave robots.txt as it is.`,
+    },
+  ];
+};
+
+const robotsFindings = (scope: SiteScope): Finding[] => {
+  const { ctx } = scope;
   const out: Finding[] = [];
 
   /* robots.txt */
@@ -813,6 +1057,11 @@ const robotsFindings = (ctx: SiteContext): Finding[] => {
           m("site.robots-txt-error"),
           `robots.txt at ${ctx.robots.url} could not be read (${ctx.robots.error ?? `HTTP ${ctx.robots.status}`}).`,
           {
+            fix: robotsErrorFix(
+              ctx.robots.url,
+              ctx.robots.status,
+              ctx.robots.error
+            ),
             evidence: {
               url: ctx.robots.url,
               status: ctx.robots.status,
@@ -828,6 +1077,7 @@ const robotsFindings = (ctx: SiteContext): Finding[] => {
           `No robots.txt at ${ctx.robots.url}.`,
           {
             severity: ctx.source === "directory" ? "info" : "warning",
+            fix: robotsMissingFix(ctx.robots.url, sitemapUrlOf(ctx)),
             evidence: { url: ctx.robots.url, status: ctx.robots.status },
           }
         )
@@ -838,6 +1088,11 @@ const robotsFindings = (ctx: SiteContext): Finding[] => {
           m("site.robots-txt-blocks-all"),
           "robots.txt blocks the start URL for the crawler user agent.",
           {
+            fix: robotsBlocksAllFix(
+              ctx.robots.url,
+              ctx.robotsText ?? ctx.robots.text ?? "",
+              ctx.startUrl
+            ),
             evidence: {
               url: ctx.robots.url,
               robotsTxt: ctx.robots.text?.slice(0, 500),
@@ -854,6 +1109,10 @@ const robotsFindings = (ctx: SiteContext): Finding[] => {
         m("site.robots-blocked-pages"),
         `${ctx.blockedByRobots.length} linked/sitemap URL(s) are disallowed by robots.txt.`,
         {
+          fix: ctx.blockedByRobots
+            .slice(0, MAX_EDITS)
+            .flatMap((u) => blockedPageEdits(scope, u))
+            .slice(0, MAX_EDITS),
           evidence: {
             count: ctx.blockedByRobots.length,
             examples: cap(ctx.blockedByRobots),
@@ -874,6 +1133,14 @@ const sitemapUrlFindings = ({
   checksByKey,
 }: SiteScope): Finding[] => {
   const out: Finding[] = [];
+  const layout = sitemapLayout(ctx.sitemaps.problems);
+  const listed = new Set(ctx.sitemaps.urls.map(key));
+
+  /** Points an entry at `to`, or removes it when the sitemap lists `to` already. */
+  const repoint = (loc: string, to: string): FixEdit =>
+    listed.has(key(to))
+      ? removeFromSitemap(layout, loc, `the sitemap lists ${to} already.`)
+      : replaceInSitemap(layout, loc, to);
 
   const noindex: string[] = [];
   const nonCanonical: { url: string; canonical: string }[] = [];
@@ -912,7 +1179,16 @@ const sitemapUrlFindings = ({
       finding(
         m("site.sitemap-noindex-page"),
         `${noindex.length} sitemap URL(s) are noindex.`,
-        { evidence: { count: noindex.length, examples: cap(noindex) } }
+        {
+          fix: noindex.map((u) =>
+            removeFromSitemap(
+              layout,
+              u,
+              "the page is noindex, which may be on purpose. If it belongs in search results, remove its noindex instead."
+            )
+          ),
+          evidence: { count: noindex.length, examples: cap(noindex) },
+        }
       )
     );
   }
@@ -923,6 +1199,7 @@ const sitemapUrlFindings = ({
         m("site.sitemap-non-canonical"),
         `${nonCanonical.length} sitemap URL(s) canonicalise to another URL.`,
         {
+          fix: nonCanonical.map((n) => repoint(n.url, n.canonical)),
           evidence: {
             count: nonCanonical.length,
             examples: cap(nonCanonical),
@@ -937,7 +1214,16 @@ const sitemapUrlFindings = ({
       finding(
         m("site.sitemap-broken-url"),
         `${broken.length} sitemap URL(s) return errors.`,
-        { evidence: { count: broken.length, examples: cap(broken) } }
+        {
+          fix: broken.map((b) =>
+            removeFromSitemap(
+              layout,
+              b.url,
+              `it answers ${b.status === null ? "with no response" : `HTTP ${b.status}`}. If the page should exist, restore it instead.`
+            )
+          ),
+          evidence: { count: broken.length, examples: cap(broken) },
+        }
       )
     );
   }
@@ -948,6 +1234,7 @@ const sitemapUrlFindings = ({
         m("site.sitemap-redirecting-url"),
         `${redirecting.length} sitemap URL(s) redirect.`,
         {
+          fix: redirecting.map((r) => repoint(r.url, r.finalUrl)),
           evidence: { count: redirecting.length, examples: cap(redirecting) },
         }
       )
@@ -958,13 +1245,33 @@ const sitemapUrlFindings = ({
 };
 
 /** Indexable pages missing from the sitemap, and sitemap URLs nothing links to. */
-const sitemapCoverageFindings = ({
-  ctx,
-  key,
-  okPages,
-  isIndexable,
-}: SiteScope): Finding[] => {
+/**
+ * Links an orphan from the home page, or takes it out of the sitemap when it does not load: a link
+ * to a broken page would only add a broken link.
+ */
+const orphanEdit = (scope: SiteScope, home: string, url: string): FixEdit => {
+  const check = scope.checksByKey.get(scope.key(url));
+
+  if (check && (check.error || (check.status ?? 0) >= 400)) {
+    return removeFromSitemap(
+      sitemapLayout(scope.ctx.sitemaps.problems),
+      url,
+      `it answers ${check.status === null ? "with no response" : `HTTP ${check.status}`}, and no page links to it.`
+    );
+  }
+
+  return addLinkEdit(
+    home,
+    url,
+    `Words that say what ${url} is about. Put the link on the page closest in topic, or in the navigation; if the page is obsolete, remove it from the sitemap instead.`
+  );
+};
+
+const sitemapCoverageFindings = (scope: SiteScope): Finding[] => {
+  const { ctx, key, pagesByKey, okPages, isIndexable } = scope;
   const out: Finding[] = [];
+  const start = pagesByKey.get(key(ctx.startUrl));
+  const home = start ? locationOf(start) : ctx.startUrl;
   const sitemapKeys = new Set(ctx.sitemaps.urls.map(key));
 
   const notInSitemap = okPages
@@ -982,6 +1289,10 @@ const sitemapCoverageFindings = ({
         m("site.not-in-sitemap"),
         `${notInSitemap.length} crawled indexable page(s) are missing from the sitemap.`,
         {
+          fix: addToSitemapFix(
+            sitemapLayout(ctx.sitemaps.problems),
+            notInSitemap
+          ),
           evidence: {
             count: notInSitemap.length,
             examples: cap(notInSitemap),
@@ -1006,7 +1317,12 @@ const sitemapCoverageFindings = ({
         finding(
           m("site.orphan-pages"),
           `${orphans.length} sitemap URL(s) are not linked from any crawled page.`,
-          { evidence: { count: orphans.length, examples: cap(orphans) } }
+          {
+            fix: orphans
+              .slice(0, MAX_EDITS)
+              .map((u) => orphanEdit(scope, home, u)),
+            evidence: { count: orphans.length, examples: cap(orphans) },
+          }
         )
       );
     }
@@ -1024,7 +1340,13 @@ const sitemapFindings = (scope: SiteScope): Finding[] => {
       finding(
         m("site.sitemap-error"),
         `${ctx.sitemaps.errors.length} sitemap problem(s).`,
-        { evidence: { errors: cap(ctx.sitemaps.errors) } }
+        {
+          fix: sitemapErrorFix(
+            ctx.sitemaps.errors.slice(0, 10),
+            new URL(ctx.startUrl).origin
+          ),
+          evidence: { errors: cap(ctx.sitemaps.errors) },
+        }
       )
     );
   }
@@ -1038,6 +1360,18 @@ const sitemapFindings = (scope: SiteScope): Finding[] => {
     out.push(
       finding(m("site.sitemap-missing"), "No sitemap was found.", {
         severity: ctx.source === "directory" ? "info" : "warning",
+        fix: sitemapMissingFix(
+          sitemapUrlOf(ctx),
+          scope.okPages
+            .filter(
+              (p) =>
+                scope.isIndexable(p) &&
+                (!p.page.canonical ||
+                  scope.key(p.page.canonical) === scope.key(p.url))
+            )
+            .map((p) => p.url),
+          ctx.robots?.found ? ctx.robots.url : null
+        ),
       })
     );
   }
@@ -1049,9 +1383,91 @@ const sitemapFindings = (scope: SiteScope): Finding[] => {
   return out;
 };
 
+/**
+ * Points every link to `targetKey` on the pages in `sources` at `hrefFor(link, page)`, up to
+ * `MAX_EDITS` edits.
+ */
+const relinkSources = (
+  scope: SiteScope,
+  sources: Iterable<string>,
+  targetKey: string,
+  hrefFor: (href: string, pageUrl: string) => string,
+  write?: string
+): FixEdit[] => {
+  const edits: FixEdit[] = [];
+
+  for (const source of sources) {
+    const record = scope.pagesByKey.get(scope.key(source));
+
+    for (const link of record ? scope.linksTo(record, targetKey) : []) {
+      if (record && edits.length < MAX_EDITS) {
+        edits.push(
+          relinkEdit(
+            locationOf(record),
+            link,
+            hrefFor(link.href, record.url),
+            write
+          )
+        );
+      }
+    }
+  }
+
+  return edits;
+};
+
+/** A live page whose URL differs from `url` only in a trailing slash or letter case. */
+const liveSpelling = (scope: SiteScope, url: string): string | null => {
+  const match = scope.okPages.find(
+    (p) =>
+      spellingKey(p.url) === spellingKey(url) &&
+      scope.key(p.url) !== scope.key(url)
+  );
+
+  return match?.url ?? null;
+};
+
+/** Edits for broken internal links: the live spelling of the URL when there is one, else a slot. */
+const brokenLinkEdits = (
+  scope: SiteScope,
+  broken: { url: string; key: string }[]
+): FixEdit[] =>
+  broken
+    .flatMap((b) => {
+      const live = liveSpelling(scope, b.url);
+
+      return relinkSources(
+        scope,
+        scope.ctx.linkSources.get(b.key) ?? [],
+        scope.key(b.url),
+        (href, pageUrl) =>
+          live
+            ? hrefLike(href, live, pageUrl)
+            : slot("URL of the live page this link meant"),
+        live
+          ? undefined
+          : `The URL of the page the link was meant for; remove the link if that page is gone. ${b.url} does not answer.`
+      );
+    })
+    .slice(0, MAX_EDITS);
+
+/** Points each hop of a redirect chain straight at where the chain ends. */
+const chainEdits = (check: LinkCheck): FixEdit[] =>
+  check.redirectChain.slice(0, -1).map((hop, i) => ({
+    in: "http",
+    action: "replace",
+    url: hop.url,
+    current: `${statusLine(hop.status)}\nLocation: ${check.redirectChain[i + 1]?.url ?? check.finalUrl}`,
+    code: redirectTo(check.finalUrl, hop.status === 307 || hop.status === 308),
+  }));
+
 /** Internal link targets that are broken, redirect once, or redirect in a chain. */
-const linkHealthFindings = (ctx: SiteContext): Finding[] => {
+const linkHealthFindings = (scope: SiteScope): Finding[] => {
+  const { ctx } = scope;
   const out: Finding[] = [];
+  const brokenKeys: { url: string; key: string }[] = [];
+  const redirectedKeys: { key: string; finalUrl: string }[] = [];
+  const chainChecks: LinkCheck[] = [];
 
   /* link health */
   const broken: {
@@ -1081,6 +1497,7 @@ const linkHealthFindings = (ctx: SiteContext): Finding[] => {
     const [firstHop] = check.redirectChain;
 
     if (check.error || (check.status ?? 0) >= 400) {
+      brokenKeys.push({ url: check.url, key: k });
       broken.push({
         url: check.url,
         status: check.status,
@@ -1088,12 +1505,14 @@ const linkHealthFindings = (ctx: SiteContext): Finding[] => {
         linkedFrom: cap(sources, 3),
       });
     } else if (check.redirectChain.length >= 2) {
+      chainChecks.push(check);
       chains.push({
         url: check.url,
         hops: check.redirectChain.length,
         finalUrl: check.finalUrl,
       });
     } else if (firstHop) {
+      redirectedKeys.push({ key: k, finalUrl: check.finalUrl });
       redirected.push({
         url: check.url,
         finalUrl: check.finalUrl,
@@ -1108,7 +1527,10 @@ const linkHealthFindings = (ctx: SiteContext): Finding[] => {
       finding(
         m("site.broken-internal-links"),
         `${broken.length} internal link target(s) are broken.`,
-        { evidence: { count: broken.length, examples: cap(broken, 20) } }
+        {
+          fix: brokenLinkEdits(scope, brokenKeys),
+          evidence: { count: broken.length, examples: cap(broken, 20) },
+        }
       )
     );
   }
@@ -1119,6 +1541,16 @@ const linkHealthFindings = (ctx: SiteContext): Finding[] => {
         m("site.redirected-internal-links"),
         `${redirected.length} internal link target(s) redirect.`,
         {
+          fix: redirectedKeys
+            .flatMap((r) =>
+              relinkSources(
+                scope,
+                ctx.linkSources.get(r.key) ?? [],
+                scope.key(r.key),
+                (href, pageUrl) => hrefLike(href, r.finalUrl, pageUrl)
+              )
+            )
+            .slice(0, MAX_EDITS),
           evidence: { count: redirected.length, examples: cap(redirected, 20) },
         }
       )
@@ -1130,7 +1562,10 @@ const linkHealthFindings = (ctx: SiteContext): Finding[] => {
       finding(
         m("site.redirect-chains"),
         `${chains.length} internal URL(s) have redirect chains.`,
-        { evidence: { count: chains.length, examples: cap(chains) } }
+        {
+          fix: chainChecks.flatMap(chainEdits).slice(0, MAX_EDITS),
+          evidence: { count: chains.length, examples: cap(chains) },
+        }
       )
     );
   }
@@ -1139,8 +1574,10 @@ const linkHealthFindings = (ctx: SiteContext): Finding[] => {
 };
 
 /** Broken external links (when they were probed) and HTML files nothing links to. */
-const unreachedFindings = (ctx: SiteContext): Finding[] => {
+const unreachedFindings = (scope: SiteScope): Finding[] => {
+  const { ctx } = scope;
   const out: Finding[] = [];
+  const start = scope.pagesByKey.get(scope.key(ctx.startUrl));
 
   if (ctx.externalChecks) {
     const dead: {
@@ -1166,7 +1603,20 @@ const unreachedFindings = (ctx: SiteContext): Finding[] => {
         finding(
           m("site.broken-external-links"),
           `${dead.length} external link target(s) are broken.`,
-          { evidence: { count: dead.length, examples: cap(dead, 20) } }
+          {
+            fix: dead
+              .flatMap((d) =>
+                relinkSources(
+                  scope,
+                  ctx.externalSources?.get(d.url) ?? [],
+                  scope.key(d.url),
+                  () => slot("current URL of the linked page"),
+                  `Where ${d.url} lives now: search for the page, or link a web archive copy; remove the link if the page is gone.`
+                )
+              )
+              .slice(0, MAX_EDITS),
+            evidence: { count: dead.length, examples: cap(dead, 20) },
+          }
         )
       );
     }
@@ -1178,6 +1628,15 @@ const unreachedFindings = (ctx: SiteContext): Finding[] => {
         m("site.unlinked-pages"),
         `${ctx.unlinkedPages.length} HTML file(s) are not linked from any other page.`,
         {
+          fix: ctx.unlinkedPages
+            .slice(0, MAX_EDITS)
+            .map((file) =>
+              addLinkEdit(
+                start ? locationOf(start) : ctx.startUrl,
+                ctx.pages.find((p) => (p.file ?? p.url) === file)?.url ?? file,
+                `Words that say what ${file} is about. Link it from the page closest in topic or the navigation; if the file is obsolete, delete it from the build instead.`
+              )
+            ),
           evidence: {
             count: ctx.unlinkedPages.length,
             examples: cap(ctx.unlinkedPages),
@@ -1209,21 +1668,24 @@ const duplicateFindings = ({
     m("site.duplicate-titles"),
     indexable,
     (p) => p.page.title,
-    "title"
+    "title",
+    retitleEdit
   );
   pushDuplicates(
     out,
     m("site.duplicate-descriptions"),
     indexable,
     (p) => p.page.metaDescription,
-    "meta description"
+    "meta description",
+    redescribeEdit
   );
   pushDuplicates(
     out,
     m("site.duplicate-h1"),
     indexable,
     (p) => p.page.h1s[0] ?? null,
-    "H1"
+    "H1",
+    reheadEdit
   );
   pushDuplicateContent(out, indexable);
 
@@ -1231,8 +1693,28 @@ const duplicateFindings = ({
 };
 
 /** Pages deep in the site, and how the server answers a made-up URL and the other host names. */
-const architectureFindings = ({ ctx, okPages }: SiteScope): Finding[] => {
+/** The same URL on `origin`, for a redirect to the site's main host or to https. */
+const onOrigin = (url: string, origin: string): string => {
+  try {
+    const u = new URL(url);
+
+    // Appended, not resolved: a "//x" path resolved against the origin would name a host.
+    return new URL(`${origin}${u.pathname}${u.search}`).href;
+  } catch {
+    return origin;
+  }
+};
+
+const architectureFindings = ({
+  ctx,
+  key,
+  pagesByKey,
+  okPages,
+}: SiteScope): Finding[] => {
   const out: Finding[] = [];
+  const start = pagesByKey.get(key(ctx.startUrl));
+  const home = start ? locationOf(start) : ctx.startUrl;
+  const { origin } = new URL(ctx.startUrl);
 
   /* architecture */
   const deep = okPages.filter((p) => p.depth > ctx.thresholds.deepPageDepth);
@@ -1243,6 +1725,15 @@ const architectureFindings = ({ ctx, okPages }: SiteScope): Finding[] => {
         m("site.deep-pages"),
         `${deep.length} page(s) are more than ${ctx.thresholds.deepPageDepth} clicks from the start URL.`,
         {
+          fix: deep
+            .slice(0, MAX_EDITS)
+            .map((p) =>
+              addLinkEdit(
+                home,
+                p.url,
+                `Words that say what ${p.url} is about. Or link it from a category or hub page one or two clicks from the home page.`
+              )
+            ),
           evidence: {
             count: deep.length,
             examples: cap(deep.map((p) => ({ url: p.url, depth: p.depth }))),
@@ -1262,7 +1753,20 @@ const architectureFindings = ({ ctx, okPages }: SiteScope): Finding[] => {
       finding(
         m("site.soft-404"),
         `${ctx.probes.soft404.url} returned HTTP ${ctx.probes.soft404.status}.`,
-        { evidence: ctx.probes.soft404 }
+        {
+          fix: [
+            {
+              in: "http",
+              action: "replace",
+              url: ctx.probes.soft404.url,
+              current: statusLine(ctx.probes.soft404.status),
+              code: statusLine(404),
+              write:
+                "For every URL no route matches: the catch-all route or the single-page app's fallback should answer 404 (it may keep showing its not-found page).",
+            },
+          ],
+          evidence: ctx.probes.soft404,
+        }
       )
     );
   }
@@ -1276,7 +1780,22 @@ const architectureFindings = ({ ctx, okPages }: SiteScope): Finding[] => {
       finding(
         m("site.http-not-redirected"),
         `${ctx.probes.httpRedirect.url} returned HTTP ${ctx.probes.httpRedirect.status} without redirecting to https.`,
-        { evidence: ctx.probes.httpRedirect }
+        {
+          fix: [
+            {
+              in: "http",
+              action: "replace",
+              url: ctx.probes.httpRedirect.url,
+              current: statusLine(ctx.probes.httpRedirect.status),
+              code: redirectTo(
+                ctx.probes.httpRedirect.url.replace(/^http:/iu, "https:")
+              ),
+              write:
+                "For every http:// URL, to the same path on https://, at the server or CDN.",
+            },
+          ],
+          evidence: ctx.probes.httpRedirect,
+        }
       )
     );
   }
@@ -1290,7 +1809,19 @@ const architectureFindings = ({ ctx, okPages }: SiteScope): Finding[] => {
       finding(
         m("site.host-variant-not-redirected"),
         `${ctx.probes.hostVariant.url} returned HTTP ${ctx.probes.hostVariant.status} without redirecting to the main host.`,
-        { evidence: ctx.probes.hostVariant }
+        {
+          fix: [
+            {
+              in: "http",
+              action: "replace",
+              url: ctx.probes.hostVariant.url,
+              current: statusLine(ctx.probes.hostVariant.status),
+              code: redirectTo(onOrigin(ctx.probes.hostVariant.url, origin)),
+              write: `For every URL on this host, to the same path on ${origin}, at the DNS host, server or CDN.`,
+            },
+          ],
+          evidence: ctx.probes.hostVariant,
+        }
       )
     );
   }
@@ -1303,8 +1834,18 @@ const hreflangFindings = ({ ctx, key, pagesByKey }: SiteScope): Finding[] => {
 
   /* hreflang return links */
   const missingReturn: { page: string; alternate: string }[] = [];
+  const returnLinks: FixEdit[] = [];
 
   for (const p of ctx.pages) {
+    // A page whose canonical names another URL (a parameter or tracking variant) is folded into
+    // that URL, so its hreflang links do not count and nothing should link back to it.
+    if (p.page.canonical && key(p.page.canonical) !== key(p.url)) {
+      continue;
+    }
+
+    // en and x-default often name the same page: one missing return link, not two.
+    const seen = new Set<PageRecord>();
+
     for (const alt of p.page.hreflang) {
       if (!alt.url) {
         continue;
@@ -1312,9 +1853,11 @@ const hreflangFindings = ({ ctx, key, pagesByKey }: SiteScope): Finding[] => {
 
       const target = pagesByKey.get(key(alt.url));
 
-      if (!target || target === p) {
+      if (!target || target === p || seen.has(target)) {
         continue;
       }
+
+      seen.add(target);
 
       const linksBack = target.page.hreflang.some(
         (h) => h.url && key(h.url) === key(p.url)
@@ -1322,6 +1865,7 @@ const hreflangFindings = ({ ctx, key, pagesByKey }: SiteScope): Finding[] => {
 
       if (!linksBack) {
         missingReturn.push({ page: p.url, alternate: alt.url });
+        returnLinks.push(returnLinkEdit(target, p, key));
       }
     }
   }
@@ -1332,6 +1876,7 @@ const hreflangFindings = ({ ctx, key, pagesByKey }: SiteScope): Finding[] => {
         m("site.hreflang-no-return-link"),
         `${missingReturn.length} hreflang alternate(s) do not link back.`,
         {
+          fix: returnLinks.slice(0, MAX_EDITS),
           evidence: {
             count: missingReturn.length,
             examples: cap(missingReturn),
@@ -1347,6 +1892,8 @@ const hreflangFindings = ({ ctx, key, pagesByKey }: SiteScope): Finding[] => {
         m("site.crawl-limit-reached"),
         `Crawl stopped after ${ctx.crawl.pagesCrawled} pages (limit ${ctx.crawl.maxPages}); ${ctx.crawl.pagesDiscovered} URLs were discovered.`,
         {
+          // About the audit, not the site: the change is a larger --max-pages, not an edit.
+          fix: [],
           evidence: {
             pagesCrawled: ctx.crawl.pagesCrawled,
             pagesDiscovered: ctx.crawl.pagesDiscovered,
@@ -1363,6 +1910,8 @@ const hreflangFindings = ({ ctx, key, pagesByKey }: SiteScope): Finding[] => {
 interface TargetProblem {
   kind: "broken" | "redirects" | "noindex" | "canonical";
   detail: string;
+  /** Where the URL leads instead: the end of its redirects, or the canonical it names. */
+  to?: string;
 }
 
 interface CanonicalIssue {
@@ -1371,11 +1920,63 @@ interface CanonicalIssue {
   problem: string;
 }
 
+/** The canonical a page should name instead of a broken, redirecting, noindex or chained one. */
+const canonicalRepair = (
+  scope: SiteScope,
+  p: PageRecord,
+  problem: TargetProblem
+): FixEdit => {
+  if (problem.kind === "redirects" || problem.kind === "canonical") {
+    return canonicalEdit(p, problem.to ?? p.url);
+  }
+
+  if (problem.kind === "noindex") {
+    return canonicalEdit(
+      p,
+      p.url,
+      "The page's own URL. If the noindex page is the one meant to rank, remove its noindex and keep this canonical instead."
+    );
+  }
+
+  const live = p.page.canonical ? liveSpelling(scope, p.page.canonical) : null;
+
+  return canonicalEdit(
+    p,
+    live ?? p.url,
+    live
+      ? undefined
+      : "The page's own URL. If another page is the preferred one, use its live URL."
+  );
+};
+
 /** What is wrong with a URL that metadata (a canonical, an hreflang link) points to, or null. */
-const targetProblem = (
-  { key, pagesByKey, checksByKey, isIndexable }: SiteScope,
+/**
+ * Where a chain of canonicals ends: the first page that names itself (or nothing), or the last URL
+ * before the chain loops or leaves the crawled pages.
+ */
+const finalCanonical = (
+  { key, pagesByKey }: SiteScope,
   url: string
-): TargetProblem | null => {
+): string => {
+  let current = url;
+  const seen = new Set([key(url)]);
+
+  for (let hops = 0; hops < 10; hops += 1) {
+    const next = pagesByKey.get(key(current))?.page.canonical;
+
+    if (!next || seen.has(key(next))) {
+      return current;
+    }
+
+    seen.add(key(next));
+    current = next;
+  }
+
+  return current;
+};
+
+const targetProblem = (scope: SiteScope, url: string): TargetProblem | null => {
+  const { key, pagesByKey, checksByKey, isIndexable } = scope;
   const check = checksByKey.get(key(url));
 
   if (check && (check.error || (check.status ?? 0) >= 400)) {
@@ -1386,7 +1987,11 @@ const targetProblem = (
   }
 
   if (check && check.redirectChain.length > 0) {
-    return { kind: "redirects", detail: `redirects to ${check.finalUrl}` };
+    return {
+      kind: "redirects",
+      detail: `redirects to ${check.finalUrl}`,
+      to: check.finalUrl,
+    };
   }
 
   const target = pagesByKey.get(key(url));
@@ -1402,7 +2007,11 @@ const targetProblem = (
   const { canonical } = target.page;
 
   return canonical && key(canonical) !== key(target.url)
-    ? { kind: "canonical", detail: `names ${canonical} as canonical` }
+    ? {
+        kind: "canonical",
+        detail: `names ${canonical} as canonical`,
+        to: finalCanonical(scope, canonical),
+      }
     : null;
 };
 
@@ -1411,6 +2020,13 @@ const canonicalGraphFindings = (scope: SiteScope): Finding[] => {
   const { key, okPages, isIndexable } = scope;
 
   const groups: Record<TargetProblem["kind"], CanonicalIssue[]> = {
+    broken: [],
+    redirects: [],
+    noindex: [],
+    canonical: [],
+  };
+
+  const repairs: Record<TargetProblem["kind"], FixEdit[]> = {
     broken: [],
     redirects: [],
     noindex: [],
@@ -1433,6 +2049,7 @@ const canonicalGraphFindings = (scope: SiteScope): Finding[] => {
         canonical,
         problem: problem.detail,
       });
+      repairs[problem.kind].push(canonicalRepair(scope, p, problem));
     }
   }
 
@@ -1465,6 +2082,7 @@ const canonicalGraphFindings = (scope: SiteScope): Finding[] => {
     return list.length > 0
       ? [
           finding(m(id), `${list.length} page(s) ${label}.`, {
+            fix: repairs[kind].slice(0, MAX_EDITS),
             evidence: { count: list.length, examples: cap(list) },
           }),
         ]
@@ -1488,6 +2106,7 @@ const isUtilityPage = (url: string): boolean => {
 const noindexLinkFindings = ({
   ctx,
   key,
+  pagesByKey,
   okPages,
   isIndexable,
 }: SiteScope): Finding[] => {
@@ -1520,10 +2139,52 @@ const noindexLinkFindings = ({
         finding(
           m("site.links-to-noindex"),
           `${linked.length} noindex page(s) are linked from other pages; the most linked: ${linked[0]?.url} (${linked[0]?.linkedFrom} pages).`,
-          { evidence: { count: linked.length, pages: cap(linked) } }
+          {
+            fix: linked
+              .flatMap((l) => {
+                const record = pagesByKey.get(key(l.url));
+
+                return record
+                  ? removeNoindexEdits(
+                      record,
+                      `Only if ${l.url} belongs in search results; leave the noindex on a page kept out on purpose.`
+                    )
+                  : [];
+              })
+              .slice(0, MAX_EDITS),
+            evidence: { count: linked.length, pages: cap(linked) },
+          }
         ),
       ]
     : [];
+};
+
+/**
+ * Points an hreflang link at the canonical, live URL its alternate leads to, or removes it when the
+ * alternate is broken or noindex: an annotation to such a page is ignored anyway.
+ */
+const hreflangRepair = (
+  p: PageRecord,
+  alt: HreflangInfo,
+  problem: TargetProblem
+): FixEdit => {
+  const at = `link[rel="alternate"][hreflang="${alt.lang}"]`;
+
+  if (
+    (problem.kind === "redirects" || problem.kind === "canonical") &&
+    problem.to
+  ) {
+    return onUrl(
+      setAttributeEdit(alt.tag, at, "href", escapeAttribute(problem.to)),
+      locationOf(p)
+    );
+  }
+
+  return removeEdit("html", alt.tag, {
+    url: locationOf(p),
+    at,
+    write: `${alt.url} ${problem.detail}. If that language version should exist, list its live, indexable URL here instead.`,
+  });
 };
 
 /** hreflang alternates that are broken, redirect, are noindex or canonicalize elsewhere. */
@@ -1538,6 +2199,7 @@ const hreflangTargetFindings = (scope: SiteScope): Finding[] => {
   }[] = [];
 
   const seen = new Set<string>();
+  const fix: FixEdit[] = [];
 
   for (const p of okPages) {
     for (const alt of p.page.hreflang) {
@@ -1560,6 +2222,7 @@ const hreflangTargetFindings = (scope: SiteScope): Finding[] => {
           alternate: alt.url,
           problem: problem.detail,
         });
+        fix.push(hreflangRepair(p, alt, problem));
       }
     }
   }
@@ -1569,22 +2232,13 @@ const hreflangTargetFindings = (scope: SiteScope): Finding[] => {
         finding(
           m("site.hreflang-target-invalid"),
           `${invalid.length} hreflang alternate(s) point to URLs that are broken, redirect, are noindex or are not canonical.`,
-          { evidence: { count: invalid.length, examples: cap(invalid) } }
+          {
+            fix: fix.slice(0, MAX_EDITS),
+            evidence: { count: invalid.length, examples: cap(invalid) },
+          }
         ),
       ]
     : [];
-};
-
-/** The URL with its path lower-cased and trailing slashes dropped: one key for every spelling. */
-const spellingKey = (url: string): string => {
-  try {
-    const u = new URL(url);
-    const pathname = trimTrailingSlashes(u.pathname.toLowerCase()) || "/";
-
-    return `${u.origin}${pathname}${u.search}`;
-  } catch {
-    return url;
-  }
 };
 
 const pathnameOf = (url: string): string => {
@@ -1664,11 +2318,24 @@ const urlVariantFindings = (scope: SiteScope): Finding[] => {
 
   const kinds = [...new Set(duplicates.map((d) => d.kind))];
 
+  const fix: FixEdit[] = duplicates.slice(0, MAX_EDITS).map((d) => ({
+    in: "http",
+    action: "replace",
+    url: d.variant,
+    current: statusLine(d.status ?? 200),
+    code: redirectTo(d.url),
+    write:
+      d.kind === "trailing-slash"
+        ? "For every URL of the site, to the one spelling with or without the trailing slash: the trailingSlash setting in Next.js, Nuxt or Astro, or a redirect rule at the server or CDN."
+        : "For every URL spelled in another case, to the spelling the site links to: a redirect rule at the server or CDN.",
+  }));
+
   return [
     finding(
       m("site.url-variant-duplicate"),
       `${duplicates.length} page(s) also answer at a ${kinds.join(" and a ")} variant of their URL.`,
       {
+        fix,
         evidence: {
           count: duplicates.length,
           examples: cap(
@@ -1696,11 +2363,23 @@ const withoutQuery = (url: string): string => {
 };
 
 /** Pages that differ only in their query string, show the same text and do not consolidate. */
-const parameterDuplicateFindings = ({
-  key,
-  okPages,
-  isIndexable,
-}: SiteScope): Finding[] => {
+/** Canonicals from each parameter version to the URL without the parameter, or the first URL. */
+const parameterCanonicals = (
+  { key, pagesByKey }: SiteScope,
+  group: { path: string; urls: string[] }
+): FixEdit[] => {
+  const target =
+    group.urls.find((u) => !u.includes("?")) ?? group.urls[0] ?? group.path;
+
+  return group.urls.flatMap((u) => {
+    const record = key(u) === key(target) ? undefined : pagesByKey.get(key(u));
+
+    return record ? [canonicalEdit(record, target)] : [];
+  });
+};
+
+const parameterDuplicateFindings = (scope: SiteScope): Finding[] => {
+  const { key, okPages, isIndexable } = scope;
   const byPath = new Map<string, PageRecord[]>();
 
   for (const p of okPages) {
@@ -1757,7 +2436,12 @@ const parameterDuplicateFindings = ({
         finding(
           m("site.parameter-duplicates"),
           `${groups.length} path(s) are crawled under several query strings with the same text.`,
-          { evidence: { count: groups.length, groups: cap(groups) } }
+          {
+            fix: groups
+              .flatMap((g) => parameterCanonicals(scope, g))
+              .slice(0, MAX_EDITS),
+            evidence: { count: groups.length, groups: cap(groups) },
+          }
         ),
       ]
     : [];
@@ -1770,8 +2454,51 @@ interface BrokenImage {
   error?: string;
 }
 
+/** Points each <img> that shows a broken image at a slot for the image's working URL. */
+const brokenImageEdits = (
+  { key, pagesByKey }: SiteScope,
+  image: BrokenImage,
+  pages: Iterable<string>
+): FixEdit[] => {
+  const write = `The URL the image file is deployed at; or upload the missing file to ${image.url}.`;
+
+  const edits = [...pages].flatMap((u) => {
+    const record = pagesByKey.get(key(u));
+
+    return record
+      ? imagesOf(record, image.url).map((img) =>
+          onUrl(
+            setAttributeEdit(
+              img.tag,
+              "img",
+              "src",
+              slot("working URL of the image"),
+              write
+            ),
+            locationOf(record)
+          )
+        )
+      : [];
+  });
+
+  // An image from srcset or a <picture> source has no <img src> to quote: upload the file instead.
+  return edits.length > 0
+    ? edits
+    : [
+        {
+          in: "asset",
+          action: "add",
+          url: image.url,
+          at: "new file",
+          code: slot("the image file"),
+          write: `Upload the image the pages show here, or change the pages that point to ${image.url}.`,
+        },
+      ];
+};
+
 /** Images that answer 4xx/5xx or do not load, with the pages that show them. */
-const brokenImageFindings = (ctx: SiteContext): Finding[] => {
+const brokenImageFindings = (scope: SiteScope): Finding[] => {
+  const { ctx } = scope;
   const broken: BrokenImage[] = [];
 
   for (const [url, check] of ctx.imageChecks ?? []) {
@@ -1795,7 +2522,14 @@ const brokenImageFindings = (ctx: SiteContext): Finding[] => {
         finding(
           m("site.broken-images"),
           `${broken.length} image URL(s) are broken.`,
-          { evidence: { count: broken.length, examples: cap(broken, 20) } }
+          {
+            fix: broken
+              .flatMap((b) =>
+                brokenImageEdits(scope, b, ctx.imageSources?.get(b.url) ?? [])
+              )
+              .slice(0, MAX_EDITS),
+            evidence: { count: broken.length, examples: cap(broken, 20) },
+          }
         ),
       ]
     : [];
@@ -1828,21 +2562,22 @@ export const runSiteRules = (ctx: SiteContext): Finding[] => {
     isIndexable: (p) =>
       !robotsDirectives(p.page, p.response).noindex &&
       (p.response?.status ?? 200) < 400,
+    linksTo: (p, targetKey) => linksTo(p, targetKey, key),
   };
 
   return [
-    ...robotsFindings(ctx),
+    ...robotsFindings(scope),
     ...robotsContentFindings(ctx),
     ...blockedResourceFindings(scope),
     ...sitemapFindings(scope),
     ...sitemapProtocolFindings(ctx),
-    ...linkHealthFindings(ctx),
-    ...unreachedFindings(ctx),
+    ...linkHealthFindings(scope),
+    ...unreachedFindings(scope),
     ...duplicateFindings(scope),
     ...architectureFindings(scope),
     ...urlVariantFindings(scope),
     ...parameterDuplicateFindings(scope),
-    ...brokenImageFindings(ctx),
+    ...brokenImageFindings(scope),
     ...canonicalGraphFindings(scope),
     ...noindexLinkFindings(scope),
     ...hreflangTargetFindings(scope),

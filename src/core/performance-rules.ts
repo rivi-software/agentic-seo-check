@@ -1,5 +1,18 @@
+import {
+  cacheHtmlEdit,
+  clsEdits,
+  describedEdit,
+  failedAuditEdits,
+  lcpEdits,
+  lcpFallbackEdit,
+  opportunityEdits,
+  renderBlockingEdits,
+  scriptEdits,
+  uniqueEdits,
+} from "./performance-fixes.js";
+import { addHtml, slot } from "./rules/fix.js";
 import { finding, GOOGLE_DOCS } from "./rules/rule.js";
-import type { Finding, PerformanceResult, RuleMeta } from "./types.js";
+import type { Finding, FixEdit, PerformanceResult, RuleMeta } from "./types.js";
 
 const meta = (
   id: string,
@@ -88,23 +101,87 @@ const m = (id: string): RuleMeta => {
   return rule;
 };
 
+const pageOf = (result: PerformanceResult): string =>
+  result.finalUrl || result.requestedUrl;
+
+/** `edits`, or `fallback` when Lighthouse named nothing to change. */
+const orElse = (edits: FixEdit[], fallback: () => FixEdit): FixEdit[] =>
+  edits.length ? uniqueEdits(edits) : [fallback()];
+
+const UNSIZED_FALLBACK = (): FixEdit =>
+  addHtml(
+    "img:not([width])",
+    `width="${slot("width in px")}" height="${slot("height in px")}"`,
+    "Lighthouse named no element. Give every image width and height (its pixel size, or any size with its aspect ratio) so the browser reserves its space, and keep height: auto in the CSS; reserve the space of banners, ads and embeds a script inserts."
+  );
+
+/** `defer` on the head's blocking scripts, when Lighthouse named no file. */
+const DEFER_FALLBACK = (): FixEdit =>
+  addHtml(
+    'head > script[src]:not([async]):not([defer]):not([type="module"])',
+    "defer",
+    "Lighthouse named no file. defer runs these scripts after the HTML is parsed; leave one blocking only if an inline script calls it before the page has loaded."
+  );
+
+const lcpFix = (result: PerformanceResult): FixEdit[] =>
+  orElse(lcpEdits(result, pageOf(result)), lcpFallbackEdit);
+
+const tbtFix = (result: PerformanceResult): FixEdit[] =>
+  orElse(scriptEdits(result.scripts ?? [], pageOf(result)), DEFER_FALLBACK);
+
+const fcpFix = (result: PerformanceResult): FixEdit[] => {
+  const blocking = renderBlockingEdits(
+    result.renderBlocking ?? [],
+    pageOf(result)
+  );
+
+  const slowServer = (result.metrics.ttfbMs ?? 0) > 600;
+
+  return orElse(
+    [
+      ...blocking,
+      ...(slowServer ? [cacheHtmlEdit(result.metrics.ttfbMs)] : []),
+    ],
+    DEFER_FALLBACK
+  );
+};
+
+/** The edits of the opportunities with the largest savings: where a low score comes from. */
+const scoreFix = (result: PerformanceResult): FixEdit[] =>
+  orElse(
+    result.opportunities
+      .slice(0, 3)
+      .flatMap((o) => opportunityEdits(o, result, pageOf(result))),
+    () => lcpFix(result)[0] ?? lcpFallbackEdit()
+  );
+
 /** LCP, CLS and TBT against the Core Web Vitals thresholds. */
 const vitalsFindings = (result: PerformanceResult): Finding[] => {
   const out: Finding[] = [];
   const add = (f: Finding) => out.push(f);
   const { metrics } = result;
+  const lcp = result.lcpElement;
 
   if (metrics.lcpMs !== null && metrics.lcpMs > 2500) {
+    const evidence: NonNullable<Finding["evidence"]> = {
+      lcpMs: Math.round(metrics.lcpMs),
+      formFactor: result.formFactor,
+    };
+
+    if (lcp) {
+      evidence["element"] = lcp.node.snippet;
+      evidence["phases"] = lcp.phases;
+    }
+
     add(
       finding(
         m("perf.lcp-slow"),
         `LCP is ${(metrics.lcpMs / 1000).toFixed(1)} s (${metrics.lcpMs > 4000 ? "poor" : "needs improvement"}).`,
         {
           severity: metrics.lcpMs > 4000 ? "error" : "warning",
-          evidence: {
-            lcpMs: Math.round(metrics.lcpMs),
-            formFactor: result.formFactor,
-          },
+          fix: lcpFix(result),
+          selector: lcp?.node.selector,
+          evidence,
         }
       )
     );
@@ -117,6 +194,7 @@ const vitalsFindings = (result: PerformanceResult): Finding[] => {
         `CLS is ${metrics.cls.toFixed(3)} (${metrics.cls > 0.25 ? "poor" : "needs improvement"}).`,
         {
           severity: metrics.cls > 0.25 ? "error" : "warning",
+          fix: orElse(clsEdits(result), UNSIZED_FALLBACK),
           evidence: { cls: Number(metrics.cls.toFixed(3)) },
         }
       )
@@ -130,6 +208,7 @@ const vitalsFindings = (result: PerformanceResult): Finding[] => {
         `TBT is ${Math.round(metrics.tbtMs)} ms (${metrics.tbtMs > 600 ? "poor" : "needs improvement"}).`,
         {
           severity: metrics.tbtMs > 600 ? "error" : "warning",
+          fix: tbtFix(result),
           evidence: { tbtMs: Math.round(metrics.tbtMs) },
         }
       )
@@ -152,6 +231,7 @@ const timingFindings = (result: PerformanceResult): Finding[] => {
         `FCP is ${(metrics.fcpMs / 1000).toFixed(1)} s.`,
         {
           severity: metrics.fcpMs > 3000 ? "warning" : "info",
+          fix: fcpFix(result),
           evidence: { fcpMs: Math.round(metrics.fcpMs) },
         }
       )
@@ -163,7 +243,10 @@ const timingFindings = (result: PerformanceResult): Finding[] => {
       finding(
         m("perf.ttfb-slow"),
         `Server response time is ${Math.round(metrics.ttfbMs)} ms.`,
-        { evidence: { ttfbMs: Math.round(metrics.ttfbMs) } }
+        {
+          fix: [cacheHtmlEdit(metrics.ttfbMs)],
+          evidence: { ttfbMs: Math.round(metrics.ttfbMs) },
+        }
       )
     );
   }
@@ -174,6 +257,7 @@ const timingFindings = (result: PerformanceResult): Finding[] => {
         m("perf.score-low"),
         `Lighthouse performance score is ${metrics.performanceScore}/100.`,
         {
+          fix: scoreFix(result),
           evidence: {
             performanceScore: metrics.performanceScore,
             formFactor: result.formFactor,
@@ -205,6 +289,10 @@ const auditFindings = (result: PerformanceResult): Finding[] => {
         `${opp.title}${savings ? ` (est. savings ${savings})` : ""}.`,
         {
           recommendation: opp.description,
+          fix: orElse(opportunityEdits(opp, result, pageOf(result)), () =>
+            describedEdit(opp.title, opp.description)
+          ),
+          key: opp.id,
           evidence: {
             auditId: opp.id,
             savingsMs: opp.savingsMs,
@@ -223,6 +311,10 @@ const auditFindings = (result: PerformanceResult): Finding[] => {
         `Lighthouse SEO audit "${audit.title}" failed${audit.displayValue ? `: ${audit.displayValue}` : ""}.`,
         {
           recommendation: audit.description,
+          fix: orElse(failedAuditEdits(audit, result), () =>
+            describedEdit(audit.title, audit.description)
+          ),
+          key: audit.id,
           evidence: { auditId: audit.id, score: audit.score },
         }
       )
@@ -236,6 +328,10 @@ const auditFindings = (result: PerformanceResult): Finding[] => {
         `Lighthouse agentic-browsing audit "${audit.title}" failed${audit.displayValue ? `: ${audit.displayValue}` : ""}.`,
         {
           recommendation: audit.description,
+          fix: orElse(failedAuditEdits(audit, result), () =>
+            describedEdit(audit.title, audit.description)
+          ),
+          key: audit.id,
           evidence: { auditId: audit.id, score: audit.score },
         }
       )
@@ -246,11 +342,18 @@ const auditFindings = (result: PerformanceResult): Finding[] => {
 };
 
 export const performanceFindings = (result: PerformanceResult): Finding[] => {
-  const url = result.finalUrl || result.requestedUrl;
+  const url = pageOf(result);
 
-  return [
+  const findings = [
     ...vitalsFindings(result),
     ...timingFindings(result),
     ...auditFindings(result),
-  ].map((f) => ({ ...f, url }));
+  ];
+
+  // Set in place: a copy would lose the key a finding's id is made from.
+  for (const f of findings) {
+    f.url = url;
+  }
+
+  return findings;
 };

@@ -189,6 +189,68 @@ export const sitemapText = async (
   }
 };
 
+/**
+ * Which sitemap file lists what, for fixes that name the file to edit. It is kept beside the
+ * audit's `problems` rather than in it, so the JSON stays as it is.
+ */
+export interface SitemapLayout {
+  /** The sitemap each page URL is listed in (the first one read, when several list it). */
+  sitemapOf: Map<string, string>;
+  /** The sitemaps each sitemap index lists. */
+  children: Map<string, string[]>;
+  /** The sitemap index that lists a sitemap. */
+  parentOf: Map<string, string>;
+  /** Sitemaps with <urlset>, in the order they were read. */
+  urlsets: string[];
+}
+
+const layouts = new WeakMap<SitemapProblems, SitemapLayout>();
+
+/** The layout `inspectSitemap` recorded for the sitemaps behind `problems`. */
+export const sitemapLayout = (problems: SitemapProblems): SitemapLayout => {
+  let layout = layouts.get(problems);
+
+  if (!layout) {
+    layout = {
+      sitemapOf: new Map(),
+      children: new Map(),
+      parentOf: new Map(),
+      urlsets: [],
+    };
+    layouts.set(problems, layout);
+  }
+
+  return layout;
+};
+
+const recordLayout = (
+  problems: SitemapProblems,
+  sitemap: string,
+  parsed: ParsedSitemap
+): void => {
+  const layout = sitemapLayout(problems);
+
+  if (parsed.kind === "sitemapindex") {
+    layout.children.set(sitemap, parsed.locs);
+
+    for (const loc of parsed.locs) {
+      if (!layout.parentOf.has(loc)) {
+        layout.parentOf.set(loc, sitemap);
+      }
+    }
+
+    return;
+  }
+
+  layout.urlsets.push(sitemap);
+
+  for (const loc of parsed.locs) {
+    if (!layout.sitemapOf.has(loc)) {
+      layout.sitemapOf.set(loc, sitemap);
+    }
+  }
+};
+
 export const emptySitemapProblems = (): SitemapProblems => ({
   oversized: [],
   nestedIndexes: [],
@@ -232,6 +294,8 @@ export const inspectSitemap = (
   bytes: number,
   options: InspectOptions
 ): void => {
+  recordLayout(problems, sitemap, parsed);
+
   if (parsed.kind === "sitemapindex" && options.fromIndex) {
     problems.nestedIndexes.push(sitemap);
   }
