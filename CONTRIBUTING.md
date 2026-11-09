@@ -47,7 +47,7 @@ pnpm run verify
 
 `verify` runs what CI runs, in order: `format:check` (Oxfmt), `lint` (Oxlint), `check` (TypeScript over the sources, tests and configs), `test` (Vitest), `build` and `check:package`, which packs the package as npm would get it and checks its types, its entry point and both commands from the tarball. `pnpm run dev audit https://example.com` runs the CLI from source; `pnpm run mcp` starts the MCP server from source.
 
-`--render` and `--lighthouse` need a Chromium: Google Chrome, or `pnpm exec playwright install chromium`. The test suite does not launch a browser.
+`--render` and `--lighthouse` need a Chromium: Google Chrome, or `pnpm run dev install-browser`. The test suite does not launch a browser.
 
 The lint and format rules are [Ultracite](https://www.ultracite.ai)'s presets: `oxlint.config.ts` extends its `core`, `vitest` and `anti-slop` presets, and `oxfmt.config.ts` takes its formatting, leaving Markdown and JSON alone. `pnpm run fix` applies Oxlint's fixes, then Oxfmt, and three things run it for you: lefthook's pre-commit hook over the staged files (`lefthook.yml`, put into `.git/hooks` by `pnpm install`; `LEFTHOOK=0 git commit` skips it), Claude Code's hook over each file it writes (`.claude/settings.json`), and VS Code with the Oxc extension on save (`.vscode/`). `fix` holds back (`-A`) the fixes that would change what the code does, such as `unicorn/prefer-type-error`, which changes the class of a thrown error; `pnpm run lint` still reports those rules.
 

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { auditHtml } from "../src/core/audit.js";
@@ -8,6 +10,7 @@ import {
   jaccard,
   wordCount,
 } from "../src/core/html/text.js";
+import { LIGHTHOUSE_PEERS } from "../src/core/lighthouse.js";
 import { renderMarkdown } from "../src/core/report/markdown.js";
 import { pageScore } from "../src/core/score.js";
 import { parseSitemap } from "../src/core/sitemap.js";
@@ -136,6 +139,21 @@ describe("scoring and reports", () => {
     expect(md.trimEnd().split("\n").at(-1)).toBe(
       `_Audited with [agentic-seo-check](https://github.com/rivi-software/agentic-seo-check) ${VERSION}, made by [RIVI Software](https://rivi.software)._`
     );
+  });
+});
+
+describe("optional dependencies", () => {
+  it("names the Lighthouse peers at the majors package.json allows", () => {
+    // SAFETY: the repository's own manifest, which lists both peers.
+    const manifest = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf-8")
+    ) as { peerDependencies: Record<string, string> };
+
+    const majors = Object.entries(manifest.peerDependencies).map(
+      ([name, range]) => `${name}@${/\d+/u.exec(range)?.[0]}`
+    );
+
+    expect(LIGHTHOUSE_PEERS.toSorted()).toStrictEqual(majors.toSorted());
   });
 });
 

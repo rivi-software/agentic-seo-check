@@ -10,6 +10,7 @@ import type { CrawlOptions, ProgressEvent } from "./core/audit.js";
 import type { FetchOptions } from "./core/fetch.js";
 import { baselineFromAudit } from "./core/recheck.js";
 import type { BaselineEntry } from "./core/recheck.js";
+import { installBrowser } from "./core/render.js";
 import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 import { ALL_RULES } from "./core/rules/index.js";
 import { SEVERITY_RANK } from "./core/types.js";
@@ -437,6 +438,19 @@ program
       process.stdout.write(`${lines.join("\n")}\n`);
     }
   );
+
+program
+  .command("install-browser")
+  .description(
+    "Download the Chromium build the installed Playwright expects, for --render and --lighthouse on a machine without Google Chrome"
+  )
+  .option(
+    "--with-deps",
+    "Also install the system libraries Chromium needs (Linux; may ask for sudo)"
+  )
+  .action(async (opts: { withDeps?: boolean }) => {
+    await installBrowser(opts);
+  });
 
 program
   .command("mcp")

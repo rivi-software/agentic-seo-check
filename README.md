@@ -85,7 +85,22 @@ npm install -g @rivi-software/agentic-seo-check                  # or pnpm add -
 agentic-seo-check --help
 ```
 
-Optional, only for `--render` and `--lighthouse`: `playwright` and `lighthouse` (+ `chrome-launcher`) are optional peer dependencies, so install them next to the tool, plus Google Chrome or `npx playwright install chromium`. The renderer uses a Playwright-managed Chromium when present and falls back to the installed Google Chrome or Edge.
+`--render` needs nothing extra on a machine with Google Chrome or Edge: Playwright installs with the tool as an optional dependency (left out by `--omit=optional`), and the renderer launches a Playwright-managed Chromium when present, else the installed Chrome or Edge. Without either, download the Chromium build the bundled Playwright expects (about 300 MB, into Playwright's shared browser cache):
+
+```bash
+npx @rivi-software/agentic-seo-check install-browser   # or: agentic-seo-check install-browser [--with-deps]
+```
+
+`--lighthouse` also needs Lighthouse, an optional peer kept out of the install because it adds some 180 MB. Install it next to the tool:
+
+```bash
+npm i -D lighthouse@13 chrome-launcher@1                                              # in a project
+npm i -g @rivi-software/agentic-seo-check lighthouse@13 chrome-launcher@1             # global
+npx -y -p @rivi-software/agentic-seo-check -p lighthouse@13 -p chrome-launcher@1 \
+  agentic-seo-check audit https://example.com --lighthouse                           # npx
+```
+
+Lighthouse runs in Google Chrome, or in the Chromium `install-browser` downloads.
 
 From source: `pnpm install && pnpm build && node dist/cli.js --help`.
 
@@ -127,6 +142,9 @@ agentic-seo-check aeo ./dist --base-url https://www.example.com  # reads dist/ro
 agentic-seo-check rules --category structured-data
 agentic-seo-check rules --category aeo
 agentic-seo-check rules --rule canonical.multiple
+
+# the Chromium for --render and --lighthouse, where there is no Google Chrome
+agentic-seo-check install-browser
 ```
 
 `aeo` takes the same targets and output, crawl and request options as `audit`, plus `--ai-bots`; it has no `--keyword`, `--render`, `--lighthouse` or `--check-external`. With `--ai-bots`, the requests come from your machine with each bot's User-Agent, not from the bots' own IP ranges: a CDN that verifies bots may treat the real crawler differently, and the findings say so. Search crawlers and robots.txt-only tokens (Google-Extended, Applebot-Extended) are never impersonated.
@@ -150,7 +168,7 @@ Add to a project `.mcp.json` (Claude Code reads it automatically):
 }
 ```
 
-Or `claude mcp add agentic-seo-check -- npx -y @rivi-software/agentic-seo-check mcp`. From a source checkout, use `node /absolute/path/to/agentic-seo-check/dist/mcp-bin.js` instead (this repo's own `.mcp.json` does that).
+Or `claude mcp add agentic-seo-check -- npx -y @rivi-software/agentic-seo-check mcp`. For `lighthouse`/`seo_lighthouse`, start the server with Lighthouse beside it: `"args": ["-y", "-p", "@rivi-software/agentic-seo-check", "-p", "lighthouse@13", "-p", "chrome-launcher@1", "agentic-seo-check", "mcp"]`. From a source checkout, use `node /absolute/path/to/agentic-seo-check/dist/mcp-bin.js` instead (this repo's own `.mcp.json` does that).
 
 | Tool | Purpose |
 | --- | --- |
