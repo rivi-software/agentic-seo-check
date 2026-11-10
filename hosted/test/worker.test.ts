@@ -16,6 +16,8 @@ import { HOSTED_LIMITS } from "../../src/core/hosted.ts";
 import { readVersion, defines } from "../scripts/defines.ts";
 
 const ORIGIN = "https://mcp.agentic-seo-check.rivi.software";
+const SITE = "https://agentic-seo-check.rivi.software";
+const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 const html = (title: string, body = "", head = "") =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>${head}</head><body><h1>${title}</h1>${body}</body></html>`;
@@ -90,6 +92,9 @@ const site = new Map<string, Route>(
 const requests: { url: string; userAgent: string | null }[] = [];
 
 let worker: Awaited<ReturnType<typeof unstable_startWorker>>;
+
+/** The same Worker, answering as the website's hostname. */
+let website: Awaited<ReturnType<typeof unstable_startWorker>>;
 let client: Client;
 let base: URL;
 
@@ -126,43 +131,74 @@ const audit = async (
   return { result, audit: Audit.safeParse(result.structuredContent).data };
 };
 
+/** Sends the audit form as a browser does, with Turnstile's token. */
+const sendForm = (url: string, token = "a-person", origin = SITE) =>
+  website.fetch(`${SITE}/audit`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      origin,
+    },
+    body: new URLSearchParams({
+      url,
+      "cf-turnstile-response": token,
+    }).toString(),
+  });
+
+/**
+ * Starts the Worker in workerd, answering as `origin`: Wrangler's dev server gives every request
+ * one hostname, whatever address it was sent to.
+ */
+const start = (origin: string) =>
+  unstable_startWorker({
+    config: new URL("../wrangler.jsonc", import.meta.url).pathname,
+    build: { define: defines() },
+    dev: {
+      origin: { hostname: new URL(origin).hostname, secure: true },
+      server: { hostname: "127.0.0.1", port: 0 },
+      inspector: false,
+      persist: false,
+      watch: false,
+      // Serves /__scheduled, which runs the Cron Trigger.
+      testScheduled: true,
+      outboundService: async (request: Request) => {
+        // Turnstile, as the audit form asks it: only the token "a-person" passes.
+        if (request.url === SITEVERIFY) {
+          const sent = new URLSearchParams(await request.text());
+
+          return Response.json({
+            success: sent.get("response") === "a-person",
+          });
+        }
+
+        requests.push({
+          url: request.url,
+          userAgent: request.headers.get("user-agent"),
+        });
+
+        // The hosted server auditing its own pages: answer from the Worker itself.
+        if (request.url.startsWith(`${ORIGIN}/`)) {
+          return worker.fetch(request.url);
+        }
+
+        const route = site.get(request.url);
+
+        return new Response(route?.body ?? html("Not found"), {
+          status: route ? (route.status ?? 200) : 404,
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            ...route?.headers,
+          },
+        });
+      },
+    },
+  });
+
 describe("the hosted Worker in workerd", () => {
   beforeAll(async () => {
-    worker = await unstable_startWorker({
-      config: new URL("../wrangler.jsonc", import.meta.url).pathname,
-      build: { define: defines() },
-      dev: {
-        server: { hostname: "127.0.0.1", port: 0 },
-        inspector: false,
-        persist: false,
-        watch: false,
-        // Serves /__scheduled, which runs the Cron Trigger.
-        testScheduled: true,
-        outboundService: (request: Request) => {
-          requests.push({
-            url: request.url,
-            userAgent: request.headers.get("user-agent"),
-          });
-
-          // The hosted server auditing its own pages: answer from the Worker itself.
-          if (request.url.startsWith(`${ORIGIN}/`)) {
-            return worker.fetch(request.url);
-          }
-
-          const route = site.get(request.url);
-
-          return new Response(route?.body ?? html("Not found"), {
-            status: route ? (route.status ?? 200) : 404,
-            headers: {
-              "content-type": "text/html; charset=utf-8",
-              ...route?.headers,
-            },
-          });
-        },
-      },
-    });
-
-    await worker.ready;
+    worker = await start(ORIGIN);
+    website = await start(SITE);
+    await Promise.all([worker.ready, website.ready]);
     base = await worker.url;
     client = new Client({ name: "worker-test", version: "0.0.0" });
     await client.connect(
@@ -172,7 +208,7 @@ describe("the hosted Worker in workerd", () => {
 
   afterAll(async () => {
     await client?.close();
-    await worker?.dispose();
+    await Promise.all([worker?.dispose(), website?.dispose()]);
   });
 
   describe("the hosted Worker", () => {
@@ -356,6 +392,132 @@ describe("the hosted Worker in workerd", () => {
       expect(res.status).toBe(200);
       expect(requests.map((r) => r.url)).toContain(
         "https://openai.com/chatgpt-connectors.json"
+      );
+    });
+  });
+
+  describe("the website on its own hostname", () => {
+    it("serves the homepage, the rules and the files a crawler asks for", async () => {
+      const answers = await Promise.all(
+        [
+          "/",
+          "/rules",
+          "/robots.txt",
+          "/sitemap.xml",
+          "/llms.txt",
+          "/site.js",
+          "/favicon.svg",
+          "/fonts/bricolage-grotesque-600.woff2",
+          "/nope",
+        ].map(async (path) => {
+          const res = await website.fetch(`${SITE}${path}`);
+          await res.arrayBuffer();
+
+          return [path, res.status, res.headers.get("content-type")];
+        })
+      );
+
+      expect(answers).toStrictEqual([
+        ["/", 200, "text/html; charset=utf-8"],
+        ["/rules", 200, "text/html; charset=utf-8"],
+        ["/robots.txt", 200, "text/plain; charset=utf-8"],
+        ["/sitemap.xml", 200, "application/xml; charset=utf-8"],
+        ["/llms.txt", 200, "text/markdown; charset=utf-8"],
+        ["/site.js", 200, "text/javascript; charset=utf-8"],
+        ["/favicon.svg", 200, "image/svg+xml"],
+        ["/fonts/bricolage-grotesque-600.woff2", 200, "font/woff2"],
+        ["/nope", 404, "text/html; charset=utf-8"],
+      ]);
+    });
+
+    it("serves the font as a WOFF2 file and no MCP endpoint", async () => {
+      const font = await website.fetch(
+        `${SITE}/fonts/bricolage-grotesque-600.woff2`
+      );
+
+      const bytes = new Uint8Array(await font.arrayBuffer());
+      const mcp = await website.fetch(`${SITE}/mcp`, { method: "POST" });
+
+      expect(new TextDecoder().decode(bytes.slice(0, 4))).toBe("wOF2");
+      expect(mcp.status).toBe(405);
+    });
+
+    it("audits a page for the form and answers with both reports", async () => {
+      const before = requests.length;
+      const res = await sendForm("shop.example.com/about");
+      const page = await res.text();
+
+      // Never cached and never indexed: a report has no address of its own.
+      expect([
+        res.status,
+        res.headers.get("cache-control"),
+        res.headers.get("x-robots-tag"),
+      ]).toStrictEqual([200, "no-store", "noindex"]);
+      expect(page).toContain("About the fixture shop");
+      expect(page).toContain("SEO: search engines");
+      expect(page).toContain("AEO: AI answer engines");
+      expect(requests.slice(before)).toContainEqual({
+        url: "https://shop.example.com/about",
+        userAgent: `Mozilla/5.0 (compatible; agentic-seo-check/${readVersion()}; +${ORIGIN}/crawler)`,
+      });
+    });
+
+    it("requests nothing for a link that fills the field, or for GET /audit", async () => {
+      const before = requests.length;
+
+      const filled = await website.fetch(
+        `${SITE}/?url=https://shop.example.com/about`
+      );
+
+      const opened = await website.fetch(`${SITE}/audit`, {
+        redirect: "manual",
+      });
+
+      await expect(filled.text()).resolves.toContain(
+        'value="https://shop.example.com/about"'
+      );
+      expect(opened.status).toBe(303);
+      expect(opened.headers.get("location")).toBe("/");
+      expect(requests).toHaveLength(before);
+    });
+
+    it("refuses a form without a token Turnstile gave, before any request", async () => {
+      const before = requests.length;
+      const res = await sendForm("https://shop.example.com/about", "a-bot");
+
+      expect(res.status).toBe(403);
+      await expect(res.text()).resolves.toContain(
+        "The check that keeps bots out did not pass"
+      );
+      expect(requests).toHaveLength(before);
+    });
+
+    it("refuses a form another site sent", async () => {
+      const res = await sendForm(
+        "https://shop.example.com/about",
+        "a-person",
+        "https://elsewhere.example.com"
+      );
+
+      expect(res.status).toBe(403);
+      await res.text();
+    });
+
+    it("refuses an address the hosted server may not request", async () => {
+      const before = requests.length;
+      const res = await sendForm("http://localhost:8787/");
+
+      expect(res.status).toBe(400);
+      await expect(res.text()).resolves.toContain("cannot reach localhost");
+      expect(requests).toHaveLength(before);
+    });
+
+    it("says a site turned the audit away", async () => {
+      const res = await sendForm("https://walled.example.com/");
+
+      expect(res.status).toBe(502);
+      await expect(res.text()).resolves.toContain(
+        "walled.example.com answered the hosted server with a challenge page"
       );
     });
   });

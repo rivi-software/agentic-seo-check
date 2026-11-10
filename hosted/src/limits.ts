@@ -22,6 +22,9 @@ declare const HOSTED_RATE_LIMITS: Record<
 
 export const ORIGIN = "https://mcp.agentic-seo-check.rivi.software";
 
+/** The project's website, which the same Worker serves on a hostname of its own (issue #39). */
+export const SITE_ORIGIN = "https://agentic-seo-check.rivi.software";
+
 /**
  * The User-Agent of every request: the product token that robots.txt groups match, and the page
  * that says what the requests are and how to stop them.

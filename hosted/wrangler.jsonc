@@ -10,7 +10,13 @@
   // fetch() to a site on Cloudflare goes through its zone's front door (redirects, WAF, Workers), as a
   // search engine's request does, rather than straight to its origin.
   "compatibility_flags": ["global_fetch_strictly_public"],
-  "routes": [{ "pattern": "mcp.agentic-seo-check.rivi.software", "custom_domain": true }],
+  // The MCP server's hostname, and the website's (issue #39): the Worker routes by hostname.
+  "routes": [
+    { "pattern": "mcp.agentic-seo-check.rivi.software", "custom_domain": true },
+    { "pattern": "agentic-seo-check.rivi.software", "custom_domain": true }
+  ],
+  // The website's heading font, bundled as its bytes.
+  "rules": [{ "type": "Data", "globs": ["**/*.woff2"], "fallthrough": true }],
   "workers_dev": false,
   "preview_urls": false,
   // A crawl at the caps costs about 15 s of CPU; this is the default limit, written down.
@@ -48,7 +54,11 @@
     // Outgoing requests a day, all callers together: past it, audits that request sites wait for 00:00 UTC.
     "DAILY_REQUESTS": 100000,
     // The token OpenAI asks the domain to serve at /.well-known/openai-apps-challenge (#33); none yet.
-    "OPENAI_APPS_CHALLENGE": ""
+    "OPENAI_APPS_CHALLENGE": "",
+    // The public site key of the website's Turnstile widget ("agentic-seo-check website audit
+    // form", invisible). Its secret key is the Worker secret TURNSTILE_SECRET_KEY; the audit form
+    // is off when either is missing. .dev.vars has Cloudflare's test keys for local runs.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAF7cZ5A-51MpK6BR"
   },
   // Errors only, as the Worker logs them: no invocation logs, which carry request details.
   "observability": {

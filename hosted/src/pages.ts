@@ -10,7 +10,7 @@ import type {
   JsonObject,
   JsonValue,
 } from "../../src/core/html/structured-data.js";
-import { ORIGIN, rateLimit, USER_AGENT } from "./limits.js";
+import { ORIGIN, rateLimit, SITE_ORIGIN, USER_AGENT } from "./limits.js";
 
 export const ABUSE_URL = "https://help.rivi.software/contact";
 
@@ -134,6 +134,7 @@ export const landingPage = (dailyRequests: number): string =>
 <p class="lead">agentic-seo-check audits pages and sites for search engines and AI answer engines, and gives every finding the exact fix. This is its MCP server, hosted by ${MAKER}: free to use, with no account and no key.</p>
 <p>The server's address:</p>
 <pre><code>${MCP_URL}</code></pre>
+<p>To audit one page yourself, with no assistant, use the form on <a href="${SITE_ORIGIN}/">the agentic-seo-check website</a>, which also lists <a href="${SITE_ORIGIN}/rules">every rule</a>.</p>
 <p>It speaks MCP over Streamable HTTP. Ask your assistant to audit a page, crawl a site or check how answer engines see it; it answers with findings it can act on, such as a missing canonical, a broken internal link or robots.txt keeping out an AI crawler, each with the edits that fix it.</p>
 
 <h2>Add it to your assistant</h2>
@@ -189,7 +190,7 @@ ${limitRow("A page", `the first ${MB(HOSTED_LIMITS.maxBodyBytes)} of its HTML, w
 <pre><code>${LOCAL_SERVER}</code></pre>
 
 <h2>Privacy</h2>
-<p>The server keeps no HTML you send, no reports and no headers. For each tool call it records the tool, the outcome, the duration, the number of requests and pages, and the hostname it audited, so that a report about too many requests to a site can be checked against what the server sent there. It records the hostname only, never the path or the query, and never your IP address. Records are kept for three months. The server runs on Cloudflare, which processes the requests for ${MAKER}.</p>
+<p>The server keeps no HTML you send, no reports and no headers. For each tool call, and each run of the website's page audit, it records the tool, the outcome, the duration, the number of requests and pages, and the hostname it audited, so that a report about too many requests to a site can be checked against what the server sent there. It records the hostname only, never the path or the query, and never your IP address. Records are kept for three months. The server runs on Cloudflare, which processes the requests for ${MAKER}.</p>
 
 <h2>Requests to your site</h2>
 <p>If this server has requested your site, <a href="/crawler">the page for site owners</a> says what the requests are and how to stop them. Report abuse, such as too many requests to one site, through <a href="${ABUSE_URL}">help.rivi.software/contact</a>.</p>`,
@@ -209,10 +210,10 @@ export const crawlerPage = (): string =>
       publisher: { "@id": PUBLISHER_ID },
     },
     body: `<h1>agentic-seo-check requests to your site</h1>
-<p class="lead">Someone asked their AI assistant to audit your site for search engines or AI answer engines, and the assistant used the hosted agentic-seo-check server, run by ${MAKER}. Every request is part of an audit a person started; the server does not crawl the web on its own.</p>
+<p class="lead">Someone asked their AI assistant to audit your site for search engines or AI answer engines, or entered one of its pages in the form on <a href="${SITE_ORIGIN}/">the agentic-seo-check website</a>. Both use the hosted agentic-seo-check server, run by ${MAKER}. Every request is part of an audit a person started; the server does not crawl the web on its own.</p>
 
 <h2>What the requests are</h2>
-<p>An audit of one page is one request, plus any redirects. A crawl requests up to ${HOSTED_LIMITS.maxPages} pages, robots.txt, up to ${HOSTED_LIMITS.maxSitemaps} sitemaps and up to ${HOSTED_LIMITS.maxLinkChecks} link and image targets: about 150 requests. The server sends at most ${perPeriod("SITE_REQUESTS", "requests")} to one hostname, from all its callers together.</p>
+<p>An audit of one page is one request, plus any redirects; the website's form audits one page for search engines and for answer engines, which also reads robots.txt and llms.txt. A crawl requests up to ${HOSTED_LIMITS.maxPages} pages, robots.txt, up to ${HOSTED_LIMITS.maxSitemaps} sitemaps and up to ${HOSTED_LIMITS.maxLinkChecks} link and image targets: about 150 requests. The server sends at most ${perPeriod("SITE_REQUESTS", "requests")} to one hostname, from all its callers together.</p>
 
 <h2>How to recognise them</h2>
 <p>The requests carry this User-Agent:</p>

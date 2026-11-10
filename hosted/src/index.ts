@@ -1,7 +1,8 @@
 /**
  * The hosted MCP server of agentic-seo-check (issue #35): a stateless Worker that answers MCP over
  * Streamable HTTP at /mcp with the hosted tools of `createMcpServer`, and serves the pages that say
- * how to use it and what its requests are.
+ * how to use it and what its requests are. On its second hostname it serves the project's website,
+ * with a page audit to run in the browser (issue #39, src/site/).
  */
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
@@ -16,6 +17,7 @@ import {
   notFoundPage,
   ROBOTS_TXT,
 } from "./pages.js";
+import { isSiteHost, siteRoute } from "./site/routes.js";
 
 export { HostedState } from "./state.js";
 
@@ -131,7 +133,12 @@ const page = (
 const HTML = "text/html; charset=utf-8";
 
 const route = (request: Request, env: Env, ctx: ExecutionContext) => {
-  const { pathname } = new URL(request.url);
+  const { hostname, pathname } = new URL(request.url);
+
+  // The website has a hostname of its own; this one keeps /mcp and the server's pages.
+  if (isSiteHost(hostname)) {
+    return siteRoute(request, env, ctx);
+  }
 
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: PREFLIGHT });
