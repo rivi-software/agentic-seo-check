@@ -14,6 +14,7 @@ import {
 } from "vitest";
 import { z } from "zod";
 
+import { REPOSITORY_URL, WEBSITE_URL } from "../src/brand.js";
 import { sleep } from "../src/core/concurrency.js";
 import type { RequestGate } from "../src/core/fetch.js";
 import {
@@ -301,6 +302,20 @@ describe("the hosted server", () => {
         "npx -y @rivi-software/agentic-seo-check mcp"
       );
       expect(pageTool?.description).not.toContain("localhost dev server");
+    });
+
+    it("names every tool in its annotations and links each audit to its docs", async () => {
+      const client = await connect(profileWith().profile);
+      const { tools } = await client.listTools();
+
+      for (const tool of tools) {
+        expect(tool.annotations?.title).toBe(tool.title);
+      }
+
+      for (const tool of tools.filter((t) => t.name !== "seo_list_rules")) {
+        expect(tool.description).toContain(`${REPOSITORY_URL}#hosted-server`);
+        expect(tool.description).toContain(`${WEBSITE_URL}/rules`);
+      }
     });
 
     it("audits inline HTML as a call that requests nothing", async () => {

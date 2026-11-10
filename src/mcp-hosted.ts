@@ -23,6 +23,7 @@ import type { AeoAudit, Audit } from "./core/types.js";
 import {
   commonOptions,
   detail,
+  docsNote,
   fail,
   format,
   LIST_RULES,
@@ -253,7 +254,9 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
         `Checks title, meta description, headings, canonical, robots/noindex, viewport/lang, Open Graph/Twitter cards, images, links, hreflang, structured data (JSON-LD/microdata), content quality and the HTTP response. ` +
         `Provide either \`url\` (a public http(s) URL) or \`html\` (raw HTML string, e.g. from a template or test render). ${
           HOSTED_NOTE
-        }Typical workflow: audit, apply the \`fix\` of each error and warning in the source code, then re-check with \`rules\` (the rules you fixed) and \`baseline\` (the finding ids) to confirm they are fixed and nothing new appeared.`,
+        }Typical workflow: audit, apply the \`fix\` of each error and warning in the source code, then re-check with \`rules\` (the rules you fixed) and \`baseline\` (the finding ids) to confirm they are fixed and nothing new appeared. ${docsNote(
+          "hosted"
+        )}`,
       inputSchema: {
         url: url
           .optional()
@@ -269,6 +272,7 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
         ...hostedOptions,
       },
       annotations: {
+        title: "Audit one page for SEO",
         readOnlyHint: true,
         openWorldHint: true,
         idempotentHint: true,
@@ -329,7 +333,7 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
         `Returns site findings plus \`issues\` (page findings rolled up by rule with example URLs) and per-page scores. Use seo_audit_page on a specific URL for full per-page detail. ` +
         `The crawl checks at most ${LIMITS.maxLinkChecks} link targets and reads at most ${LIMITS.maxSitemaps} sitemaps. ${
           HOSTED_NOTE
-        }`,
+        }${docsNote("hosted")}`,
       inputSchema: {
         url: url.describe("Start URL (usually the homepage)."),
         maxPages: z
@@ -371,7 +375,11 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
           ),
         ...hostedOptions,
       },
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: {
+        title: "Crawl a site and audit every page",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     (input) => {
       let host: string;
@@ -424,7 +432,9 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
         `Returns its own AEO score, a per-bot \`crawlers\` table and findings with rule ids (aeo.*). ` +
         `Provide one of \`url\` (one page, or a site with \`crawl: true\`) or \`html\`. ${
           HOSTED_NOTE
-        }The local server can also request the page with each AI bot's User-Agent (\`aiBots\`).`,
+        }The local server can also request the page with each AI bot's User-Agent (\`aiBots\`). ${docsNote(
+          "hosted"
+        )}`,
       inputSchema: {
         url: url
           .optional()
@@ -477,7 +487,11 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
         format,
         detail,
       },
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: {
+        title: "Audit a page or site for answer engines (AEO)",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     (input) => {
       if ((input.url === undefined) === (input.html === undefined)) {

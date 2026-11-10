@@ -1,6 +1,7 @@
 /** What the local MCP server (mcp.ts) and the hosted one (mcp-hosted.ts) share: options and answers. */
 import { z } from "zod";
 
+import { REPOSITORY_URL, WEBSITE_URL } from "./brand.js";
 import { compactAeoAudit } from "./core/aeo/audit.js";
 import { compactAudit } from "./core/audit.js";
 import type { CrawlOptions } from "./core/audit.js";
@@ -130,6 +131,13 @@ export const respondAeo = (
   };
 };
 
+/**
+ * The end of an audit tool's description: where its documentation is. Directory listings ask for
+ * it, and an agent that meets a rule id finds what it checks and the search engine's own docs.
+ */
+export const docsNote = (server: "local" | "hosted"): string =>
+  `Documentation: ${REPOSITORY_URL}#${server === "hosted" ? "hosted-server" : "mcp-server"}. Every rule, with the search engine documentation it follows: ${WEBSITE_URL}/rules.`;
+
 /** seo_list_rules: the same tool on both servers. */
 export const LIST_RULES = {
   title: "List SEO rules",
@@ -145,6 +153,7 @@ export const LIST_RULES = {
     rule: z.string().optional().describe("Return only this rule id."),
   },
   annotations: {
+    title: "List SEO rules",
     readOnlyHint: true,
     openWorldHint: false,
     idempotentHint: true,
