@@ -1,6 +1,6 @@
 # The hosted MCP server and the website
 
-The MCP server of agentic-seo-check as a Cloudflare Worker, at `https://mcp.agentic-seo.rivi.software/mcp`, run by RIVI Software and free to use ([issue #35](https://github.com/rivi-software/agentic-seo-check/issues/35)). The same Worker serves the project's website at `https://agentic-seo.rivi.software`, with a page audit to run in the browser ([issue #39](https://github.com/rivi-software/agentic-seo-check/issues/39)). The README's [Hosted server](../README.md#hosted-server) section is for its users; this page is for running it. It is not part of the npm package: `hosted/` is outside `files`.
+The MCP server of agentic-seo-check as a Cloudflare Worker, at `https://mcp.agentic-seo.rivi.software/mcp`, run by RIVI Software and free to use ([issue #35](https://github.com/rivi-software/agentic-seo-check/issues/35)). The same Worker serves the project's website at `https://agentic-seo.rivi.software`, with a page and site audit to run in the browser ([issue #39](https://github.com/rivi-software/agentic-seo-check/issues/39), [issue #45](https://github.com/rivi-software/agentic-seo-check/issues/45)). The README's [Hosted server](../README.md#hosted-server) section is for its users; this page is for running it. It is not part of the npm package: `hosted/` is outside `files`.
 
 ## How it works
 
@@ -14,7 +14,7 @@ Each POST to `/mcp` builds an MCP server with `createMcpServer({ hosted })` (`sr
 - `src/state.ts`: the Durable Object that counts the day's requests and keeps OpenAI's ranges.
 - `src/pages.ts`: the landing page and the page for site owners, which the User-Agent links to. Both state the limits from `wrangler.jsonc`.
 - `src/ui/`: the look both hostnames share, RIVI Software's as rivi.software has it (dark, Geist and Geist Mono, the signal green). `frame.ts` is the frame of every page (the head, the header and the footer, which link the two hostnames), `style.ts` the stylesheet, `icons.ts` the icons, `og.ts` the words of each hostname's share image, and `assets.ts` serves the fonts and the share images. `assets/` holds the fonts, Latin subsets of Geist and Geist Mono, with their licence (SIL OFL 1.1), and the share images, `og-site.png` and `og-mcp.png`, which each hostname serves at `/og.png`. `pnpm run hosted:og` draws them again with Playwright, as rivi.software's cards are drawn (`scripts/og-image.ts`): run it after changing a card in `og.ts`, and commit the PNGs.
-- `src/site/`: the website, which the Worker serves when the request's hostname is `agentic-seo.rivi.software`. `routes.ts` has its routes (`/`, `/rules`, `/audit`, `/robots.txt`, `/sitemap.xml`, `/llms.txt`, `/site.js`, the fonts) and the Content-Security-Policy; `home.ts` and `rules-page.ts` the pages, in the frame of `layout.ts`; `audit.ts` answers the audit form; `report.ts` renders the two audits as HTML, with everything quoted from the audited page escaped; `files.ts` holds robots.txt, the sitemap, llms.txt and the pages' script, which the hosted server's pages load too, from their own hostname.
+- `src/site/`: the website, which the Worker serves when the request's hostname is `agentic-seo.rivi.software`. `routes.ts` has its routes (`/`, `/rules`, `/audit`, `/robots.txt`, `/sitemap.xml`, `/llms.txt`, `/site.js`, the fonts) and the Content-Security-Policy; `home.ts` and `rules-page.ts` the pages, in the frame of `layout.ts`; `audit.ts` answers the audit form; `report.ts` renders a page's two audits as HTML and `site-report.ts` a site's, with everything quoted from the audited site escaped; `files.ts` holds robots.txt, the sitemap, llms.txt and the pages' script, which the hosted server's pages load too, from their own hostname.
 - `scripts/wrangler.ts`: runs Wrangler in this directory with the defines a build needs (`scripts/defines.ts`): the npm package's version and the rate limits.
 
 ## Commands
@@ -38,6 +38,8 @@ pnpm run --silent hosted:key  # print a new Web Bot Auth key for the secret WEB_
 
 `POST /audit` on the website's hostname runs the SEO audit and the AEO audit of one URL and answers with the homepage and the report. It uses no model and stores nothing. Before it requests anything it checks, in this order: that the form came from the site's own page (the `Origin` header), that the address is one the hosted server may request (`hostedUrlProblem`), that Cloudflare Turnstile gave the form's token, and the limits of `src/limits.ts`, where a run counts as one call of its IP address. Its requests go through the hosted gate, as a tool call's do, and it writes the same Analytics Engine record, with `web_audit_page` as the tool. A GET never audits: `/?url=…` fills the field only.
 
+An address with no path and no query is a site's homepage, and the form crawls the site from it ([issue #45](https://github.com/rivi-software/agentic-seo-check/issues/45)): with the caps of `seo_crawl_site`, obeying robots.txt and `Crawl-delay`, as a crawl in the limits (one of the 3 a minute per address) and with `web_crawl_site` as the tool in its record. One crawl gives both audits (`auditSiteBoth` in `src/core/aeo/audit.ts`), so no page is requested twice. A crawl takes tens of seconds, so its answer streams: it waits for the crawl's first page, so that a site refusing it from the start gets a refusal with its status, then sends the page up to the report, a line for each step of the crawl, and the report. A crawl that fails after that says why in the page, with status 200. The stylesheet hides the progress once the report follows it. With `MODE` `no-crawls`, a homepage gets the page audit, and its report says crawls are off.
+
 The form is off, and says so, while `TURNSTILE_SITE_KEY` or `TURNSTILE_SECRET_KEY` is missing, and when `MODE` is `closed`.
 
 ## Deploys
@@ -46,7 +48,7 @@ The release workflow publishes a version to npm, then calls [`deploy-hosted.yml`
 
 To change a limit or `MODE` before the next release, merge the change to `wrangler.jsonc`, then run **Deploy the hosted server** by hand on `main`. To roll back, run it on an earlier release tag that has `hosted/` (`gh workflow run deploy-hosted.yml --ref v0.7.0`). A run deploys the commit it runs on and refuses any ref but `main` and release tags, so no input can hand the token other code.
 
-`MODE` is `open`, `no-crawls` (crawls are refused, single page audits work) or `closed` (every tool call is refused, with the local server as the way out).
+`MODE` is `open`, `no-crawls` (crawls are refused, single page audits work, and the website's form audits a homepage alone) or `closed` (every tool call is refused, with the local server as the way out).
 
 ## Setting it up
 

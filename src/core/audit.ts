@@ -720,16 +720,14 @@ export const auditFile = async (
   return auditHtml(html, { url, source: "file", target: filePath }, options);
 };
 
-/** Crawl a site and audit every page plus site-level checks. */
-export const auditSite = async (
-  startUrl: string,
-  options: CrawlOptions = {}
-): Promise<SiteAudit> => {
-  checkOptions(options);
+/** What `crawlSite` is given for an SEO crawl with `options`. */
+export const seoCrawlOptions = (
+  options: CrawlOptions
+): InternalCrawlOptions => {
   const fetchOpts: FetchOptions = { ...options.fetch };
   fetchOpts.userAgent ??= DEFAULT_USER_AGENT;
 
-  const internal: InternalCrawlOptions = {
+  return {
     maxPages: options.maxPages ?? DEFAULT_CRAWL.maxPages,
     maxDepth: options.maxDepth ?? DEFAULT_CRAWL.maxDepth,
     concurrency: options.concurrency ?? DEFAULT_CRAWL.concurrency,
@@ -747,8 +745,18 @@ export const auditSite = async (
     maxSitemaps: options.maxSitemaps,
     maxSitemapBytes: options.maxSitemapBytes,
   };
+};
 
-  const result = await crawlSite(startUrl, internal);
+/**
+ * The SEO audit of a site that `crawlSite` crawled with `seoCrawlOptions(options)`, and the audit
+ * of its start page with every finding, whatever `pageDetail` keeps of it in the site's. Another
+ * audit can then read the same crawl (`auditSiteBoth`), so no page is requested twice.
+ */
+export const auditCrawled = async (
+  result: CrawlResult,
+  startUrl: string,
+  options: CrawlOptions
+): Promise<{ site: SiteAudit; start: PageAudit | null }> => {
   const site = buildSiteAudit(result, "crawl", startUrl, options);
   // Render/Lighthouse are expensive: apply them to the start page only.
   const startPage = site.pages.find((p) => p.depth === 0) ?? site.pages[0];
@@ -758,10 +766,26 @@ export const auditSite = async (
     recomputeSite(site);
   }
 
-  return applyPageDetail(
-    finishSite(site, options, recordUrls(result.records)),
-    options
-  );
+  return {
+    // applyPageDetail gives the site copies of its pages, so startPage keeps its findings.
+    site: applyPageDetail(
+      finishSite(site, options, recordUrls(result.records)),
+      options
+    ),
+    start: startPage ?? null,
+  };
+};
+
+/** Crawl a site and audit every page plus site-level checks. */
+export const auditSite = async (
+  startUrl: string,
+  options: CrawlOptions = {}
+): Promise<SiteAudit> => {
+  checkOptions(options);
+  const result = await crawlSite(startUrl, seoCrawlOptions(options));
+  const { site } = await auditCrawled(result, startUrl, options);
+
+  return site;
 };
 
 /** Audit a directory of built HTML files (dist/, out/, build/). */

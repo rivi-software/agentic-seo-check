@@ -6,7 +6,7 @@ import { MARK_SVG } from "../../../src/brand.js";
  */
 import { fontResponse, shareImageResponse } from "../ui/assets.js";
 import { OG_IMAGE } from "../ui/og.js";
-import { answerAudit, formOpen } from "./audit.js";
+import { answerAudit, formCrawls, formOpen } from "./audit.js";
 import type { SiteEnv } from "./audit.js";
 import { LLMS_TXT, SITE_JS, SITE_ROBOTS_TXT, SITEMAP_XML } from "./files.js";
 import { homePage, notFoundPage } from "./home.js";
@@ -64,29 +64,65 @@ const file = (
 const prefill = (url: URL): string | undefined =>
   url.searchParams.get("url")?.slice(0, 2048);
 
-/** The answer of the audit form: the homepage with the report, never cached and never indexed. */
+/** Where a streamed answer's report goes in the page: text `esc` never lets a page write. */
+const REPORT_SLOT = "<!-- agentic-seo-check: report -->";
+
+const ignore = (): void => {
+  // A visitor who leaves closes the stream; the crawl still ends, and its record is kept.
+};
+
+/**
+ * The answer of the audit form: the homepage with the report, never cached and never indexed. A
+ * crawl's answer streams: the page up to the report at once, then the rest as the crawl goes.
+ */
 const audit = async (
   request: Request,
   env: SiteEnv,
   ctx: Pick<ExecutionContext, "waitUntil">
 ): Promise<Response> => {
-  const { status, state } = await answerAudit(request, env, ctx);
+  const { status, state, rest } = await answerAudit(request, env, ctx);
 
-  const body = homePage({
-    open: formOpen(env),
-    siteKey: env.TURNSTILE_SITE_KEY,
-    ...state,
-  });
+  const page = (report?: string) =>
+    homePage({
+      open: formOpen(env),
+      crawls: formCrawls(env),
+      siteKey: env.TURNSTILE_SITE_KEY,
+      ...state,
+      ...(report === undefined ? null : { report }),
+    });
 
-  return new Response(body, {
-    status,
-    headers: {
-      "content-type": HTML,
-      "cache-control": "no-store",
-      "x-robots-tag": "noindex",
-      ...SECURITY,
-    },
-  });
+  const headers = {
+    "content-type": HTML,
+    "cache-control": "no-store",
+    "x-robots-tag": "noindex",
+    ...SECURITY,
+  };
+
+  if (!rest) {
+    return new Response(page(), { status, headers });
+  }
+
+  const html = page(REPORT_SLOT);
+  const slot = html.indexOf(REPORT_SLOT);
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+
+  // Not awaited: the stream holds what the visitor has not read yet.
+  const write = (text: string): void => {
+    writer.write(encoder.encode(text)).catch(ignore);
+  };
+
+  const stream = async (): Promise<void> => {
+    write(html.slice(0, slot));
+    await rest(write);
+    write(html.slice(slot + REPORT_SLOT.length));
+    await writer.close();
+  };
+
+  ctx.waitUntil(stream().catch(ignore));
+
+  return new Response(readable, { status, headers });
 };
 
 export const siteRoute = (
@@ -124,6 +160,7 @@ export const siteRoute = (
         request,
         homePage({
           open: formOpen(env),
+          crawls: formCrawls(env),
           siteKey: env.TURNSTILE_SITE_KEY,
           url: prefill(url),
         }),

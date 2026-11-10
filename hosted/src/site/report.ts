@@ -2,10 +2,11 @@
  * The report of a page audit as HTML: the SEO audit and the AEO audit of one page, each with its
  * score and its findings, and every finding with the edits that fix it. What it shows is the
  * audit as the tools return it; no model reads or rewrites it. Everything quoted from the audited
- * page is escaped.
+ * page is escaped. A site's report (site-report.ts) is built from the same parts.
  */
 import { compactAeoAudit } from "../../../src/core/aeo/audit.js";
 import { compactAudit } from "../../../src/core/audit.js";
+import { HOSTED_LIMITS } from "../../../src/core/hosted.js";
 import {
   renderAeoMarkdown,
   renderMarkdown,
@@ -18,6 +19,7 @@ import type {
   PageAudit,
   SeverityCounts,
   Severity,
+  SiteAudit,
 } from "../../../src/core/types.js";
 import { ORIGIN as MCP_ORIGIN } from "../limits.js";
 import { icon } from "../ui/icons.js";
@@ -56,7 +58,7 @@ export const PURPOSE_LABEL: Record<AiBotAccess["purpose"], string> = {
 /** The most characters of a finding's evidence the report prints. */
 const MAX_EVIDENCE_CHARS = 4000;
 
-const plural = (count: number, noun: string): string =>
+export const plural = (count: number, noun: string): string =>
   `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 const COUNT_NOUN: Record<Severity, (count: number) => string> = {
@@ -65,14 +67,14 @@ const COUNT_NOUN: Record<Severity, (count: number) => string> = {
   info: (count) => `${count} info`,
 };
 
-const code = (text: string): string => `<code>${esc(text)}</code>`;
+export const code = (text: string): string => `<code>${esc(text)}</code>`;
 
 /** The severity as a coloured label, as the report and the rules page show it. */
 export const severityChip = (severity: Severity): string =>
   `<span class="sev">${icon(severity)}${SEVERITY_LABEL[severity]}</span>`;
 
 /** Lighthouse's bands: 90 and up is good, under 50 is poor. */
-const band = (score: number): string => {
+export const band = (score: number): string => {
   if (score >= 90) {
     return "good";
   }
@@ -165,18 +167,22 @@ const findingHtml = (finding: Finding): string => {
 </details>`;
 };
 
-const findingsHtml = (findings: Finding[]): string =>
+/** Findings with their fixes, or `empty` when there are none. */
+export const findingsHtml = (
+  findings: Finding[],
+  empty = "No findings: nothing to fix on this page."
+): string =>
   findings.length === 0
-    ? `<p class="empty">${icon("check")}No findings: nothing to fix on this page.</p>`
+    ? `<p class="empty">${icon("check")}${empty}</p>`
     : `<div class="findings">${findings.map(findingHtml).join("\n")}</div>`;
 
 /** How a fact reads at a glance: a good, doubtful or bad value gets a coloured dot. */
 type Tone = "good" | "warn" | "bad" | null;
 
-type Fact = [label: string, value: string | null, tone?: Tone];
+export type Fact = [label: string, value: string | null, tone?: Tone];
 
 /** Facts as a list or as tiles; a fact without a value is left out. */
-const facts = (kind: "text" | "tiles", rows: Fact[]): string => {
+export const facts = (kind: "text" | "tiles", rows: Fact[]): string => {
   const shown = rows.flatMap(([label, value, tone]) =>
     value === null || value === ""
       ? []
@@ -190,7 +196,7 @@ const facts = (kind: "text" | "tiles", rows: Fact[]): string => {
     : `<dl class="facts facts-${kind}">${shown.join("")}</dl>`;
 };
 
-const statusTone = (status: number): Tone => {
+export const statusTone = (status: number): Tone => {
   if (status < 300) {
     return "good";
   }
@@ -198,7 +204,7 @@ const statusTone = (status: number): Tone => {
   return status < 400 ? "warn" : "bad";
 };
 
-const seoFacts = (audit: PageAudit): string => {
+export const seoFacts = (audit: PageAudit): string => {
   const { summary, response } = audit;
 
   return `${facts("text", [
@@ -257,9 +263,10 @@ const toned = (label: string, value: keyof typeof TONES | null): Fact => [
   value === null ? null : TONES[value],
 ];
 
-const aeoFacts = (audit: AeoAudit): string => {
+/** The AEO audit's facts: the site's, and with `page` those of the page it audited. */
+export const aeoFacts = (audit: AeoAudit, scope: "page" | "site"): string => {
   const { summary } = audit;
-  const { page } = summary;
+  const page = scope === "page" ? summary.page : null;
 
   return facts("tiles", [
     toned("robots.txt", summary.robotsTxt),
@@ -281,7 +288,8 @@ const aeoFacts = (audit: AeoAudit): string => {
 const botItem = (bot: AiBotAccess): string =>
   `<li class="crawler ${bot.allowed ? "is-allowed" : "is-blocked"}">${code(bot.name)}<span class="crawler-op">${esc(bot.operator)}</span><span class="crawler-state">${icon(bot.allowed ? "check" : "x")}${bot.allowed ? "Allowed" : "Blocked"}</span></li>`;
 
-const crawlersHtml = (audit: AeoAudit): string => {
+/** robots.txt's answer for each AI crawler, for `page`: "this page", or a site's start page. */
+export const crawlersHtml = (audit: AeoAudit, page = "this page"): string => {
   const bots = audit.crawlers?.bots ?? [];
 
   if (bots.length === 0) {
@@ -303,12 +311,12 @@ const crawlersHtml = (audit: AeoAudit): string => {
   );
 
   return `<div class="report-section" id="crawlers">
-<div class="report-section-head"><h3>AI crawlers in robots.txt</h3><span class="chip">${allowed} of ${bots.length} may fetch this page</span></div>
+<div class="report-section-head"><h3>AI crawlers in robots.txt</h3><span class="chip">${allowed} of ${bots.length} may fetch ${page}</span></div>
 <div class="crawler-groups">${groups.join("")}</div>
 </div>`;
 };
 
-const scoreCard = (
+export const scoreCard = (
   anchor: string,
   name: string,
   score: number,
@@ -331,32 +339,68 @@ ${findingsHtml(findings)}
  * The report's data for its buttons: the two audits as the MCP tools return them, and the same as
  * Markdown. The page's script reads it; nothing is stored on the server.
  */
-const reportData = (seo: PageAudit, aeo: AeoAudit): string =>
+export const reportData = (
+  seo: PageAudit | SiteAudit,
+  aeo: AeoAudit,
+  host: string
+): string =>
   scriptSafe(
     JSON.stringify({
       json: { seo: compactAudit(seo), aeo: compactAeoAudit(aeo) },
       markdown: `${renderMarkdown(seo)}\n\n${renderAeoMarkdown(aeo)}`,
-      name: new URL(seo.url).hostname,
+      name: host,
     })
   );
 
-/** The report of one page's SEO and AEO audits, to put under the audit form. */
-export const renderReport = (seo: PageAudit, aeo: AeoAudit): string =>
-  `<section class="report" id="report" aria-labelledby="report-title">
+/** A report under the audit form: its bar with the address and the buttons, `body`, and `data`. */
+export const reportFrame = (report: {
+  title: string;
+  url: string;
+  body: string;
+  data: string;
+}): string => `<section class="report" id="report" aria-labelledby="report-title">
 <div class="wrap">
 <div class="window report-window">
 <div class="report-bar">
-<div class="report-title"><h2 id="report-title">Audit report</h2><p class="report-url">${icon("globe")}<span>${esc(seo.url)}</span></p></div>
+<div class="report-title"><h2 id="report-title">${report.title}</h2><p class="report-url">${icon("globe")}<span>${esc(report.url)}</span></p></div>
 <div class="report-actions"><button class="btn btn-secondary btn-sm" type="button" data-report="download">${icon("download")}<span class="btn-label">Download JSON</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="copy">${icon("copy")}<span class="btn-label">Copy as Markdown</span></button></div>
 </div>
 <div class="report-body">
-<div class="scores">${scoreCard("seo", "SEO: search engines", seo.score, seo.counts)}${scoreCard("aeo", "AEO: AI answer engines", aeo.score, aeo.counts)}</div>
-${auditSection("seo", "SEO findings", seoFacts(seo), seo.findings)}
-${auditSection("aeo", "AEO findings", aeoFacts(aeo), aeo.findings)}
-${crawlersHtml(aeo)}
-<div class="report-note">${icon("info")}<p>This is the audit of one page. A crawl adds site-wide checks, such as broken links, sitemap coverage and duplicate titles: run <code>npx @rivi-software/agentic-seo-check crawl ${esc(new URL(seo.url).origin)}</code>, or give your assistant <a href="${MCP_ORIGIN}/">the hosted server</a>.</p></div>
+${report.body}
 </div>
 </div>
 </div>
-<script type="application/json" id="report-data">${reportData(seo, aeo)}</script>
+<script type="application/json" id="report-data">${report.data}</script>
 </section>`;
+
+/**
+ * What follows a page's report: how to audit its whole site. The form crawls a site from its
+ * homepage, so a homepage audited alone is one the form did not crawl, because crawls are off.
+ */
+const pageNote = (seo: PageAudit, homepage: boolean): string => {
+  const { origin } = new URL(seo.url);
+
+  return homepage
+    ? `This is the audit of the homepage alone: crawls of a whole site are switched off at the moment. A crawl adds site-wide checks, such as broken links, sitemap coverage and duplicate titles: run <code>npx @rivi-software/agentic-seo-check crawl ${esc(origin)}</code>, or give your assistant <a href="${MCP_ORIGIN}/">the hosted server</a>.`
+    : `This is the audit of one page. To audit the whole site, up to ${HOSTED_LIMITS.maxPages} pages with site-wide checks such as broken links, sitemap coverage and duplicate titles, enter its homepage: <code>${esc(origin)}/</code>.`;
+};
+
+/**
+ * The report of one page's SEO and AEO audits, to put under the audit form. `homepage`: the page
+ * is a site's homepage, which the form audited alone.
+ */
+export const renderReport = (
+  seo: PageAudit,
+  aeo: AeoAudit,
+  homepage = false
+): string =>
+  reportFrame({
+    title: "Audit report",
+    url: seo.url,
+    data: reportData(seo, aeo, new URL(seo.url).hostname),
+    body: `<div class="scores">${scoreCard("seo", "SEO: search engines", seo.score, seo.counts)}${scoreCard("aeo", "AEO: AI answer engines", aeo.score, aeo.counts)}</div>
+${auditSection("seo", "SEO findings", seoFacts(seo), seo.findings)}
+${auditSection("aeo", "AEO findings", aeoFacts(aeo, "page"), aeo.findings)}
+${crawlersHtml(aeo)}
+<div class="report-note">${icon("info")}<p>${pageNote(seo, homepage)}</p></div>`,
+  });

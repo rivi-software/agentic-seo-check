@@ -2,14 +2,17 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import {
+  auditCrawled,
   DEFAULT_CRAWL,
   readStdin,
   resolveTarget,
   rollupIssues,
+  seoCrawlOptions,
   trimFinding,
 } from "../audit.js";
-import type { ProgressEvent } from "../audit.js";
+import type { CrawlOptions, ProgressEvent } from "../audit.js";
 import { crawlSite } from "../crawl.js";
+import type { CrawlResult } from "../crawl.js";
 import {
   DEFAULT_USER_AGENT,
   fetchPage,
@@ -46,10 +49,12 @@ import type {
   AiCrawlerReport,
   Finding,
   LlmsTxtInfo,
+  PageAudit,
   PageSource,
   Requirement,
   RobotsTxtInfo,
   SeverityCounts,
+  SiteAudit,
 } from "../types.js";
 import { AI_BOTS, crawlerAccess } from "./bots.js";
 import { loadLlmsTxt, readLlmsTxt } from "./llms-txt.js";
@@ -190,6 +195,33 @@ const collectUrl = async (
   };
 };
 
+/** What a crawl that has run gives the AEO audit: its pages and robots.txt, and the site's llms.txt. */
+const collectCrawled = async (
+  result: CrawlResult,
+  url: string,
+  options: AeoOptions
+): Promise<Collected> => {
+  options.onProgress?.({ phase: "llms-txt", message: "Fetching llms.txt" });
+  const { origin } = new URL(result.startUrl);
+  const request = () => loadLlmsTxt(origin, options.fetch);
+
+  return {
+    target: url,
+    url: result.startUrl,
+    source: "crawl",
+    pageSource: "url",
+    records: result.records,
+    robots: result.robots,
+    robotsText: result.robotsText ?? null,
+    // Not requested at all once the crawl's own requests to the site were refused.
+    llmsTxt: await (result.refusals
+      ? result.refusals.run(`${origin}/llms.txt`, request)
+      : request()),
+    live: true,
+    stopped: result.stopped?.message,
+  };
+};
+
 const collectSite = async (
   url: string,
   options: AeoOptions
@@ -213,25 +245,7 @@ const collectSite = async (
     onProgress: options.onProgress,
   });
 
-  options.onProgress?.({ phase: "llms-txt", message: "Fetching llms.txt" });
-  const { origin } = new URL(result.startUrl);
-  const request = () => loadLlmsTxt(origin, options.fetch);
-
-  return {
-    target: url,
-    url: result.startUrl,
-    source: "crawl",
-    pageSource: "url",
-    records: result.records,
-    robots: result.robots,
-    robotsText: result.robotsText ?? null,
-    // Not requested at all once the crawl's own requests to the site were refused.
-    llmsTxt: await (result.refusals
-      ? result.refusals.run(`${origin}/llms.txt`, request)
-      : request()),
-    live: true,
-    stopped: result.stopped?.message,
-  };
+  return collectCrawled(result, url, options);
 };
 
 const collectDirectory = async (
@@ -625,6 +639,83 @@ export const auditAeoSite = async (
   checkOptions(options);
 
   return buildAudit(await collectSite(startUrl, options), options);
+};
+
+/** What `auditSiteBoth` takes: the crawl's options, which both audits share. */
+export type SiteAuditsOptions = Pick<
+  CrawlOptions,
+  | "maxPages"
+  | "maxDepth"
+  | "concurrency"
+  | "delayMs"
+  | "respectRobots"
+  | "includeSubdomains"
+  | "checkExternalLinks"
+  | "maxLinkChecks"
+  | "includePatterns"
+  | "excludePatterns"
+  | "maxSitemaps"
+  | "maxSitemapBytes"
+  | "includeInfo"
+  | "pageDetail"
+  | "fetch"
+  | "onProgress"
+>;
+
+/** The two audits of a site from one crawl, and those of its start page. */
+export interface SiteAudits {
+  /** The SEO audit, as auditSite gives it. */
+  seo: SiteAudit;
+  /** The AEO audit, as auditAeoSite gives it. */
+  aeo: AeoAudit;
+  /**
+   * The start page's own audits, with every finding on it and its fix, as auditUrl and auditAeoUrl
+   * give them; null when the crawl recorded no page.
+   */
+  start: { seo: PageAudit; aeo: AeoAudit } | null;
+}
+
+/**
+ * The SEO and the AEO audit of a site from one crawl (issue #45): each page is requested once and
+ * both audits read it, where auditSite and auditAeoSite would each request it. The AEO audit adds
+ * llms.txt. For the website's form; src/index.ts does not export it.
+ */
+export const auditSiteBoth = async (
+  startUrl: string,
+  options: SiteAuditsOptions = {}
+): Promise<SiteAudits> => {
+  const result = await crawlSite(startUrl, seoCrawlOptions(options));
+  const seo = await auditCrawled(result, startUrl, options);
+
+  const aeoOptions: AeoOptions = {
+    includeInfo: options.includeInfo,
+    pageDetail: options.pageDetail,
+    fetch: options.fetch,
+    onProgress: options.onProgress,
+  };
+
+  const c = await collectCrawled(result, startUrl, aeoOptions);
+  const aeo = await buildAudit(c, aeoOptions);
+  const startRecord = c.records.find((r) => r.depth === 0) ?? c.records[0];
+
+  if (!(seo.start && startRecord)) {
+    return { seo: seo.site, aeo, start: null };
+  }
+
+  // The start page alone, as auditAeoUrl reads it: the site's robots.txt and llms.txt, one page.
+  const startAeo = await buildAudit(
+    {
+      ...c,
+      target: startRecord.requestedUrl,
+      url: startRecord.url,
+      source: "url",
+      records: [startRecord],
+      stopped: undefined,
+    },
+    { ...aeoOptions, pageDetail: "full" }
+  );
+
+  return { seo: seo.site, aeo, start: { seo: seo.start, aeo: startAeo } };
 };
 
 /** AEO audit of a directory of built HTML, with the robots.txt and llms.txt in it. */

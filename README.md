@@ -11,7 +11,7 @@
   SEO and AEO analysis built for coding agents: a CLI and an MCP server that audit URLs,<br>
   static build output or raw HTML, and return findings an agent can act on.<br>
   Open source, from <a href="https://rivi.software">RIVI Software</a>.<br>
-  <a href="https://agentic-seo.rivi.software">agentic-seo.rivi.software</a>: audit a page in your browser, and read every rule.
+  <a href="https://agentic-seo.rivi.software">agentic-seo.rivi.software</a>: audit a page or a whole site in your browser, and read every rule.
 </p>
 
 <p align="center">
@@ -168,7 +168,7 @@ https://mcp.agentic-seo.rivi.software/mcp
 
 It speaks MCP over Streamable HTTP, so it works where a local server cannot run: claude.ai, Cowork and the Claude apps, ChatGPT, and any machine without Node.
 
-The same server is behind the form on [agentic-seo.rivi.software](https://agentic-seo.rivi.software): enter a URL and it shows the SEO and AEO audits of that page, with no assistant and no model in between. The form audits one public page per run, within the limits below, and [the site's rules page](https://agentic-seo.rivi.software/rules) lists every rule.
+The same server is behind the form on [agentic-seo.rivi.software](https://agentic-seo.rivi.software): enter a URL and it shows the SEO and AEO audits of that page, with no assistant and no model in between. Enter a site's homepage, a URL with no path and no query, and it crawls the site as `seo_crawl_site` does, within the same caps, and shows both audits of the site: the findings across the site, the findings on the pages grouped by rule, the homepage's own findings with their edits, and every page's scores. Each run counts as a tool call in the limits below, and a crawl as one of the crawls. [The site's rules page](https://agentic-seo.rivi.software/rules) lists every rule.
 
 | Client | Setup |
 | --- | --- |
