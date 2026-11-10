@@ -202,7 +202,7 @@ ${CHAT}
 <div class="section-head">
 <p class="kicker">Set up</p>
 <h2 id="add-title">Add it to your assistant.</h2>
-<p>One address for every client, with no sign-in. To audit one page yourself, with no assistant, use the form on <a href="${SITE_ORIGIN}/">the agentic-seo-check website</a>, which also lists <a href="${SITE_ORIGIN}/rules">every rule</a>.</p>
+<p>One address for every client, with no sign-in. To audit a page or a whole site yourself, with no assistant, use the form on <a href="${SITE_ORIGIN}/">the agentic-seo-check website</a>, which also lists <a href="${SITE_ORIGIN}/rules">every rule</a>.</p>
 </div>
 <ul class="cards clients">${CLIENTS.map(([name, how, code]) => `<li class="card"><h3>${name}</h3><p>${how}</p>${code}</li>`).join("")}</ul>
 </div>
@@ -305,7 +305,7 @@ export const crawlerPage = (): string =>
 <p class="pill rise"><span class="dot" aria-hidden="true"></span>For site owners</p>
 <h1 class="hero-title rise" id="crawler-title" style="--d:60ms"><span class="nowrap">agentic-seo-check</span> requests to your site</h1>
 </div>
-<p class="lede rise" style="--d:120ms">Someone asked their AI assistant to audit your site for search engines or AI answer engines, or entered one of its pages in the form on <a href="${SITE_ORIGIN}/">the agentic-seo-check website</a>. Both use the hosted agentic-seo-check server, run by ${MAKER}. Every request is part of an audit a person started; the server does not crawl the web on its own.</p>
+<p class="lede rise" style="--d:120ms">Someone asked their AI assistant to audit your site for search engines or AI answer engines, or entered one of its pages, or its homepage, in the form on <a href="${SITE_ORIGIN}/">the agentic-seo-check website</a>. Both use the hosted agentic-seo-check server, run by ${MAKER}. Every request is part of an audit a person started; the server does not crawl the web on its own.</p>
 </div>
 </section>
 <section class="section section-tight" aria-label="The requests at a glance">
@@ -316,7 +316,7 @@ export const crawlerPage = (): string =>
 <section class="section section-tight" aria-label="The requests in detail">
 <div class="wrap">
 <div class="rows">
-<div class="row" id="requests"><h2>What the requests are</h2><div class="row-body"><p>Every audit reads robots.txt first and obeys it: the group for <code>agentic-seo-check</code>, or <code>*</code> when there is none. An audit of one page is then one request, plus any redirects; the website's form audits one page for search engines and for answer engines, which also reads llms.txt. A crawl requests up to ${HOSTED_LIMITS.maxPages} pages, up to ${HOSTED_LIMITS.maxSitemaps} sitemaps and up to ${HOSTED_LIMITS.maxLinkChecks} link and image targets: about 150 requests. It waits between requests as <code>Crawl-delay</code> asks, and stops once those waits add up to more than ${CRAWL_DELAY_BUDGET}, every site's together. The server sends at most ${perPeriod("SITE_REQUESTS", "requests")} to one hostname, from all its callers together. A 429 or a challenge page ends its requests to the site, and a 403 those to the page: it does not retry, and sends no other User-Agent.</p></div></div>
+<div class="row" id="requests"><h2>What the requests are</h2><div class="row-body"><p>Every audit reads robots.txt first and obeys it: the group for <code>agentic-seo-check</code>, or <code>*</code> when there is none. An audit of one page is then one request, plus any redirects; the website's form audits one page for search engines and for answer engines, which also reads llms.txt, and crawls the site when it is given the homepage. A crawl requests up to ${HOSTED_LIMITS.maxPages} pages, up to ${HOSTED_LIMITS.maxSitemaps} sitemaps and up to ${HOSTED_LIMITS.maxLinkChecks} link and image targets: about 150 requests. It waits between requests as <code>Crawl-delay</code> asks, and stops once those waits add up to more than ${CRAWL_DELAY_BUDGET}, every site's together. The server sends at most ${perPeriod("SITE_REQUESTS", "requests")} to one hostname, from all its callers together. A 429 or a challenge page ends its requests to the site, and a 403 those to the page: it does not retry, and sends no other User-Agent.</p></div></div>
 <div class="row" id="recognise"><h2>How to recognise them</h2><div class="row-body">
 <p>The requests carry this User-Agent:</p>
 ${snippet(USER_AGENT)}

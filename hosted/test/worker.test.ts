@@ -604,6 +604,38 @@ describe("the hosted Worker in workerd", () => {
       });
     });
 
+    it("crawls the site for the form when given its homepage, and streams its progress", async () => {
+      const before = requests.length;
+      const res = await sendForm("shop.example.com");
+      const page = await res.text();
+      const sent = requests.slice(before).map((r) => r.url);
+
+      expect([
+        res.status,
+        res.headers.get("cache-control"),
+        res.headers.get("x-robots-tag"),
+      ]).toStrictEqual([200, "no-store", "noindex"]);
+
+      // The progress comes first, then the report, then the rest of the page.
+      const at = [
+        'id="progress"',
+        'id="report"',
+        'aria-labelledby="loop-title"',
+      ].map((part) => page.indexOf(part));
+
+      expect(at.every((index, n) => index > (at[n - 1] ?? 0))).toBeTruthy();
+      expect(page).toContain("<code>site.broken-internal-links</code>");
+      expect(page).toContain("https://shop.example.com/missing");
+      // One crawl for both audits: each page requested once, and llms.txt for the AEO audit.
+      expect(
+        [
+          "https://shop.example.com/",
+          "https://shop.example.com/about",
+          "https://shop.example.com/llms.txt",
+        ].map((url) => sent.filter((u) => u === url).length)
+      ).toStrictEqual([1, 1, 1]);
+    });
+
     it("requests nothing for a link that fills the field, or for GET /audit", async () => {
       const before = requests.length;
 
@@ -654,12 +686,33 @@ describe("the hosted Worker in workerd", () => {
       expect(requests).toHaveLength(before);
     });
 
-    it("says a site turned the audit away", async () => {
+    it("says a site turned the audit away, before a crawl's answer streams", async () => {
       const res = await sendForm("https://walled.example.com/");
+      const page = await res.text();
 
       expect(res.status).toBe(502);
-      await expect(res.text()).resolves.toContain(
+      expect(page).toContain(
         "walled.example.com answered the hosted server with a challenge page"
+      );
+      expect(page).not.toContain('id="progress"');
+    });
+
+    it("counts a crawl as one of the crawls an address may start in a minute", async () => {
+      const answers: [number, string][] = [];
+
+      // Earlier tests crawled already; each crawl here waits for the one before it.
+      while (answers.length < 4 && answers.at(-1)?.[0] !== 429) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- the limit counts crawls in the order they start
+        const res = await sendForm("https://shop.example.com/");
+        // oxlint-disable-next-line eslint/no-await-in-loop -- read before the next crawl starts
+        answers.push([res.status, await res.text()]);
+      }
+
+      const [status, page] = answers.at(-1) ?? [0, ""];
+
+      expect(status).toBe(429);
+      expect(page).toContain(
+        "This address has started 3 crawls on the hosted server in the last minute"
       );
     });
   });

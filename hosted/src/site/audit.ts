@@ -1,13 +1,16 @@
 /**
  * The audit form's answer (POST /audit, issue #39): the SEO and AEO audits of one page, run as a
- * hosted tool call is. Cloudflare Turnstile checks that a person sent the form, the hosted limits
+ * hosted tool call is, or of a whole site when the address is its homepage (issue #45), run as a
+ * hosted crawl is. Cloudflare Turnstile checks that a person sent the form, the hosted limits
  * count the run for its address, and every request goes through the hosted gate. The answer is the
  * homepage with the report, or with the reason there is none. Nothing of it is stored.
  */
 import { z } from "zod";
 
-import { auditAeoUrl } from "../../../src/core/aeo/audit.js";
+import { auditAeoUrl, auditSiteBoth } from "../../../src/core/aeo/audit.js";
+import type { SiteAudits } from "../../../src/core/aeo/audit.js";
 import { auditUrl } from "../../../src/core/audit.js";
+import type { ProgressEvent } from "../../../src/core/audit.js";
 import { RequestRefusedError } from "../../../src/core/fetch.js";
 import type { FetchOptions } from "../../../src/core/fetch.js";
 import {
@@ -21,6 +24,12 @@ import { hostedProfile } from "../limits.js";
 import type { LimitsEnv } from "../limits.js";
 import type { HomeState } from "./home.js";
 import { renderReport } from "./report.js";
+import {
+  progressClose,
+  progressLine,
+  progressOpen,
+  renderSiteReport,
+} from "./site-report.js";
 
 /** The Worker's bindings and variables the audit form uses, beside the limits'. */
 export interface SiteEnv extends LimitsEnv {
@@ -32,6 +41,9 @@ export interface SiteEnv extends LimitsEnv {
 
 /** The name the record of a run has where a tool call's has the tool. */
 export const WEB_AUDIT = "web_audit_page";
+
+/** The name the record of a crawl from the form has. */
+export const WEB_CRAWL = "web_crawl_site";
 
 const SITEVERIFY_URL =
   "https://challenges.cloudflare.com/turnstile/v0/siteverify";
@@ -46,6 +58,29 @@ export const formOpen = (env: SiteEnv): boolean =>
   env.MODE !== "closed" &&
   Boolean(env.TURNSTILE_SITE_KEY) &&
   Boolean(env.TURNSTILE_SECRET_KEY);
+
+/** The form crawls a site from its homepage, unless crawls are off (`MODE: "no-crawls"`). */
+export const formCrawls = (env: SiteEnv): boolean =>
+  formOpen(env) && env.MODE !== "no-crawls";
+
+/**
+ * An address with no path and no query is a site's homepage, the start of a crawl. Any other
+ * address is one page: a person who enters a path asks about that page.
+ */
+export const isHomepage = (url: URL): boolean =>
+  url.pathname === "/" && url.search === "";
+
+/** The form's crawl: the caps and defaults of the hosted seo_crawl_site. */
+const SITE_CRAWL = {
+  maxPages: HOSTED_LIMITS.maxPages,
+  maxDepth: HOSTED_LIMITS.maxDepth,
+  concurrency: HOSTED_LIMITS.concurrency,
+  maxLinkChecks: HOSTED_LIMITS.maxLinkChecks,
+  maxSitemaps: HOSTED_LIMITS.maxSitemaps,
+  maxSitemapBytes: HOSTED_LIMITS.maxSitemapBytes,
+  respectRobots: true,
+  pageDetail: "summary",
+} as const;
 
 const Siteverify = z.object({ success: z.boolean() });
 
@@ -78,7 +113,13 @@ const personSent = async (
 /** What the form's answer shows, and the HTTP status it comes with. */
 export interface AuditAnswer {
   status: number;
-  state: Pick<HomeState, "url" | "error" | "report">;
+  state: Pick<HomeState, "url" | "error" | "report" | "crawling">;
+  /**
+   * The rest of a crawl's answer, which comes in place of the report: `write` gets the progress so
+   * far and each line as it comes, then the report or why there is none. Settles once all is
+   * written. A crawl that gives up before its first page has none, but a refusal.
+   */
+  rest?: (write: (html: string) => void) => Promise<void>;
 }
 
 const refuse = (status: number, error: string, url?: string): AuditAnswer => ({
@@ -95,17 +136,133 @@ const targetOf = (typed: string): URL | null => {
   return URL.canParse(address) ? new URL(address) : null;
 };
 
-/** The two audits of `target`, as a report. */
+/** The two audits of the page `target`, as a report. */
 const runAudits = async (
-  target: string,
+  target: URL,
   fetchOptions: FetchOptions
 ): Promise<string> => {
   const [seo, aeo] = await Promise.all([
-    auditUrl(target, { fetch: fetchOptions }),
-    auditAeoUrl(target, { fetch: fetchOptions }),
+    auditUrl(target.href, { fetch: fetchOptions }),
+    auditAeoUrl(target.href, { fetch: fetchOptions }),
   ]);
 
-  return renderReport(seo, aeo);
+  return renderReport(seo, aeo, isHomepage(target));
+};
+
+/** Why a run gave no report, in the words the form shows. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
+const failure = (what: string, target: URL, error: unknown): string =>
+  error instanceof RequestRefusedError
+    ? error.message
+    : `The ${what} of ${target.hostname} failed: ${error instanceof Error ? error.message : String(error)}`;
+
+/** How the form's crawl ended: both audits, or why there are none. */
+type CrawlOutcome = { audits: SiteAudits } | { error: string };
+
+/**
+ * The crawl's progress as lines of HTML. Lines wait in `kept` until the answer pipes them to its
+ * body; `firstPage` settles once the crawl has a page.
+ */
+const progressFeed = () => {
+  const kept: string[] = [];
+  let paged: (() => void) | undefined;
+
+  // oxlint-disable-next-line promise/avoid-new -- the wait ends on a call the crawl's progress makes, which only a new Promise can await
+  const firstPage = new Promise<void>((resolve) => {
+    paged = resolve;
+  });
+
+  let send = (line: string): void => {
+    kept.push(line);
+  };
+
+  return {
+    firstPage,
+    add: (event: ProgressEvent): void => {
+      send(progressLine(event));
+
+      if (event.phase === "crawl") {
+        paged?.();
+      }
+    },
+    /** Sends the lines kept so far to `write`, and each line after them as it comes. */
+    pipe: (write: (html: string) => void): void => {
+      for (const line of kept.splice(0)) {
+        write(line);
+      }
+
+      send = write;
+    },
+  };
+};
+
+/**
+ * Crawls the site from its homepage `target` and builds both audits from the one crawl. The answer
+ * waits for the crawl's first page: a crawl the site refuses from the start gets a refusal with its
+ * status, as a page audit does. Once a page is in, the answer streams, since a crawl takes tens of
+ * seconds: the top of the page, a line for each step, then the report.
+ */
+const runCrawl = async (
+  target: URL,
+  typed: string,
+  fetchOptions: FetchOptions,
+  call: HostedCall
+): Promise<AuditAnswer> => {
+  const feed = progressFeed();
+
+  /** The crawl and both audits, and the record of the call once they are done. */
+  const audit = async (): Promise<CrawlOutcome> => {
+    try {
+      const audits = await auditSiteBoth(target.href, {
+        ...SITE_CRAWL,
+        fetch: fetchOptions,
+        onProgress: feed.add,
+      });
+
+      call.end?.({ outcome: "ok", pages: audits.seo.pages.length });
+
+      return { audits };
+    } catch (error) {
+      call.end?.({
+        outcome: error instanceof RequestRefusedError ? "refused" : "error",
+        pages: 0,
+      });
+
+      return { error: failure("crawl", target, error) };
+    }
+  };
+
+  const outcome = audit();
+  const first = await Promise.race([feed.firstPage, outcome]);
+
+  if (first && "error" in first) {
+    return refuse(502, first.error, typed);
+  }
+
+  // The crawl was done before it had a page to show: nothing to stream.
+  if (first) {
+    return {
+      status: 200,
+      state: { url: target.href, report: renderSiteReport(first.audits) },
+    };
+  }
+
+  return {
+    status: 200,
+    state: { url: target.href, crawling: true },
+    rest: async (write) => {
+      write(progressOpen(target.href));
+      feed.pipe(write);
+      const done = await outcome;
+
+      // The status is sent: a crawl that fails now says why in the page.
+      write(progressClose("error" in done ? done.error : undefined));
+
+      if ("audits" in done) {
+        write(renderSiteReport(done.audits));
+      }
+    },
+  };
 };
 
 /** The field `name` of a form, when it is text. */
@@ -184,7 +341,7 @@ export const answerAudit = async (
   }
 
   if (!formOpen(env)) {
-    return refuse(503, "The page audit is switched off at the moment.", typed);
+    return refuse(503, "The audit is switched off at the moment.", typed);
   }
 
   const ip = request.headers.get("cf-connecting-ip");
@@ -197,10 +354,12 @@ export const answerAudit = async (
     );
   }
 
+  const crawl = isHomepage(target) && formCrawls(env);
+
   const info = {
-    tool: WEB_AUDIT,
+    tool: crawl ? WEB_CRAWL : WEB_AUDIT,
     fetches: true,
-    crawl: false,
+    crawl,
     host: target.hostname,
   };
 
@@ -218,30 +377,32 @@ export const answerAudit = async (
     );
   }
 
+  const fetchOptions = {
+    ...hostedFetch({
+      userAgent: profile.userAgent,
+      sign: profile.sign,
+      limits: call.gate,
+      crawl,
+    }),
+    timeoutMs: HOSTED_LIMITS.timeoutMs,
+  };
+
+  if (crawl) {
+    return runCrawl(target, typed, fetchOptions, call);
+  }
+
   try {
-    const report = await runAudits(target.href, {
-      ...hostedFetch({
-        userAgent: profile.userAgent,
-        sign: profile.sign,
-        limits: call.gate,
-        crawl: false,
-      }),
-      timeoutMs: HOSTED_LIMITS.timeoutMs,
-    });
+    const report = await runAudits(target, fetchOptions);
 
     call.end?.({ outcome: "ok", pages: 1 });
 
     return { status: 200, state: { url: target.href, report } };
   } catch (error) {
-    const refused = error instanceof RequestRefusedError;
-    call.end?.({ outcome: refused ? "refused" : "error", pages: 0 });
+    call.end?.({
+      outcome: error instanceof RequestRefusedError ? "refused" : "error",
+      pages: 0,
+    });
 
-    return refuse(
-      502,
-      refused
-        ? error.message
-        : `The audit of ${target.hostname} failed: ${error instanceof Error ? error.message : String(error)}`,
-      typed
-    );
+    return refuse(502, failure("audit", target, error), typed);
   }
 };

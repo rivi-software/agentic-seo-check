@@ -10,12 +10,14 @@ import {
   auditAeoHtml,
   auditAeoSite,
   auditAeoUrl,
+  auditSiteBoth,
   compactAeoAudit,
 } from "../src/core/aeo/audit.js";
+import type { SiteAudits } from "../src/core/aeo/audit.js";
 import { contentSignals, crawlerAccess } from "../src/core/aeo/bots.js";
 import { parseLlmsTxt } from "../src/core/aeo/llms-txt.js";
 import { aeoSiteFindings } from "../src/core/aeo/site-rules.js";
-import { auditHtml } from "../src/core/audit.js";
+import { auditHtml, auditSite, auditUrl } from "../src/core/audit.js";
 import { extractPage } from "../src/core/html/extract.js";
 import { renderAeoMarkdown } from "../src/core/report/markdown.js";
 import {
@@ -522,6 +524,22 @@ describe("llms.txt", () => {
   });
 });
 
+/** What two audits of a site must agree on: the findings, the roll-up and every page's score. */
+const outcome = (audit: {
+  findings?: { rule: string }[];
+  siteFindings?: { rule: string }[];
+  issues?: { rule: string; pages: number }[];
+  pages?: { url: string; score: number }[];
+}) => ({
+  findings: rulesOf(audit.siteFindings ?? audit.findings ?? []),
+  issues: audit.issues?.map((i) => [i.rule, i.pages]),
+  pages: audit.pages?.map((p) => [p.url, p.score]),
+});
+
+/** Requested paths in order, without the soft-404 probe, whose path is new on every run. */
+const sortedRequests = (paths: string[]) =>
+  paths.filter((p) => !p.startsWith("/agentic-seo-probe")).toSorted();
+
 describe("AEO audits of a site served over HTTP", () => {
   let server: FixtureServer;
   let guideUrl: string;
@@ -647,6 +665,56 @@ describe("AEO audits of a site served over HTTP", () => {
       expect(markdown).toContain("# AEO audit:");
       expect(markdown).toContain("| ClaudeBot | Anthropic | training |");
       expect(markdown).toContain("## Pages");
+    });
+  });
+
+  describe("both audits from one crawl", () => {
+    const options = { maxPages: 10, pageDetail: "summary" } as const;
+    let both: SiteAudits;
+    let requested: string[];
+
+    beforeAll(async () => {
+      const before = server.requests.length;
+      both = await auditSiteBoth(server.origin, options);
+      requested = server.requests.slice(before);
+    });
+
+    it("gives what auditSite and auditAeoSite give", async () => {
+      const [seo, aeo] = await Promise.all([
+        auditSite(server.origin, options),
+        auditAeoSite(server.origin, options),
+      ]);
+
+      expect(outcome(both.seo)).toStrictEqual(outcome(seo));
+      expect(outcome(both.aeo)).toStrictEqual(outcome(aeo));
+      expect(both.aeo.summary).toStrictEqual(aeo.summary);
+    });
+
+    it("sends the SEO crawl's requests and llms.txt: no page twice", async () => {
+      const before = server.requests.length;
+      await auditSite(server.origin, options);
+      const seoCrawl = server.requests.slice(before);
+
+      expect(both.seo.pages.length).toBeGreaterThan(1);
+      expect(sortedRequests(requested)).toStrictEqual(
+        sortedRequests([...seoCrawl, "/llms.txt"])
+      );
+    });
+
+    it("gives the start page's own audits, every finding with its fix", async () => {
+      const [seo, aeo] = await Promise.all([
+        auditUrl(server.origin),
+        auditAeoUrl(server.origin),
+      ]);
+
+      expect(both.start?.seo.findings.length).toBeGreaterThan(0);
+      expect(rulesOf(both.start?.seo.findings ?? [])).toStrictEqual(
+        rulesOf(seo.findings)
+      );
+      expect(rulesOf(both.start?.aeo.findings ?? [])).toStrictEqual(
+        rulesOf(aeo.findings)
+      );
+      expect(both.start?.seo.findings.every((f) => f.fix)).toBeTruthy();
     });
   });
 });

@@ -47,22 +47,49 @@ export const CATEGORY_LABEL: Record<Category, string> = {
 export interface HomeState {
   /** The audit form is on: Turnstile is set up and the server is not paused. */
   open: boolean;
+  /** The form crawls a site from its homepage: crawls are not off. */
+  crawls: boolean;
   /** Turnstile's public site key, for the form's widget. */
   siteKey: string;
   /** The URL in the field: the one just audited, or one a link filled in. */
   url?: string;
   /** Why there is no report, in the words of the refusal. */
   error?: string;
-  /** The report of the audit just run (report.ts). */
+  /** The report of the audit just run (report.ts, site-report.ts). */
   report?: string;
+  /** A crawl is running, and its answer streams in: the form waits for it. */
+  crawling?: boolean;
 }
 
 const AUDIT_COMMAND =
   "npx @rivi-software/agentic-seo-check audit https://example.com";
 
-const auditForm = (state: HomeState): string => {
-  const { limit, period } = rateLimit("CALLER_CALLS");
+/** What the form does, under it. */
+const formFacts = (crawls: boolean): string[] => {
+  const calls = rateLimit("CALLER_CALLS");
+  const crawlLimit = rateLimit("CALLER_CRAWLS");
+  const mb = HOSTED_LIMITS.maxBodyBytes / 1_000_000;
 
+  return crawls
+    ? [
+        "A public page, or a whole site from its homepage",
+        `Up to ${HOSTED_LIMITS.maxPages} pages a site, ${mb} MB of HTML each`,
+        `${calls.limit} runs a ${calls.period} per address, ${crawlLimit.limit} of them sites`,
+        "Reads the HTML the server sends, without running its JavaScript",
+      ]
+    : [
+        "One public page per run",
+        `The first ${mb} MB of its HTML`,
+        `${calls.limit} runs a ${calls.period} per address`,
+        "Reads the HTML the server sends, without running its JavaScript",
+      ];
+};
+
+/** The form's button: busy, and off, while a crawl's answer streams in. */
+const submitButton = (crawling: boolean): string =>
+  `<button class="btn btn-primary btn-lg${crawling ? " is-busy" : ""}" type="submit"${crawling ? " disabled" : ""}><span class="btn-label" data-idle="Run the audit">${crawling ? "Crawling the site…" : "Run the audit"}</span>${icon("arrow", "arrow")}</button>`;
+
+const auditForm = (state: HomeState): string => {
   if (!state.open) {
     return `<div class="audit audit-off rise" style="--d:180ms" id="audit">
 <div class="audit-box">
@@ -72,24 +99,19 @@ const auditForm = (state: HomeState): string => {
 </div>`;
   }
 
-  const facts = [
-    "One public page per run",
-    `The first ${HOSTED_LIMITS.maxBodyBytes / 1_000_000} MB of its HTML`,
-    `${limit} runs a ${period} per address`,
-    "Reads the HTML the server sends, without running its JavaScript",
-  ];
-
-  return `<form class="audit rise" style="--d:180ms" id="audit" method="post" action="/audit" data-check="on">
+  return `<form class="audit rise" style="--d:180ms" id="audit" method="post" action="/audit" data-check="on"${state.crawls ? ' data-crawls="on"' : ""}>
 <div class="audit-box">
-<label class="sr-only" for="url">The address of the page to audit</label>
+<label class="sr-only" for="url">${state.crawls ? "The address of the page to audit, or a homepage to audit its site" : "The address of the page to audit"}</label>
 <div class="audit-row">
 <div class="audit-field">${icon("globe")}<input id="url" name="url" type="text" inputmode="url" autocomplete="url" autocapitalize="none" spellcheck="false" required maxlength="2048" placeholder="https://example.com/pricing" value="${esc(state.url ?? "")}"></div>
-<button class="btn btn-primary btn-lg" type="submit"><span class="btn-label">Run the audit</span>${icon("arrow", "arrow")}</button>
+${submitButton(state.crawling ?? false)}
 </div>
 </div>
 <div class="cf-turnstile" data-sitekey="${esc(state.siteKey)}" data-callback="onAuditToken" data-action="audit"></div>
 ${state.error ? `<p class="notice" role="alert">${icon("error")}<span>${esc(state.error)}</span></p>` : ""}
-<ul class="audit-facts">${facts.map((fact) => `<li>${icon("check")}${fact}</li>`).join("")}</ul>
+<ul class="audit-facts">${formFacts(state.crawls)
+    .map((fact) => `<li>${icon("check")}${fact}</li>`)
+    .join("")}</ul>
 <noscript><p class="notice">The form needs JavaScript for the check that keeps bots out. Without it, run <code>${AUDIT_COMMAND}</code>.</p></noscript>
 </form>`;
 };
@@ -141,7 +163,7 @@ const STEPS: [figure: string, title: string, text: string][] = [
   [
     `<div class="fig-input">${icon("globe")}<span>example.com/pricing</span><b>Audit</b></div>`,
     "Audit",
-    "Enter a page above, or let your agent run the tool on a URL, a crawl of a site or a build directory such as <code>dist/</code>.",
+    "Enter a page above, or a homepage to crawl its site, or let your agent run the tool on a URL, a crawl of a site or a build directory such as <code>dist/</code>.",
   ],
   [
     `<div class="fig-diff"><span class="del">− ${esc("<title>React App</title>")}</span><span class="add">+ ${esc("<title>")}<em>{{…}}</em>${esc(" | Example</title>")}</span></div>`,
@@ -351,7 +373,7 @@ const KEEPS: [iconName: IconName, title: string, text: string][] = [
 ];
 
 const DESCRIPTION =
-  "Audit a page for search engines and AI answer engines in your browser, free. agentic-seo-check gives each finding the exact fix, for you or your coding agent.";
+  "Audit a page or a whole site for search engines and AI answer engines, free. agentic-seo-check gives each finding the exact fix, for you or your coding agent.";
 
 /** The homepage, with the audit form and what `state` puts under it. */
 export const homePage = (state: HomeState): string =>
@@ -401,7 +423,7 @@ ${state.report ?? ""}
 <div class="section-head">
 <p class="kicker">What it checks</p>
 <h2 id="checks-title">Two audits, each with its own score.</h2>
-<p>The SEO audit has ${SEO_RULES.length} rules and the AEO audit ${AEO_RULES.length}. The form above runs the rules for one page; a crawl adds the site-wide ones. <a href="/rules">Every rule, with what it reports and what it recommends</a>.</p>
+<p>The SEO audit has ${SEO_RULES.length} rules and the AEO audit ${AEO_RULES.length}. The form above runs the rules for one page; given a homepage, it crawls the site and adds the site-wide ones. <a href="/rules">Every rule, with what it reports and what it recommends</a>.</p>
 </div>
 <div class="audits">
 <article class="audit-panel">

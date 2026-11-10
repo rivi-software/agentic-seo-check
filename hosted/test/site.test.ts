@@ -1,21 +1,33 @@
 import { readFileSync } from "node:fs";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { auditAeoHtml } from "../../src/core/aeo/audit.ts";
+import { auditAeoHtml, auditSiteBoth } from "../../src/core/aeo/audit.ts";
+import type { SiteAudits } from "../../src/core/aeo/audit.ts";
 import { auditHtml } from "../../src/core/audit.ts";
 import { ALL_RULES } from "../../src/core/rules/index.ts";
+import { startFixtureServer } from "../../test/helpers/fixture-server.ts";
+import type { FixtureServer } from "../../test/helpers/fixture-server.ts";
 import { ORIGIN as MCP_ORIGIN } from "../src/limits.ts";
 import { crawlerPage, landingPage } from "../src/pages.ts";
-import { readForm } from "../src/site/audit.ts";
+import { isHomepage, readForm } from "../src/site/audit.ts";
 import { LLMS_TXT, SITE_ROBOTS_TXT, SITEMAP_XML } from "../src/site/files.ts";
 import { homePage, notFoundPage } from "../src/site/home.ts";
 import { SITE_ORIGIN } from "../src/site/layout.ts";
 import { renderReport } from "../src/site/report.ts";
 import { rulesPage } from "../src/site/rules-page.ts";
+import {
+  progressClose,
+  progressLine,
+  renderSiteReport,
+} from "../src/site/site-report.ts";
 import { OG_IMAGE, SERVER_CARD, SITE_CARD } from "../src/ui/og.ts";
 
-const OPEN = { open: true, siteKey: "1x00000000000000000000BB" };
+const OPEN = {
+  open: true,
+  crawls: true,
+  siteKey: "1x00000000000000000000BB",
+};
 
 /** The audit of a page as the Worker serves it, at `path`. */
 const audit = (html: string, path: string) => {
@@ -85,7 +97,7 @@ describe("the website's pages", () => {
     expect(homePage(OPEN)).toContain('action="/audit"');
     expect(homePage(OPEN)).toContain('data-sitekey="1x00000000000000000000BB"');
 
-    const off = homePage({ open: false, siteKey: "" });
+    const off = homePage({ open: false, crawls: false, siteKey: "" });
 
     expect(off).not.toContain("<form");
     expect(off).not.toContain("challenges.cloudflare.com");
@@ -196,6 +208,141 @@ describe("the report of a page audit", () => {
     expect(report).not.toContain("<img");
     expect(report.match(/<script/gu)).toHaveLength(1);
     expect(report.match(/<\/script/gu)).toHaveLength(1);
+  });
+});
+
+describe("the report of a site audit", () => {
+  let server: FixtureServer;
+  let audits: SiteAudits;
+  let report: string;
+
+  beforeAll(async () => {
+    // A homepage whose title, heading, tags and a link try to break out of the report.
+    server = await startFixtureServer({
+      "/": {
+        body: HOSTILE.replace(
+          "</body>",
+          '<a href="/about">About</a><a href="/x&quot;&gt;&lt;script&gt;alert(4)&lt;/script&gt;">Broken</a></body>'
+        ),
+      },
+      "/about": {
+        body: '<!doctype html><html lang="en"><head><title>About the fixture</title></head><body><h1>About</h1><a href="/">Home</a></body></html>',
+      },
+    });
+    audits = await auditSiteBoth(server.origin, {
+      maxPages: 5,
+      pageDetail: "summary",
+    });
+    report = renderSiteReport(audits);
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  it("shows both scores, the crawl, the findings across the site and on the pages, and the pages", () => {
+    const parts = [
+      "Site audit report",
+      "SEO: search engines",
+      "AEO: AI answer engines",
+      'id="crawl"',
+      "<code>site.broken-internal-links</code>",
+      'id="pages"',
+      'id="report-data"',
+    ];
+
+    expect(parts.filter((part) => !report.includes(part))).toStrictEqual([]);
+  });
+
+  it("links each page to the form with its address, and runs nothing", () => {
+    const about = encodeURIComponent(`${server.origin}/about`);
+
+    expect(report).toContain(`href="/?url=${about}#audit"`);
+    expect(report).not.toContain('action="');
+  });
+
+  it("shows the homepage's own findings with their edits", () => {
+    const home = report.slice(
+      report.indexOf('id="home"'),
+      report.indexOf('id="pages"')
+    );
+
+    expect(audits.start?.seo.findings.length).toBeGreaterThan(0);
+    expect(home).toContain("<code>img.alt-missing</code>");
+    expect(home).toContain('class="edits"');
+  });
+
+  it("never lets the site's text become markup", () => {
+    expect(report).not.toContain("<script>alert");
+    expect(report).not.toContain("<img");
+    expect(report.match(/<script/gu)).toHaveLength(1);
+    expect(report.match(/<\/script/gu)).toHaveLength(1);
+  });
+
+  it("escapes the crawl's progress and its failure", () => {
+    const lines = [
+      progressLine({
+        phase: "crawl",
+        message: "200 https://shop.example.com/<script>alert(1)</script>",
+        crawled: 1,
+      }),
+      progressLine({ phase: "links", message: "<b>Checking</b>" }),
+      progressClose("<img src=x>"),
+    ].join("");
+
+    expect(lines).not.toContain("<script>");
+    expect(lines).not.toContain("<b>");
+    expect(lines).not.toContain("<img");
+  });
+});
+
+describe("the address the form is given", () => {
+  it("is a homepage, which starts a crawl, with no path and no query", () => {
+    const homepages = [
+      "https://shop.example.com",
+      "https://shop.example.com/",
+      "https://shop.example.com/#top",
+    ];
+
+    const pages = [
+      "https://shop.example.com/pricing",
+      "https://shop.example.com/?lang=en",
+      "https://shop.example.com/index.html",
+    ];
+
+    expect(homepages.map((url) => isHomepage(new URL(url)))).toStrictEqual(
+      homepages.map(() => true)
+    );
+    expect(pages.map((url) => isHomepage(new URL(url)))).toStrictEqual(
+      pages.map(() => false)
+    );
+  });
+
+  it("makes the form say so, and the page report point to the crawl", async () => {
+    const url = "https://shop.example.com/pricing";
+
+    const html =
+      "<html><head><title>Pricing</title></head><body></body></html>";
+
+    const page = renderReport(
+      await auditHtml(html, { url, source: "url", target: url }),
+      await auditAeoHtml(html, { url })
+    );
+
+    expect(homePage(OPEN)).toContain('data-crawls="on"');
+    expect(homePage({ ...OPEN, crawls: false })).not.toContain("data-crawls");
+    expect(page).toContain(
+      "enter its homepage: <code>https://shop.example.com/</code>"
+    );
+  });
+
+  it("keeps the form busy while a crawl's answer streams in", () => {
+    const busy = homePage({ ...OPEN, crawling: true });
+
+    expect(busy).toContain(
+      'class="btn btn-primary btn-lg is-busy" type="submit" disabled'
+    );
+    expect(busy).toContain('data-idle="Run the audit">Crawling the site…');
   });
 });
 

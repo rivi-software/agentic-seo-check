@@ -366,6 +366,31 @@ const REPORT = `
 .is-training .is-blocked .crawler-state{color:var(--text-muted)}
 .report-note{display:flex;align-items:flex-start;gap:12px;padding:16px 18px;border:1px dashed var(--line-strong);border-radius:12px;color:var(--text-muted);font-size:.9375rem}
 .report-note .icon{margin-top:4px;color:var(--info-text)}
+.report-sub{margin-top:6px;color:var(--text-body);font-size:.9375rem;font-weight:500}
+.report-lede{color:var(--text-muted);font-size:.9375rem}
+.examples{display:grid;gap:8px}
+.examples ul{display:grid;gap:6px;list-style:none}
+.page-link{font-family:var(--mono);font-size:.8125rem;overflow-wrap:anywhere}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--bg-inset)}
+.pages-table{min-width:520px}
+.pages-table th,.pages-table td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle;font-size:.875rem}
+.pages-table tr:last-child>*{border-bottom:0}
+.pages-table thead th{background:#ffffff04;color:var(--text-faint);font-size:.6875rem;font-weight:500;letter-spacing:.06em;text-transform:uppercase}
+.pages-table tbody th{font-weight:400}
+.pages-table td{white-space:nowrap}
+.pages-table td .tone{display:inline-block;margin-right:8px}
+.score-num{color:var(--band);font-weight:500;font-variant-numeric:tabular-nums}
+.crawl-progress{padding:8px 0 var(--section);scroll-margin-top:calc(var(--header-h) + 16px)}
+.crawl-progress:has(~.report){display:none}
+.progress-body{gap:18px}
+.progress-title{display:flex;align-items:center;gap:12px}
+.progress-title::after{content:"";flex:none;width:16px;height:16px;border:2px solid var(--signal);border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
+.crawl-progress:has(.notice) .progress-title::after{display:none}
+.progress-lines{display:grid;gap:6px;list-style:none;color:var(--text-muted);font-size:.8125rem;line-height:1.5}
+.progress-lines li{display:grid;grid-template-columns:2rem minmax(0,1fr);align-items:start;gap:10px;min-width:0}
+.progress-lines code{padding:0;border:0;background:none;color:var(--text-body);font-size:.75rem}
+.progress-count{display:flex;align-items:center;justify-content:flex-end;height:1.5em;color:var(--signal-text);font-family:var(--mono);font-variant-numeric:tabular-nums}
+.progress-count .icon{width:13px;height:13px;transform:rotate(-90deg)}
 `;
 
 const RULES = `
@@ -459,7 +484,7 @@ const RESPONSIVE = `
 @media (max-width:1060px){.nav,.header-github{display:none}.menu{display:block}.tools{grid-template-columns:repeat(2,minmax(0,1fr))}.facts-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:960px){.split,.hero-split .wrap{grid-template-columns:minmax(0,1fr)}.split{gap:40px}.rules-layout{grid-template-columns:minmax(0,1fr);gap:8px}.rules-toc{position:static;max-height:none;margin-bottom:32px}.rules-toc ul{display:flex;flex-wrap:wrap;gap:6px}.rules-toc a{border:1px solid var(--line)}.audits,.routes,.steps{grid-template-columns:minmax(0,1fr)}.footer-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.footer-brand{grid-column:1/-1}.preview-body{grid-template-columns:minmax(0,1fr)}.preview-side{grid-template-columns:repeat(2,minmax(0,1fr));border-right:0;border-bottom:1px solid var(--line)}.preview-list{display:none}.crawler-groups{grid-template-columns:minmax(0,1fr)}.panel-body{grid-template-columns:minmax(0,1fr)}.levels.levels-2{columns:1}}
 @media (max-width:720px){:root{--section:76px}.hero{padding:60px 0 56px}.audit-row{flex-direction:column}.audit-field{flex:none}.audit .btn-lg{width:100%}.stage{margin-top:48px}.stage-window{transform:none}.scores,.keeps{grid-template-columns:minmax(0,1fr)}.row{grid-template-columns:minmax(0,1fr);padding:32px 0}.header-cta{display:none}.footer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.report-body{gap:40px;padding:20px}.report-bar{padding:16px 20px}.levels a{grid-template-columns:minmax(0,1fr) 4.5rem 1.6rem;gap:12px}.facts-text .fact{grid-template-columns:minmax(0,1fr);gap:2px}.cta-card{padding:56px 24px}}
-@media (max-width:520px){.wrap{padding-inline:16px}.lede{font-size:1.0625rem}.tools,.clients,.facts-strip{grid-template-columns:minmax(0,1fr)}.preview-side{grid-template-columns:minmax(0,1fr)}.preview-main{padding:16px}.window-actions{display:none}.score-card{gap:16px;padding:16px}.score-card .ring{width:76px;height:76px}.score-card .ring-value{font-size:1.5rem}.audit-facts{flex-direction:column;align-items:flex-start;padding-inline:6px}.panel-count{display:none}.audit-panel{padding:22px}.panel-count{font-size:2rem}.compare{min-width:0}.compare th,.compare td{padding:12px 14px}.compare thead th:not(:first-child),.compare td{width:64px;padding-inline:8px}.chat{padding:20px 18px 32px}.chat-user{max-width:92%}}
+@media (max-width:520px){.wrap{padding-inline:16px}.lede{font-size:1.0625rem}.tools,.clients,.facts-strip{grid-template-columns:minmax(0,1fr)}.preview-side{grid-template-columns:minmax(0,1fr)}.preview-main{padding:16px}.window-actions{display:none}.score-card{gap:16px;padding:16px}.score-card .ring{width:76px;height:76px}.score-card .ring-value{font-size:1.5rem}.audit-facts{flex-direction:column;align-items:flex-start;padding-inline:6px}.panel-count{display:none}.audit-panel{padding:22px}.panel-count{font-size:2rem}.compare{min-width:0}.compare th,.compare td{padding:12px 14px}.pages-table{min-width:0}.pages-table th,.pages-table td{padding:10px 8px}.pages-table th:first-child,.pages-table td:first-child{padding-left:12px}.compare thead th:not(:first-child),.compare td{width:64px;padding-inline:8px}.chat{padding:20px 18px 32px}.chat-user{max-width:92%}}
 `;
 
 /** Entrances as rivi.software has them, for those who have not asked for less motion. */

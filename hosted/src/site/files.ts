@@ -2,7 +2,7 @@
  * The website's files besides its pages: robots.txt, the sitemap, llms.txt and the pages' script,
  * which the hosted server's pages load too.
  */
-import { LOCAL_SERVER } from "../../../src/core/hosted.js";
+import { HOSTED_LIMITS, LOCAL_SERVER } from "../../../src/core/hosted.js";
 import { ORIGIN as MCP_ORIGIN } from "../limits.js";
 import { icon } from "../ui/icons.js";
 import { SITE_ORIGIN } from "./layout.js";
@@ -25,7 +25,7 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
 
 ## Use it
 
-- [Audit a page in the browser](${SITE_ORIGIN}/): one public page per run, free
+- [Audit a page or a site in the browser](${SITE_ORIGIN}/): one public page, or a site's homepage for a crawl of up to ${HOSTED_LIMITS.maxPages} pages, free
 - [The hosted MCP server](${MCP_ORIGIN}/): \`${MCP_ORIGIN}/mcp\`, free, with no account and no key
 - [The package on npm](https://www.npmjs.com/package/@rivi-software/agentic-seo-check): the command \`npx @rivi-software/agentic-seo-check audit <url>\` and the local MCP server \`${LOCAL_SERVER}\`
 
@@ -39,9 +39,10 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
 /**
  * The pages' script, served at /site.js on both hostnames so that the Content-Security-Policy
  * needs no inline script. It gives every command and snippet marked data-copy a button that copies
- * it, waits for Turnstile's token before the audit form is sent, shows that an audit is running,
- * and gives the report as a JSON file or as Markdown on the clipboard. Without it every page still
- * reads and works, but the form.
+ * it, waits for Turnstile's token before the audit form is sent, shows that an audit or a crawl is
+ * running, and gives the report as a JSON file or as Markdown on the clipboard. Without it every
+ * page still reads and works, but the form. It runs once the page is read to its end, so after a
+ * crawl's streamed answer.
  */
 export const SITE_JS = `(() => {
   const COPY = ${JSON.stringify(`${icon("copy")}<span class="sr-only">Copy</span>`)};
@@ -94,8 +95,20 @@ export const SITE_JS = `(() => {
   if (form) {
     const button = form.querySelector('button[type="submit"]');
     const label = button.querySelector(".btn-label");
-    const text = label.textContent;
+    const text = label.dataset.idle || label.textContent;
     let waiting = false;
+
+    // A homepage gets a crawl of its site when the form crawls: the address as the server reads it.
+    const crawls = () => {
+      const typed = form.querySelector('[name="url"]').value.trim();
+
+      try {
+        const url = new URL(typed.includes("://") ? typed : "https://" + typed);
+        return form.dataset.crawls === "on" && url.pathname === "/" && !url.search;
+      } catch {
+        return false;
+      }
+    };
 
     const token = () => {
       const field = form.querySelector('[name="cf-turnstile-response"]');
@@ -118,10 +131,11 @@ export const SITE_JS = `(() => {
 
       button.disabled = true;
       button.classList.add("is-busy");
-      label.textContent = "Auditing…";
+      label.textContent = crawls() ? "Crawling the site…" : "Auditing…";
     });
 
-    // A page restored from the back/forward cache still has the button as it was left.
+    // A page restored from the back/forward cache still has the button as it was left, and a
+    // crawl's answer has it busy until the report is in.
     window.addEventListener("pageshow", () => {
       waiting = false;
       button.disabled = false;
