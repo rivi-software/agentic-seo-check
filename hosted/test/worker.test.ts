@@ -15,8 +15,9 @@ import { z } from "zod";
 import { HOSTED_LIMITS } from "../../src/core/hosted.ts";
 import { readVersion, defines } from "../scripts/defines.ts";
 
-const ORIGIN = "https://mcp.agentic-seo-check.rivi.software";
-const SITE = "https://agentic-seo-check.rivi.software";
+const ORIGIN = "https://mcp.agentic-seo.rivi.software";
+const SITE = "https://agentic-seo.rivi.software";
+const FORMER = "https://mcp.agentic-seo-check.rivi.software";
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 const html = (title: string, body = "", head = "") =>
@@ -95,6 +96,9 @@ let worker: Awaited<ReturnType<typeof unstable_startWorker>>;
 
 /** The same Worker, answering as the website's hostname. */
 let website: Awaited<ReturnType<typeof unstable_startWorker>>;
+
+/** The same Worker, answering as the MCP server's hostname in 0.7.0. */
+let former: Awaited<ReturnType<typeof unstable_startWorker>>;
 let client: Client;
 let base: URL;
 
@@ -198,7 +202,8 @@ describe("the hosted Worker in workerd", () => {
   beforeAll(async () => {
     worker = await start(ORIGIN);
     website = await start(SITE);
-    await Promise.all([worker.ready, website.ready]);
+    former = await start(FORMER);
+    await Promise.all([worker.ready, website.ready, former.ready]);
     base = await worker.url;
     client = new Client({ name: "worker-test", version: "0.0.0" });
     await client.connect(
@@ -208,7 +213,11 @@ describe("the hosted Worker in workerd", () => {
 
   afterAll(async () => {
     await client?.close();
-    await Promise.all([worker?.dispose(), website?.dispose()]);
+    await Promise.all([
+      worker?.dispose(),
+      website?.dispose(),
+      former?.dispose(),
+    ]);
   });
 
   describe("the hosted Worker", () => {
@@ -393,6 +402,40 @@ describe("the hosted Worker in workerd", () => {
       expect(requests.map((r) => r.url)).toContain(
         "https://openai.com/chatgpt-connectors.json"
       );
+    });
+  });
+
+  describe("the MCP server's hostname in 0.7.0", () => {
+    it("still serves the tools at /mcp", async () => {
+      const old = new Client({ name: "worker-test", version: "0.0.0" });
+      await old.connect(
+        new StreamableHTTPClientTransport(new URL("/mcp", await former.url))
+      );
+
+      try {
+        const { tools } = await old.listTools();
+
+        expect(tools.map((t) => t.name)).toContain("seo_audit_page");
+      } finally {
+        await old.close();
+      }
+    });
+
+    it("sends its pages to the current hostname", async () => {
+      const answers = await Promise.all(
+        ["/", "/crawler?from=ua"].map(async (path) => {
+          const res = await former.fetch(`${FORMER}${path}`, {
+            redirect: "manual",
+          });
+
+          return [res.status, res.headers.get("location")];
+        })
+      );
+
+      expect(answers).toStrictEqual([
+        [301, `${ORIGIN}/`],
+        [301, `${ORIGIN}/crawler?from=ua`],
+      ]);
     });
   });
 

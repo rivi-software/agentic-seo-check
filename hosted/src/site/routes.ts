@@ -1,6 +1,6 @@
 import { MARK_SVG } from "../../../src/brand.js";
 /**
- * The routes of the website at agentic-seo-check.rivi.software (issue #39), which the Worker
+ * The routes of the website at agentic-seo.rivi.software (issue #39), which the Worker
  * serves beside the MCP server's own hostname: the homepage with the audit form, the rules, the
  * form's answer at /audit, and the files a crawler asks for.
  */

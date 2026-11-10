@@ -9,7 +9,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { HOSTED_LIMITS } from "../../src/core/hosted.js";
 import { createMcpServer } from "../../src/mcp.js";
 import { callerOf, OPENAI_RANGES_URL, parseOpenAiRanges } from "./callers.js";
-import { hostedProfile } from "./limits.js";
+import { FORMER_HOST, hostedProfile, ORIGIN } from "./limits.js";
 import {
   crawlerPage,
   FAVICON_SVG,
@@ -133,7 +133,7 @@ const page = (
 const HTML = "text/html; charset=utf-8";
 
 const route = (request: Request, env: Env, ctx: ExecutionContext) => {
-  const { hostname, pathname } = new URL(request.url);
+  const { hostname, pathname, search } = new URL(request.url);
 
   // The website has a hostname of its own; this one keeps /mcp and the server's pages.
   if (isSiteHost(hostname)) {
@@ -146,6 +146,14 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
 
   if (pathname === "/mcp") {
     return handleMcp(request, env, ctx);
+  }
+
+  // The pages, the User-Agent's link included, live on the current hostname only.
+  if (hostname === FORMER_HOST) {
+    return new Response(null, {
+      status: 301,
+      headers: { location: `${ORIGIN}${pathname}${search}` },
+    });
   }
 
   if (request.method !== "GET" && request.method !== "HEAD") {

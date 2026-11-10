@@ -11,7 +11,7 @@
   SEO and AEO analysis built for coding agents: a CLI and an MCP server that audit URLs,<br>
   static build output or raw HTML, and return findings an agent can act on.<br>
   Open source, from <a href="https://rivi.software">RIVI Software</a>.<br>
-  <a href="https://agentic-seo-check.rivi.software">agentic-seo-check.rivi.software</a>: audit a page in your browser, and read every rule.
+  <a href="https://agentic-seo.rivi.software">agentic-seo.rivi.software</a>: audit a page in your browser, and read every rule.
 </p>
 
 <p align="center">
@@ -42,7 +42,7 @@
 agentic-seo-check is one core with two interfaces:
 
 - **CLI** `agentic-seo-check` with JSON (default when piped) or Markdown output and CI-friendly exit codes.
-- **MCP server** exposing six tools for Claude Code, Cursor, Codex and any other MCP client. A [hosted server](#hosted-server) serves four of them at `https://mcp.agentic-seo-check.rivi.software/mcp`, free and without an install, for claude.ai, ChatGPT and any client that connects over HTTP.
+- **MCP server** exposing six tools for Claude Code, Cursor, Codex and any other MCP client. A [hosted server](#hosted-server) serves four of them at `https://mcp.agentic-seo.rivi.software/mcp`, free and without an install, for claude.ai, ChatGPT and any client that connects over HTTP.
 
 It audits **URLs** (production, staging, `localhost` dev servers), **static build output** (`dist/`, `out/`, `build/`) and **raw HTML**, and returns findings an agent can act on: a stable rule id, severity, what is wrong, the fix, a CSS selector for where it lives, and evidence with the current values. Each finding carries the exact edits that fix it, quoting the code to replace, and an id, so an agent can re-check only the rules it fixed and see which findings are gone, still open or new.
 
@@ -161,20 +161,20 @@ Exit codes: `0` success, `1` findings at or above `--fail-on`, `2` usage or runt
 RIVI Software runs the MCP server on Cloudflare, free to use, with no account and no key:
 
 ```text
-https://mcp.agentic-seo-check.rivi.software/mcp
+https://mcp.agentic-seo.rivi.software/mcp
 ```
 
 It speaks MCP over Streamable HTTP, so it works where a local server cannot run: claude.ai, Cowork and the Claude apps, ChatGPT, and any machine without Node.
 
-The same server is behind the form on [agentic-seo-check.rivi.software](https://agentic-seo-check.rivi.software): enter a URL and it shows the SEO and AEO audits of that page, with no assistant and no model in between. The form audits one public page per run, within the limits below, and [the site's rules page](https://agentic-seo-check.rivi.software/rules) lists every rule.
+The same server is behind the form on [agentic-seo.rivi.software](https://agentic-seo.rivi.software): enter a URL and it shows the SEO and AEO audits of that page, with no assistant and no model in between. The form audits one public page per run, within the limits below, and [the site's rules page](https://agentic-seo.rivi.software/rules) lists every rule.
 
 | Client | Setup |
 | --- | --- |
-| Claude Code | `claude mcp add --transport http agentic-seo-check https://mcp.agentic-seo-check.rivi.software/mcp` |
+| Claude Code | `claude mcp add --transport http agentic-seo-check https://mcp.agentic-seo.rivi.software/mcp` |
 | claude.ai, Cowork, the Claude apps | Settings, Connectors: add a custom connector with the URL above, no sign-in |
 | ChatGPT | a custom app (connector) with the URL above and no authentication, which needs developer mode (Settings, Apps, Advanced settings) |
-| Cursor | `{ "mcpServers": { "agentic-seo-check": { "url": "https://mcp.agentic-seo-check.rivi.software/mcp" } } }` in `.cursor/mcp.json` |
-| VS Code | `{ "servers": { "agentic-seo-check": { "type": "http", "url": "https://mcp.agentic-seo-check.rivi.software/mcp" } } }` in `.vscode/mcp.json` |
+| Cursor | `{ "mcpServers": { "agentic-seo-check": { "url": "https://mcp.agentic-seo.rivi.software/mcp" } } }` in `.cursor/mcp.json` |
+| VS Code | `{ "servers": { "agentic-seo-check": { "type": "http", "url": "https://mcp.agentic-seo.rivi.software/mcp" } } }` in `.vscode/mcp.json` |
 
 It has `seo_audit_page`, `seo_crawl_site`, `seo_aeo_audit` and `seo_list_rules`, with the same names and options as the local server's, less what needs your machine. Its requests come from Cloudflare's network, so it cannot reach `localhost`, private networks or IP addresses, read a build directory (`seo_audit_directory`, `dir`), render JavaScript (`render`) or run Lighthouse (`lighthouse`, `seo_lighthouse`), send your headers or User-Agent to a site behind a login, or probe with AI bots' User-Agents (`aiBots`). Crawls always obey robots.txt. Some sites turn away requests from Cloudflare Workers; the server then says the site refused it rather than reporting the refusal as the page. For all of these, run the [local server](#mcp-server).
 
@@ -191,7 +191,7 @@ It is free for everyone, so it keeps each site and each caller to a fair share:
 
 A call past a limit gets an error that names the limit, says when to try again and points to the local server, which has no limits. A crawl that reaches a limit, or that a site starts refusing, stops early with `site.crawl-stopped` (`aeo.crawl-stopped`) and leaves what it did not request unchecked, never broken.
 
-The server keeps no HTML you send, no reports and no headers. It records each tool call: the tool, the outcome, the duration, the number of requests and pages, and the hostname audited (never the path, the query or your address), for three months, so a report about requests to a site can be checked against what the server sent. [The server's page](https://mcp.agentic-seo-check.rivi.software/) has the setup, the limits and the privacy notice; [the page for site owners](https://mcp.agentic-seo-check.rivi.software/crawler), which its User-Agent links to, says how to recognise and block its requests. Report abuse of the hosted server, such as too many requests to one site, through [help.rivi.software/contact](https://help.rivi.software/contact); report a vulnerability as [SECURITY.md](SECURITY.md) says.
+The server keeps no HTML you send, no reports and no headers. It records each tool call: the tool, the outcome, the duration, the number of requests and pages, and the hostname audited (never the path, the query or your address), for three months, so a report about requests to a site can be checked against what the server sent. [The server's page](https://mcp.agentic-seo.rivi.software/) has the setup, the limits and the privacy notice; [the page for site owners](https://mcp.agentic-seo.rivi.software/crawler), which its User-Agent links to, says how to recognise and block its requests. Report abuse of the hosted server, such as too many requests to one site, through [help.rivi.software/contact](https://help.rivi.software/contact); report a vulnerability as [SECURITY.md](SECURITY.md) says.
 
 The Worker is in [`hosted/`](hosted/) and deploys with each npm release, so it runs the latest version.
 

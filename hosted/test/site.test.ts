@@ -144,7 +144,7 @@ describe("the report of a page audit", () => {
 
 /** The form as a POST with the Content-Length `length`, or without one. */
 const post = (length: string | null) =>
-  new Request("https://agentic-seo-check.rivi.software/audit", {
+  new Request("https://agentic-seo.rivi.software/audit", {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
