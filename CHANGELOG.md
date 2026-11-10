@@ -1,5 +1,11 @@
 # @rivi-software/agentic-seo-check
 
+## 0.7.1
+
+### Patch Changes
+
+- 54a4ccc: The hosted MCP server moved to `https://mcp.agentic-seo.rivi.software/mcp`, and the website to `https://agentic-seo.rivi.software`. The former address, `https://mcp.agentic-seo-check.rivi.software/mcp`, keeps working, so clients set up with it need no change; its pages redirect to the new hostname.
+
 ## 0.7.0
 
 ### Minor Changes
