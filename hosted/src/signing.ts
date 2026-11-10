@@ -187,12 +187,17 @@ export const requestSignature = async (
 };
 
 /**
- * Signs each request with the first key of the secret, or with nothing while it holds none.
- * `agent` is the origin that serves the key directory.
+ * Signs each https request with the first key of the secret, or with nothing while it holds none.
+ * `agent` is the origin that serves the key directory. A request over plain http goes unsigned:
+ * anyone on its path could read the signature and send it again, as this server, for a minute.
  */
 export const requestSigner =
   (secret: string | undefined, agent: string) =>
   async (url: URL): Promise<Record<string, string>> => {
+    if (url.protocol !== "https:") {
+      return {};
+    }
+
     const [key] = await signingKeys(secret);
 
     return key ? requestSignature(key, agent, url) : {};

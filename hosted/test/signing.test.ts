@@ -161,6 +161,17 @@ describe("Web Bot Auth", () => {
     );
   });
 
+  it("signs https requests only, which nobody on the path can read", async () => {
+    const sign = requestSigner(JSON.stringify([TEST_KEY]), AGENT);
+
+    await expect(
+      sign(new URL("https://shop.example.com/"))
+    ).resolves.toMatchObject({ "signature-agent": `"${AGENT}"` });
+    await expect(
+      sign(new URL("http://shop.example.com/"))
+    ).resolves.toStrictEqual({});
+  });
+
   it("sends requests unsigned without keys, or with a secret that holds none", async () => {
     const logged = vi.spyOn(console, "error").mockReturnValue(undefined);
     onTestFinished(() => logged.mockRestore());
