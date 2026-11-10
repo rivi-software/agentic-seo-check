@@ -313,8 +313,12 @@ const fetchHop = async (
   walk: RedirectWalk,
   current: string
 ): Promise<HopOutcome> => {
+  const asked = performance.now();
+  await askGate(walk.options.gate, current);
+  // The time the gate held the request (robots.txt first, a Crawl-delay) is not the site's: it
+  // stays out of the response time, which response.slow judges.
+  walk.started += performance.now() - asked;
   const { url, options, readBody, timeoutMs, started, chain } = walk;
-  await askGate(options.gate, current);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 

@@ -6,6 +6,7 @@ import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
+import { sleep } from "../src/core/concurrency.js";
 import type { RequestGate } from "../src/core/fetch.js";
 import {
   HOSTED_LIMITS,
@@ -948,6 +949,41 @@ describe("the hosted server", () => {
       }
     });
 
+    it("leaves the time its gate held a request out of the response time", async () => {
+      serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nAllow: /\n",
+        },
+        "https://shop.example.com/": {
+          body: page("Shop home page for the fixture", ""),
+        },
+      });
+
+      // Limits as slow to answer as robots.txt or a Crawl-delay can make the gate, refusing only
+      // another site.
+      const gate: RequestGate = {
+        beforeRequest: async (url) => {
+          await sleep(2500);
+
+          return url.hostname === "other.example.com"
+            ? { scope: "host", message: "Not this site." }
+            : undefined;
+        },
+      };
+
+      const client = await connect(profileWith({ gate }).profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      const { findings } = Findings.parse(result.structuredContent);
+
+      expect(rulesOf(findings)).not.toContain("response.slow");
+    });
+
     it("leaves a one-page audit and other sites out of a site's Crawl-delay", async () => {
       serve({
         "https://shop.example.com/robots.txt": {
@@ -988,7 +1024,7 @@ describe("the hosted server", () => {
       });
 
       expect(JSON.stringify(result)).toContain(
-        "https://shop.example.com/robots.txt asks agentic-seo-check to wait 60 s between requests (Crawl-delay), and a crawl on the hosted server takes at most 30 s of such waits, so it sent shop.example.com no more requests."
+        "https://shop.example.com/robots.txt asks agentic-seo-check to wait 60 s between requests (Crawl-delay), and a crawl on the hosted server waits at most 30 s in all for a site, so it sent shop.example.com no more requests."
       );
       expect(requests.map((r) => r.url)).toStrictEqual([
         "https://shop.example.com/robots.txt",
