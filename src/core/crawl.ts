@@ -402,7 +402,7 @@ const checkExternalTargets = async (
 const crawlPolicy = (
   robots: RobotsResult,
   startUrl: string,
-  options: { respectRobots: boolean; userAgent: string }
+  options: { respectRobots: boolean; userAgent: string; gated: boolean }
 ): ((url: string) => boolean) => {
   if (!options.respectRobots) {
     return () => true;
@@ -410,9 +410,14 @@ const crawlPolicy = (
 
   if (!robots.crawlerAllows(startUrl) && robots.allows(startUrl)) {
     const token = robotsUserAgentToken(options.userAgent);
+    const reason = `${robots.info.url} asks ${token} not to crawl ${startUrl} (in a User-agent: ${token} group), so there is nothing to crawl.`;
 
+    // A gate (the hosted server's) obeys robots.txt for every request, with no way to turn that
+    // off: it gives the site's reason and nothing more.
     throw new Error(
-      `${robots.info.url} asks ${token} not to crawl ${startUrl} (in a User-agent: ${token} group), so there is nothing to crawl. Audit single pages instead; for a site of your own, crawl without obeying robots.txt (respectRobots: false with the local server, --ignore-robots with the CLI).`
+      options.gated
+        ? reason
+        : `${reason} Audit single pages instead; for a site of your own, crawl without obeying robots.txt (respectRobots: false with the local server, --ignore-robots with the CLI).`
     );
   }
 
@@ -475,6 +480,7 @@ export const crawlSite = async (
   const fetchable = crawlPolicy(robots, startUrl, {
     respectRobots: options.respectRobots,
     userAgent,
+    gated: options.fetch.gate !== undefined,
   });
 
   /**

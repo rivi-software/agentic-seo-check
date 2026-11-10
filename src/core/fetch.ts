@@ -1,7 +1,15 @@
 import { VERSION } from "../version.js";
 import type { RedirectHop, ResponseInfo } from "./types.js";
 
-export const DEFAULT_USER_AGENT = `Mozilla/5.0 (compatible; agentic-seo-check/${VERSION}; +https://github.com/rivi-software/agentic-seo-check)`;
+/**
+ * The product token of the CLI, the local server and the library, which robots.txt groups match.
+ * The hosted server's is `agentic-seo-check` (issue #41): a site can tell the requests a person
+ * sends from their own machine from the hosted server's, and Cloudflare's verified bot is the
+ * hosted server alone.
+ */
+export const LOCAL_PRODUCT_TOKEN = "agentic-seo-check-local";
+
+export const DEFAULT_USER_AGENT = `Mozilla/5.0 (compatible; ${LOCAL_PRODUCT_TOKEN}/${VERSION}; +https://github.com/rivi-software/agentic-seo-check)`;
 
 const KEPT_HEADERS = [
   "content-type",
@@ -65,6 +73,12 @@ export interface RequestGate {
   afterResponse?: (url: URL, response: Response) => Refusal | undefined;
   /** Shown each body once read, for refusals that only the page itself shows (a challenge page). */
   afterBody?: (url: URL, result: FetchResult) => Refusal | undefined;
+  /**
+   * The robots.txt of `origin` as a gate that obeys robots.txt itself reads it (the hosted
+   * server's), once per audit: `loadRobotsTxt` takes it, so the audit's own read is not a second
+   * request. It throws what the request threw, a refusal included.
+   */
+  robotsTxt?: (origin: string) => Promise<FetchResult>;
 }
 
 export interface FetchOptions {
@@ -81,6 +95,12 @@ export interface FetchOptions {
   keepBytes?: boolean;
   /** What the audit may request; `fetchPage` throws RequestRefusedError for what it may not. */
   gate?: RequestGate;
+  /**
+   * The headers that sign a request (the hosted server's Web Bot Auth signature), asked for each
+   * request the gate lets through: the first and every redirect, since a signature covers the
+   * host it goes to.
+   */
+  sign?: (url: URL) => Promise<Record<string, string>> | Record<string, string>;
 }
 
 /** The most of a body an audit reads unless `maxBodyBytes` says otherwise. */
@@ -293,12 +313,22 @@ const fetchHop = async (
   walk: RedirectWalk,
   current: string
 ): Promise<HopOutcome> => {
+  const asked = performance.now();
+  await askGate(walk.options.gate, current);
+  // The time the gate held the request (robots.txt first, a Crawl-delay) is not the site's: it
+  // stays out of the response time, which response.slow judges.
+  walk.started += performance.now() - asked;
   const { url, options, readBody, timeoutMs, started, chain } = walk;
-  await askGate(options.gate, current);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    // A request that cannot be signed is not sent: it fails as any other request does.
+    const signature =
+      options.sign && URL.canParse(current)
+        ? await options.sign(new URL(current))
+        : {};
+
     const res = await fetch(current, {
       method: "GET",
       redirect: "manual",
@@ -309,6 +339,7 @@ const fetchHop = async (
           "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "accept-language": "en,*;q=0.5",
         ...options.headers,
+        ...signature,
       },
     });
 

@@ -3,12 +3,22 @@ import { gzipSync } from "node:zlib";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { afterEach, assert, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  assert,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { z } from "zod";
 
+import { sleep } from "../src/core/concurrency.js";
 import type { RequestGate } from "../src/core/fetch.js";
 import {
   HOSTED_LIMITS,
+  hostedFetch,
   hostedUrlProblem,
   siteRefusal,
 } from "../src/core/hosted.js";
@@ -28,20 +38,23 @@ interface Route {
   body?: string | Uint8Array<ArrayBuffer>;
 }
 
+/** Every request of the last `serve`, with when it was sent and its headers. */
+const sentRequests: { url: string; at: number; headers: Headers }[] = [];
+
 /**
  * The site the core's fetch() sees, by absolute URL ("*" answers every other URL), and the
  * requests it got with their User-Agent.
  */
 const serve = (routes: Record<string, Route>) => {
   const requests: { url: string; userAgent: string | null }[] = [];
+  sentRequests.length = 0;
 
   // oxlint-disable-next-line eslint/require-await -- fetch() answers with a promise
   vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
-    requests.push({
-      url,
-      userAgent: new Headers(init?.headers).get("user-agent"),
-    });
+    const headers = new Headers(init?.headers);
+    requests.push({ url, userAgent: headers.get("user-agent") });
+    sentRequests.push({ url, at: performance.now(), headers });
     const route = routes[url] ?? routes["*"];
 
     return new Response(
@@ -70,7 +83,11 @@ interface Profile {
 
 /** A hosted profile that lets every call through, with `gate` as the server's own limits. */
 const profileWith = (
-  options: { gate?: RequestGate; refuse?: string } = {}
+  options: {
+    gate?: RequestGate;
+    refuse?: string;
+    sign?: HostedProfile["sign"];
+  } = {}
 ): Profile => {
   const calls: HostedCallInfo[] = [];
   const ends: HostedCallEnd[] = [];
@@ -80,6 +97,7 @@ const profileWith = (
     ends,
     profile: {
       userAgent: USER_AGENT,
+      sign: options.sign,
       // oxlint-disable-next-line eslint/require-await -- the Worker's startCall awaits its limits
       startCall: async (call) => {
         calls.push(call);
@@ -189,6 +207,37 @@ describe("the hosted server", () => {
         "http://metadata.google.internal/":
           expect.stringContaining("cannot reach"),
         "http://intranet/": expect.stringContaining("cannot reach intranet"),
+      });
+    });
+
+    it("waits at most 30 s for Crawl-delay in a crawl, every site's together", async () => {
+      vi.useFakeTimers();
+      onTestFinished(() => {
+        vi.useRealTimers();
+      });
+
+      serve({
+        "https://a.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nCrawl-delay: 20\n",
+        },
+        "https://b.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nCrawl-delay: 20\n",
+        },
+      });
+
+      const { gate } = hostedFetch({ userAgent: USER_AGENT, crawl: true });
+      assert(gate, "a hosted call has a gate");
+      const first = gate.beforeRequest(new URL("https://a.example.com/"));
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      await expect(first).resolves.toBeUndefined();
+      await expect(
+        gate.beforeRequest(new URL("https://b.example.com/"))
+      ).resolves.toMatchObject({
+        scope: "host",
+        message: expect.stringContaining("at most 30 s in all for Crawl-delay"),
       });
     });
 
@@ -385,6 +434,7 @@ describe("the hosted server", () => {
       const { findings } = Findings.parse(result.structuredContent);
 
       expect(requests).toStrictEqual([
+        { url: "https://shop.example.com/robots.txt", userAgent: USER_AGENT },
         { url: "https://shop.example.com/", userAgent: USER_AGENT },
       ]);
       expect(calls).toStrictEqual([
@@ -449,6 +499,8 @@ describe("the hosted server", () => {
         "refused",
         "refused",
       ]);
+      // The site decides what it serves: the refusal names no way around it.
+      expect(texts.join("\n")).not.toContain("local server");
     });
 
     it("leaves the links it may not request unchecked, never broken", async () => {
@@ -672,15 +724,16 @@ describe("the hosted server", () => {
       );
       expect(rulesOf(siteFindings)).not.toContain("site.robots-blocked-pages");
       expect(kept.isError).toBeTruthy();
-      expect(textOf(kept)).toContain(
-        "https://other.example.com/robots.txt asks agentic-seo-check not to crawl https://other.example.com/"
+      // The site's reason and nothing more: no way around robots.txt.
+      expect(textOf(kept)).toBe(
+        "agentic-seo-check error: https://other.example.com/robots.txt asks agentic-seo-check not to crawl https://other.example.com/ (in a User-agent: agentic-seo-check group), so there is nothing to crawl."
       );
       expect(requests.map((r) => r.url)).not.toContain(
         "https://other.example.com/"
       );
     });
 
-    it("sends a site whose robots.txt keeps every crawler out nothing but robots.txt and sitemap requests", async () => {
+    it("sends a site whose robots.txt keeps every crawler out nothing but the robots.txt request", async () => {
       const requests = serve({
         "https://shop.example.com/robots.txt": {
           headers: { "content-type": "text/plain" },
@@ -698,12 +751,13 @@ describe("the hosted server", () => {
 
       const { siteFindings } = SiteFindings.parse(result.structuredContent);
 
-      // No page, and none of the soft-404, http and www probes: all are under the disallowed /.
+      // No page, no sitemap and none of the soft-404, http and www probes: all are under the
+      // disallowed /, and a sitemap that was not requested is unread, not missing.
       expect(requests.map((r) => r.url)).toStrictEqual([
         "https://shop.example.com/robots.txt",
-        "https://shop.example.com/sitemap.xml",
       ]);
       expect(rulesOf(siteFindings)).toContain("site.robots-txt-blocks-all");
+      expect(rulesOf(siteFindings)).not.toContain("site.sitemap-missing");
     });
 
     it("reads sitemaps up to 5 MB and says which were larger", async () => {
@@ -803,8 +857,264 @@ describe("the hosted server", () => {
       });
 
       expect(
-        requests.filter((r) => r.url.startsWith("https://cdn.example.net/"))
-      ).toHaveLength(1);
+        requests
+          .map((r) => r.url)
+          .filter((u) => u.startsWith("https://cdn.example.net/"))
+      ).toStrictEqual([
+        "https://cdn.example.net/robots.txt",
+        "https://cdn.example.net/a",
+      ]);
+    });
+
+    it("obeys robots.txt for one page, and says only why", async () => {
+      const requests = serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: Googlebot\nAllow: /\n\nUser-agent: *\nDisallow: /private/\n",
+        },
+        "https://shop.example.com/private/report": {
+          body: page("A report kept out of crawls", ""),
+        },
+      });
+
+      const { profile, ends } = profileWith();
+      const client = await connect(profile);
+
+      const texts = await Promise.all(
+        ["seo_audit_page", "seo_aeo_audit"].map(async (name) =>
+          textOf(
+            await client.callTool({
+              name,
+              arguments: { url: "https://shop.example.com/private/report" },
+            })
+          )
+        )
+      );
+
+      expect(texts).toStrictEqual([
+        'agentic-seo-check error: https://shop.example.com/robots.txt keeps agentic-seo-check from https://shop.example.com/private/report (line 5: "Disallow: /private/"), so the hosted server did not request it.',
+        'agentic-seo-check error: https://shop.example.com/robots.txt keeps agentic-seo-check from https://shop.example.com/private/report (line 5: "Disallow: /private/"), so the hosted server did not request it.',
+      ]);
+      expect(ends.map((e) => e.outcome)).toStrictEqual(["refused", "refused"]);
+      expect(requests.map((r) => r.url)).not.toContain(
+        "https://shop.example.com/private/report"
+      );
+    });
+
+    it("reads robots.txt once for an AEO audit of one page, before the page", async () => {
+      const requests = serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nAllow: /\n",
+        },
+        "https://shop.example.com/": {
+          body: page("Shop home page for the fixture", "<p>Widgets.</p>"),
+        },
+      });
+
+      const client = await connect(profileWith().profile);
+
+      const result = await client.callTool({
+        name: "seo_aeo_audit",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(requests.map((r) => r.url)).toStrictEqual([
+        "https://shop.example.com/robots.txt",
+        "https://shop.example.com/",
+        "https://shop.example.com/llms.txt",
+      ]);
+      expect(result.structuredContent).toMatchObject({
+        crawlers: { bots: expect.any(Array) },
+      });
+    });
+
+    it("takes a robots.txt that answers with a server error to disallow everything", async () => {
+      const requests = serve({
+        "https://shop.example.com/robots.txt": { status: 503, body: "down" },
+        "https://shop.example.com/": {
+          body: page("Shop home page for the fixture", ""),
+        },
+      });
+
+      const client = await connect(profileWith().profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      expect(textOf(result)).toBe(
+        "agentic-seo-check error: https://shop.example.com/robots.txt answered HTTP 503, and a crawler that cannot read robots.txt takes it to disallow everything (RFC 9309), so the hosted server did not request https://shop.example.com/."
+      );
+      expect(requests.map((r) => r.url)).toStrictEqual([
+        "https://shop.example.com/robots.txt",
+      ]);
+    });
+
+    it("waits between a crawl's requests as robots.txt's Crawl-delay asks", async () => {
+      serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nAllow: /\n\nUser-agent: agentic-seo-check\nCrawl-delay: 0.2\n",
+        },
+        "https://shop.example.com/": {
+          body: page(
+            "Shop home page for the fixture",
+            '<a href="/a">A</a> <a href="/b">B</a> <a href="/c">C</a>'
+          ),
+        },
+        "*": { body: page("A page of the fixture shop", "") },
+      });
+
+      const client = await connect(profileWith().profile);
+
+      const result = await client.callTool({
+        name: "seo_crawl_site",
+        arguments: { url: "https://shop.example.com/", concurrency: 4 },
+      });
+
+      expect(result.isError).toBeFalsy();
+
+      const times = sentRequests.flatMap((r) =>
+        r.url.startsWith("https://shop.example.com/") ? [r.at] : []
+      );
+
+      expect(times.length).toBeGreaterThan(4);
+
+      // Timers may fire a millisecond early; the gaps are 200 ms, not the 0 of four at a time.
+      for (const [i, at] of times.slice(1).entries()) {
+        expect(at - (times[i] ?? 0)).toBeGreaterThanOrEqual(190);
+      }
+    });
+
+    it("leaves the time its gate held a request out of the response time", async () => {
+      serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nAllow: /\n",
+        },
+        "https://shop.example.com/": {
+          body: page("Shop home page for the fixture", ""),
+        },
+      });
+
+      // Limits as slow to answer as robots.txt or a Crawl-delay can make the gate, refusing only
+      // another site.
+      const gate: RequestGate = {
+        beforeRequest: async (url) => {
+          await sleep(2500);
+
+          return url.hostname === "other.example.com"
+            ? { scope: "host", message: "Not this site." }
+            : undefined;
+        },
+      };
+
+      const client = await connect(profileWith({ gate }).profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      const { findings } = Findings.parse(result.structuredContent);
+
+      expect(rulesOf(findings)).not.toContain("response.slow");
+    });
+
+    it("leaves a one-page audit and other sites out of a site's Crawl-delay", async () => {
+      serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nCrawl-delay: 30\n",
+        },
+        "https://shop.example.com/": {
+          body: page("Shop home page for the fixture", ""),
+        },
+      });
+
+      const client = await connect(profileWith().profile);
+      const started = performance.now();
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(performance.now() - started).toBeLessThan(5000);
+    });
+
+    it("stops a crawl whose Crawl-delay is longer than a hosted crawl waits, and says so", async () => {
+      const requests = serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nAllow: /\nCrawl-delay: 60\n",
+        },
+        "*": { body: page("Shop home page for the fixture", "") },
+      });
+
+      const client = await connect(profileWith().profile);
+
+      const result = await client.callTool({
+        name: "seo_crawl_site",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      expect(JSON.stringify(result)).toContain(
+        "https://shop.example.com/robots.txt asks agentic-seo-check to wait 60 s between requests (Crawl-delay), and a crawl on the hosted server waits at most 30 s in all for Crawl-delay, so it sent shop.example.com no more requests."
+      );
+      expect(requests.map((r) => r.url)).toStrictEqual([
+        "https://shop.example.com/robots.txt",
+      ]);
+    });
+
+    it("signs every request it sends, each for the host it goes to", async () => {
+      serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nAllow: /\n",
+        },
+        "https://shop.example.com/": {
+          status: 301,
+          headers: { location: "https://www.shop.example.com/" },
+        },
+        "https://www.shop.example.com/": {
+          body: page("Shop home page for the fixture", ""),
+        },
+      });
+
+      const signed: string[] = [];
+
+      const client = await connect(
+        profileWith({
+          sign: (url) => {
+            signed.push(url.href);
+
+            return { signature: `sig1=:${url.host}:` };
+          },
+        }).profile
+      );
+
+      await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      expect(
+        sentRequests.map((r) => [r.url, r.headers.get("signature")])
+      ).toStrictEqual([
+        ["https://shop.example.com/robots.txt", "sig1=:shop.example.com:"],
+        ["https://shop.example.com/", "sig1=:shop.example.com:"],
+        [
+          "https://www.shop.example.com/robots.txt",
+          "sig1=:www.shop.example.com:",
+        ],
+        ["https://www.shop.example.com/", "sig1=:www.shop.example.com:"],
+      ]);
+      expect(signed).toStrictEqual(sentRequests.map((r) => r.url));
     });
 
     it("audits one page for AEO when the site refuses its robots.txt", async () => {

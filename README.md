@@ -154,6 +154,8 @@ agentic-seo-check install-browser
 
 `--rule` runs only the rules named (space- or comma-separated). `--baseline` reads an earlier audit's JSON and adds `baseline` to the result: the findings since fixed, still open and new. Re-check with the same target and options as the first run; a finding counts as fixed only when its rule ran again on its page, and the rest are counted as `notChecked`. A crawl or directory baseline needs `--page-detail full` (the CLI default), so its page findings have ids.
 
+Requests from the CLI and the local server carry the User-Agent `Mozilla/5.0 (compatible; agentic-seo-check-local/<version>; +https://github.com/rivi-software/agentic-seo-check)` unless `--user-agent` (`userAgent`) sets another. A crawl obeys robots.txt for the product token `agentic-seo-check-local`, or `*` when robots.txt has no group for it, unless `--ignore-robots` (`respectRobots: false`). The hosted server's token is `agentic-seo-check`, so a site can tell the two apart.
+
 Exit codes: `0` success, `1` findings at or above `--fail-on`, `2` usage or runtime error. Progress goes to stderr, the report to stdout.
 
 ## Hosted server
@@ -176,7 +178,9 @@ The same server is behind the form on [agentic-seo.rivi.software](https://agenti
 | Cursor | `{ "mcpServers": { "agentic-seo-check": { "url": "https://mcp.agentic-seo.rivi.software/mcp" } } }` in `.cursor/mcp.json` |
 | VS Code | `{ "servers": { "agentic-seo-check": { "type": "http", "url": "https://mcp.agentic-seo.rivi.software/mcp" } } }` in `.vscode/mcp.json` |
 
-It has `seo_audit_page`, `seo_crawl_site`, `seo_aeo_audit` and `seo_list_rules`, with the same names and options as the local server's, less what needs your machine. Its requests come from Cloudflare's network, so it cannot reach `localhost`, private networks or IP addresses, read a build directory (`seo_audit_directory`, `dir`), render JavaScript (`render`) or run Lighthouse (`lighthouse`, `seo_lighthouse`), send your headers or User-Agent to a site behind a login, or probe with AI bots' User-Agents (`aiBots`). Crawls always obey robots.txt. Some sites turn away requests from Cloudflare Workers; the server then says the site refused it rather than reporting the refusal as the page. For all of these, run the [local server](#mcp-server).
+It has `seo_audit_page`, `seo_crawl_site`, `seo_aeo_audit` and `seo_list_rules`, with the same names and options as the local server's, less what needs your machine. Its requests come from Cloudflare's network, so it cannot reach `localhost`, private networks or IP addresses, read a build directory (`seo_audit_directory`, `dir`), render JavaScript (`render`) or run Lighthouse (`lighthouse`, `seo_lighthouse`), send your headers or User-Agent to a site behind a login, or probe with AI bots' User-Agents (`aiBots`). For all of these, run the [local server](#mcp-server).
+
+Every request it sends obeys robots.txt, an audit of one page included: the group for `agentic-seo-check`, or `*` when there is none. A crawl waits between requests to a site as its `Crawl-delay` asks, for 30 seconds at most in all. Each https request is signed with [Web Bot Auth](https://developers.cloudflare.com/bots/reference/bot-verification/web-bot-auth/), so a site can tell it from others that send its User-Agent. When robots.txt keeps the server out, or a site turns it away (a challenge page, a 403 or a 429), the server says so and leaves it at that, rather than reporting the refusal as the page.
 
 It is free for everyone, so it keeps each site and each caller to a fair share:
 
@@ -189,7 +193,7 @@ It is free for everyone, so it keeps each site and each caller to a fair share:
 | A crawl | 25 pages, 3 links deep, 4 requests at a time, 50 link checks, 10 sitemaps of up to 5 MB |
 | A page | its first 2 MB (`response.truncated` says when a page was larger), within 15 seconds; inline `html` up to 2,000,000 characters |
 
-A call past a limit gets an error that names the limit, says when to try again and points to the local server, which has no limits. A crawl that reaches a limit, or that a site starts refusing, stops early with `site.crawl-stopped` (`aeo.crawl-stopped`) and leaves what it did not request unchecked, never broken.
+A call past a limit gets an error that names the limit, says when to try again and points to the local server, which has no limits. A crawl that reaches a limit, that a site starts refusing, or whose `Crawl-delay` adds up to more than 30 seconds stops early with `site.crawl-stopped` (`aeo.crawl-stopped`) and leaves what it did not request unchecked, never broken.
 
 The server keeps no HTML you send, no reports and no headers. It records each tool call: the tool, the outcome, the duration, the number of requests and pages, and the hostname audited (never the path, the query or your address), for three months, so a report about requests to a site can be checked against what the server sent. [The server's page](https://mcp.agentic-seo.rivi.software/) has the setup, the limits and the privacy notice; [the page for site owners](https://mcp.agentic-seo.rivi.software/crawler), which its User-Agent links to, says how to recognise and block its requests. Report abuse of the hosted server, such as too many requests to one site, through [help.rivi.software/contact](https://help.rivi.software/contact); report a vulnerability as [SECURITY.md](SECURITY.md) says.
 

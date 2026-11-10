@@ -133,8 +133,8 @@ export const AEO_SITE_RULES: RuleMeta[] = [
   meta(
     "aeo.crawl-stopped",
     "info",
-    "The hosted server stopped requesting the site before the crawl was done: the site refused its requests (a challenge, HTTP 429), or the server reached its request limit for the site. The audit covers the pages it read.",
-    "Crawl again in a minute, or with the local server or the CLI, which send the requests from your machine: npx -y @rivi-software/agentic-seo-check mcp."
+    "The hosted server stopped requesting the site before the crawl was done: the site refused its requests (a challenge, HTTP 429), robots.txt asked for a Crawl-delay longer than a hosted crawl waits, or the server reached its request limit for the site. The audit covers the pages it read.",
+    "The message says which. The hosted server's own limit for a site lifts within a minute: crawl again then. A refusal or a Crawl-delay is the site's choice, which the hosted server keeps."
   ),
   meta(
     "aeo.bot-probe-inconclusive",
@@ -880,7 +880,7 @@ export const aeoSiteFindings = (ctx: AeoSiteContext): Finding[] => {
       finding(
         m("aeo.crawl-stopped"),
         `The crawl stopped after ${ctx.pageCount} page(s): ${ctx.crawlStopped}`,
-        // About the audit, not the site: the way out is a crawl from somewhere else.
+        // About the audit, not the site: there is nothing on the site to change.
         { fix: [], evidence: { pagesCrawled: ctx.pageCount } }
       )
     );

@@ -369,17 +369,33 @@ describe("the crawler's own robots.txt group", () => {
     "https://www.example.com/robots.txt",
     200,
     undefined,
-    "User-agent: *\nDisallow: /cart\n\nUser-agent: agentic-seo-check\nDisallow: /reports/\n",
+    "User-agent: *\nDisallow: /cart\n\nUser-agent: agentic-seo-check-local\nDisallow: /reports/\n\nUser-agent: agentic-seo-check\nDisallow: /\nCrawl-delay: 5\n",
     DEFAULT_USER_AGENT
   );
 
-  it("keeps the crawl out of what the agentic-seo-check group disallows", () => {
+  it("keeps the crawl out of what the agentic-seo-check-local group disallows", () => {
     expect(
       robots.crawlerAllows("https://www.example.com/reports/q3")
     ).toBeFalsy();
     expect(robots.crawlerAllows("https://www.example.com/")).toBeTruthy();
     // The group replaces `*` for the crawler (RFC 9309), so `*`'s rules do not add to it.
     expect(robots.crawlerAllows("https://www.example.com/cart")).toBeTruthy();
+  });
+
+  it("leaves the hosted server's group, agentic-seo-check, to the hosted server", () => {
+    const hosted = buildRobots(
+      "https://www.example.com/robots.txt",
+      200,
+      undefined,
+      "User-agent: *\nDisallow: /cart\n\nUser-agent: agentic-seo-check\nDisallow: /\nCrawl-delay: 5\n",
+      "Mozilla/5.0 (compatible; agentic-seo-check/1.0.0; +https://mcp.agentic-seo.rivi.software/crawler)"
+    );
+
+    expect(DEFAULT_USER_AGENT).toContain("agentic-seo-check-local/");
+    expect(robots.crawlerAllows("https://www.example.com/about")).toBeTruthy();
+    expect(robots.crawlDelay).toBeNull();
+    expect(hosted.crawlerAllows("https://www.example.com/about")).toBeFalsy();
+    expect(hosted.crawlDelay).toBe(5);
   });
 
   it("leaves the rules the site rules judge by as they were", () => {

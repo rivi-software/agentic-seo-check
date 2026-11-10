@@ -12,12 +12,12 @@ import { RequestRefusedError } from "../../../src/core/fetch.js";
 import type { FetchOptions } from "../../../src/core/fetch.js";
 import {
   HOSTED_LIMITS,
-  hostedGate,
+  hostedFetch,
   hostedUrlProblem,
 } from "../../../src/core/hosted.js";
 import type { HostedCall } from "../../../src/mcp.js";
 import { callerOf } from "../callers.js";
-import { hostedProfile, USER_AGENT } from "../limits.js";
+import { hostedProfile } from "../limits.js";
 import type { LimitsEnv } from "../limits.js";
 import type { HomeState } from "./home.js";
 import { renderReport } from "./report.js";
@@ -205,10 +205,11 @@ export const answerAudit = async (
   };
 
   let call: HostedCall;
+  // A browser is never claude.ai's or ChatGPT's connector, so no platform ranges apply.
+  const profile = hostedProfile(env, ctx, callerOf(ip, []));
 
   try {
-    // A browser is never claude.ai's or ChatGPT's connector, so no platform ranges apply.
-    call = await hostedProfile(env, ctx, callerOf(ip, [])).startCall(info);
+    call = await profile.startCall(info);
   } catch (error) {
     return refuse(
       429,
@@ -219,10 +220,13 @@ export const answerAudit = async (
 
   try {
     const report = await runAudits(target.href, {
-      userAgent: USER_AGENT,
-      maxBodyBytes: HOSTED_LIMITS.maxBodyBytes,
+      ...hostedFetch({
+        userAgent: profile.userAgent,
+        sign: profile.sign,
+        limits: call.gate,
+        crawl: false,
+      }),
       timeoutMs: HOSTED_LIMITS.timeoutMs,
-      gate: hostedGate(call.gate),
     });
 
     call.end?.({ outcome: "ok", pages: 1 });

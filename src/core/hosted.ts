@@ -1,10 +1,25 @@
 /**
  * The hosted server's rules (hosted/, issue #35): what it reads at most, which URLs it requests,
- * and which answers are a site turning it away rather than the site's page. The Worker adds its
- * limits on top, through the gate it passes to `hostedGate`.
+ * which answers are a site turning it away rather than the site's page, and robots.txt, which it
+ * obeys for every request (issue #41). The Worker adds its limits and its signature on top,
+ * through `hostedFetch`.
  */
 import { challengeTitle } from "./aeo/probe.js";
-import type { FetchResult, Refusal, RequestGate } from "./fetch.js";
+import { sleep } from "./concurrency.js";
+import { fetchPage, RequestRefusedError } from "./fetch.js";
+import type {
+  FetchOptions,
+  FetchResult,
+  Refusal,
+  RequestGate,
+} from "./fetch.js";
+import {
+  ROBOTS_TIMEOUT_MS,
+  robotsOf,
+  robotsUserAgentToken,
+  ruleLineMatcher,
+} from "./robots.js";
+import type { RobotsResult } from "./robots.js";
 
 /** The local server, which none of these limits apply to: the way out of every refusal. */
 export const LOCAL_SERVER = "npx -y @rivi-software/agentic-seo-check mcp";
@@ -44,6 +59,12 @@ export const HOSTED_LIMITS = {
   maxBaselineIds: 5000,
   maxBaselineIdChars: 300,
   maxKeywordChars: 200,
+  /**
+   * How long robots.txt's Crawl-delay may add to one crawl, the delays of its requests to every
+   * site added up: past it, the crawl stops requesting the site it would wait for, rather than keep
+   * the caller waiting for minutes. One total, so that links to many sites cannot add more.
+   */
+  crawlDelayBudgetMs: 30_000,
 } as const;
 
 /** Names that only resolve on a local machine or network, never on the public internet. */
@@ -83,12 +104,13 @@ export const hostedUrlProblem = (url: URL): string | undefined => {
   return undefined;
 };
 
-const REFUSED_BY_SITE = `Many sites turn away requests from Cloudflare Workers, which the hosted server runs on, while they serve the page to everyone else. ${USE_LOCAL}`;
-
 /**
  * Why an answer is the site refusing the hosted server rather than its page: a challenge, a rate
  * limit or a 403. A 429 or a challenge holds for every later request to the host; a 403 for the
  * URL alone, since a site may forbid one path to everyone. Undefined for a page.
+ *
+ * A refusal gives the site's answer and nothing more: the site decides which requests it serves,
+ * and the hosted server, as a verified bot, points no way around that (issue #41).
  */
 export const siteRefusal = (
   url: URL,
@@ -98,21 +120,21 @@ export const siteRefusal = (
   if (response.headers.get("cf-mitigated")?.toLowerCase() === "challenge") {
     return {
       scope: "host",
-      message: `${url.hostname} answered the hosted server with a challenge page (cf-mitigated: challenge). ${REFUSED_BY_SITE}`,
+      message: `${url.hostname} answered the hosted server with a challenge page (cf-mitigated: challenge), so the hosted server did not audit it.`,
     };
   }
 
   if (response.status === 429) {
     return {
       scope: "host",
-      message: `${url.hostname} answered the hosted server with HTTP 429 (Too Many Requests). A site that counts requests per address counts every Cloudflare Worker as one. Try again later, or use the local server, which sends the requests from your machine: ${LOCAL_SERVER}`,
+      message: `${url.hostname} answered the hosted server with HTTP 429 (Too Many Requests), so the hosted server sent it no more requests.`,
     };
   }
 
   if (response.status === 403) {
     return {
       scope: "url",
-      message: `${url.href} answered the hosted server with HTTP 403 (Forbidden). ${REFUSED_BY_SITE}`,
+      message: `${url.href} answered the hosted server with HTTP 403 (Forbidden), so the hosted server did not audit it.`,
     };
   }
 
@@ -145,15 +167,15 @@ const challengeRefusal = (
     ? undefined
     : {
         scope: "host",
-        message: `${url.hostname} answered the hosted server with a challenge page ("${title}", HTTP ${result.status}). ${REFUSED_BY_SITE}`,
+        message: `${url.hostname} answered the hosted server with a challenge page ("${title}", HTTP ${result.status}), so the hosted server did not audit it.`,
       };
 };
 
 /**
- * The gate of a hosted tool call: the URL rules and the site refusals, then the Worker's own gate
- * (its request limits), which only sees requests the rules allow.
+ * The URL rules and the site refusals, then the Worker's own gate (its request limits), which only
+ * sees requests the rules allow. robots.txt is requested through this gate alone.
  */
-export const hostedGate = (limits?: RequestGate): RequestGate => ({
+const siteGate = (limits?: RequestGate): RequestGate => ({
   beforeRequest: (url) => {
     const problem = hostedUrlProblem(url);
 
@@ -166,3 +188,188 @@ export const hostedGate = (limits?: RequestGate): RequestGate => ({
   afterBody: (url, result) =>
     challengeRefusal(url, result) ?? limits?.afterBody?.(url, result),
 });
+
+/** What the Worker gives a hosted call's requests (hosted/src/limits.ts). */
+export interface HostedRequests {
+  /** The User-Agent of every request, with the hosted server's product token, agentic-seo-check. */
+  userAgent: string;
+  /** Signs each request (Web Bot Auth). */
+  sign?: FetchOptions["sign"];
+  /** The Worker's request limits, asked after the hosted server's own rules. */
+  limits?: RequestGate;
+  /** The call crawls a site, so it keeps the Crawl-delay robots.txt asks for. */
+  crawl: boolean;
+}
+
+/**
+ * Why robots.txt keeps the hosted server from `url`, or undefined when it may request it: the
+ * group for its product token, or `*` without one, as a crawl reads it (RFC 9309).
+ */
+const disallowed = (
+  url: URL,
+  robots: RobotsResult,
+  token: string
+): Refusal | undefined => {
+  // RFC 9309, section 2.3.1.4: a server error or no answer means the crawler may request nothing.
+  const { status, error } = robots.info;
+
+  if (status === null || status >= 500) {
+    const answer =
+      status === null
+        ? `could not be read (${error})`
+        : `answered HTTP ${status}`;
+
+    return {
+      scope: "host",
+      message: `${robots.info.url} ${answer}, and a crawler that cannot read robots.txt takes it to disallow everything (RFC 9309), so the hosted server did not request ${url.href}.`,
+    };
+  }
+
+  if (robots.crawlerAllows(url.href) || robots.text === null) {
+    return undefined;
+  }
+
+  const line = ruleLineMatcher(robots.info.url, robots.text)(url.href, token);
+  const rule = robots.text.split(/\r?\n/u)[line - 1]?.trim().slice(0, 120);
+
+  return {
+    scope: "url",
+    message: `${robots.info.url} keeps ${token} from ${url.href}${rule ? ` (line ${line}: "${rule}")` : ""}, so the hosted server did not request it.`,
+  };
+};
+
+/**
+ * The fetch options of a hosted tool call: the User-Agent, the cap on a body, the signature, and a
+ * gate that obeys robots.txt before every request but robots.txt itself, reads each site's
+ * robots.txt once, and in a crawl waits between requests to a site as its Crawl-delay asks. The
+ * gate's robots.txt is the audit's too (`RequestGate.robotsTxt`), so it costs no second request.
+ */
+export const hostedFetch = (requests: HostedRequests): FetchOptions => {
+  const { userAgent, sign, limits, crawl } = requests;
+  const token = robotsUserAgentToken(userAgent);
+  const base = siteGate(limits);
+  const files = new Map<string, Promise<FetchResult>>();
+  const parsed = new Map<string, Promise<RobotsResult>>();
+  /** When each origin's robots.txt was requested. */
+  const sentRobots = new Map<string, number>();
+  /**
+   * Each origin's requests under Crawl-delay, one after another: when the last of them went. A
+   * request waits for the one before it to go, then for the delay, so a timer that fires late
+   * never shortens the next gap.
+   */
+  const lanes = new Map<string, Promise<number>>();
+  /** The delay Crawl-delay has added to the crawl so far, every site's together. */
+  let delayedMs = 0;
+
+  const robotsTxt = (origin: string): Promise<FetchResult> => {
+    let pending = files.get(origin);
+
+    if (!pending) {
+      sentRobots.set(origin, Date.now());
+      pending = fetchPage(new URL("/robots.txt", origin).href, {
+        userAgent,
+        sign,
+        maxBodyBytes: HOSTED_LIMITS.maxBodyBytes,
+        timeoutMs: ROBOTS_TIMEOUT_MS,
+        gate: base,
+      });
+      files.set(origin, pending);
+    }
+
+    return pending;
+  };
+
+  const robotsFor = (origin: string): Promise<RobotsResult> => {
+    let pending = parsed.get(origin);
+
+    if (!pending) {
+      const url = new URL("/robots.txt", origin).href;
+      pending = robotsTxt(origin).then((res) => robotsOf(url, res, userAgent));
+      parsed.set(origin, pending);
+    }
+
+    return pending;
+  };
+
+  /** Waits for the request's turn under Crawl-delay, or refuses it past the crawl's budget. */
+  const pace = async (
+    url: URL,
+    robots: RobotsResult
+  ): Promise<Refusal | undefined> => {
+    if (!crawl || robots.crawlDelay === null) {
+      return undefined;
+    }
+
+    const delayMs = robots.crawlDelay * 1000;
+
+    // Each request costs the crawl one delay, however slow the site is to answer.
+    if (delayedMs + delayMs > HOSTED_LIMITS.crawlDelayBudgetMs) {
+      return {
+        scope: "host",
+        message: `${robots.info.url} asks ${token} to wait ${robots.crawlDelay} s between requests (Crawl-delay), and a crawl on the hosted server waits at most ${HOSTED_LIMITS.crawlDelayBudgetMs / 1000} s in all for Crawl-delay, so it sent ${url.hostname} no more requests.`,
+      };
+    }
+
+    delayedMs += delayMs;
+
+    const previous =
+      lanes.get(url.origin) ??
+      Promise.resolve(sentRobots.get(url.origin) ?? Date.now());
+
+    const turn = previous.then(async (went) => {
+      await sleep(went + delayMs - Date.now());
+
+      return Date.now();
+    });
+
+    lanes.set(url.origin, turn);
+    await turn;
+
+    return undefined;
+  };
+
+  /** robots.txt's say on `url`: a refusal, or undefined once it may go. */
+  const obeyRobots = async (url: URL): Promise<Refusal | undefined> => {
+    let robots: RobotsResult;
+
+    try {
+      robots = await robotsFor(url.origin);
+    } catch (error) {
+      if (!(error instanceof RequestRefusedError)) {
+        throw error;
+      }
+
+      // A robots.txt the site forbids (a 403) is one there is none of, as a 4xx is (RFC 9309):
+      // the page's own answer decides. A refusal of the host or of everything holds for the page.
+      return error.scope === "url"
+        ? undefined
+        : { scope: error.scope, message: error.message };
+    }
+
+    return disallowed(url, robots, token) ?? pace(url, robots);
+  };
+
+  const gate: RequestGate = {
+    ...base,
+    beforeRequest: async (url) => {
+      const problem = hostedUrlProblem(url);
+
+      if (problem) {
+        return { scope: "url", message: problem };
+      }
+
+      const refusal =
+        url.pathname === "/robots.txt" ? undefined : await obeyRobots(url);
+
+      return refusal ?? limits?.beforeRequest(url);
+    },
+    robotsTxt,
+  };
+
+  return {
+    userAgent,
+    sign,
+    maxBodyBytes: HOSTED_LIMITS.maxBodyBytes,
+    gate,
+  };
+};

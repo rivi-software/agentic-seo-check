@@ -2,7 +2,7 @@
  * The tools of the hosted MCP server (hosted/, issue #35): the local server's names and options,
  * less what cannot work on Cloudflare's network (files on disk, rendering, Lighthouse, a caller's
  * headers or User-Agent, AI bot probes), with every input capped and every request through the
- * hosted gate. Once published, these schemas are a contract of their own.
+ * hosted gate, which obeys robots.txt (issue #41). Once published, these schemas are a contract of their own.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -15,7 +15,7 @@ import { RequestRefusedError } from "./core/fetch.js";
 import type { FetchOptions, RequestGate } from "./core/fetch.js";
 import {
   HOSTED_LIMITS,
-  hostedGate,
+  hostedFetch,
   hostedUrlProblem,
   LOCAL_SERVER,
 } from "./core/hosted.js";
@@ -66,6 +66,8 @@ export interface HostedCall {
 export interface HostedProfile {
   /** The User-Agent of every request the tools send; it keeps the agentic-seo-check product token. */
   userAgent: string;
+  /** Signs each request the tools send (Web Bot Auth, issue #41); without it they go unsigned. */
+  sign?: FetchOptions["sign"];
   /**
    * Starts a tool call. Throws to refuse it (a limit reached, the server paused), and the error's
    * message is the tool error the caller gets.
@@ -76,7 +78,7 @@ export interface HostedProfile {
 const LIMITS = HOSTED_LIMITS;
 
 /** What every hosted tool says it cannot do, and where to go instead. */
-const HOSTED_NOTE = `This is the hosted server: it requests pages from Cloudflare's network, so it cannot reach localhost, private networks or sites behind a login, cannot read build directories, does not render JavaScript or run Lighthouse, and limits requests per site and per caller. The local server does all of that: \`${LOCAL_SERVER}\`. `;
+const HOSTED_NOTE = `This is the hosted server: it requests pages from Cloudflare's network, so it cannot reach localhost, private networks or sites behind a login, cannot read build directories, does not render JavaScript or run Lighthouse, and limits requests per site and per caller. The local server does all of that: \`${LOCAL_SERVER}\`. The hosted server obeys robots.txt for every request it sends (the group for agentic-seo-check, or \`*\` without one), and its crawls wait between requests as Crawl-delay asks. `;
 
 const description = (schema: z.ZodType): string => schema.description ?? "";
 
@@ -212,11 +214,14 @@ const runCall = async (
   }
 
   const { result, end } = await settle(() =>
-    work({
-      userAgent: profile.userAgent,
-      maxBodyBytes: LIMITS.maxBodyBytes,
-      gate: hostedGate(call.gate),
-    })
+    work(
+      hostedFetch({
+        userAgent: profile.userAgent,
+        sign: profile.sign,
+        limits: call.gate,
+        crawl: info.crawl,
+      })
+    )
   );
 
   try {
@@ -322,7 +327,7 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
       description:
         `Crawl internal links from a start URL (at most ${LIMITS.maxPages} pages, depth ${LIMITS.maxDepth}), audit every HTML page, and run site-wide checks: robots.txt, XML sitemap coverage (missing/noindex/non-canonical/broken URLs), broken internal links with their sources, redirect chains, duplicate titles/descriptions/H1s/content, orphan and deep pages, soft-404 behaviour, http→https and www redirects, hreflang return links. ` +
         `Returns site findings plus \`issues\` (page findings rolled up by rule with example URLs) and per-page scores. Use seo_audit_page on a specific URL for full per-page detail. ` +
-        `The crawl obeys robots.txt (a group for agentic-seo-check included), checks at most ${LIMITS.maxLinkChecks} link targets and reads at most ${LIMITS.maxSitemaps} sitemaps. ${
+        `The crawl checks at most ${LIMITS.maxLinkChecks} link targets and reads at most ${LIMITS.maxSitemaps} sitemaps. ${
           HOSTED_NOTE
         }`,
       inputSchema: {

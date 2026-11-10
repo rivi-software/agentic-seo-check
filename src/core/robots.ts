@@ -1,13 +1,14 @@
 import robotsParserModule from "robots-parser";
 
 import { fetchPage } from "./fetch.js";
-import type { FetchOptions } from "./fetch.js";
+import type { FetchOptions, FetchResult } from "./fetch.js";
 import type { RobotsTxtInfo } from "./types.js";
 
 /** A robots.txt file as robots-parser reads it: the methods the audit calls. */
 interface Robot {
   isAllowed: (url: string, ua?: string) => boolean | undefined;
   getMatchingLineNumber: (url: string, ua?: string) => number;
+  getCrawlDelay: (ua?: string) => number | undefined;
   getSitemaps: () => string[];
 }
 
@@ -38,6 +39,12 @@ export interface RobotsResult {
    * the audit out without blocking anyone else.
    */
   crawlerAllows: (url: string) => boolean;
+  /**
+   * The seconds robots.txt asks this crawler to wait between requests (`Crawl-delay`), from the
+   * same group as `crawlerAllows`, or null when it asks nothing. Only the hosted server's crawl
+   * keeps it.
+   */
+  crawlDelay: number | null;
   /** The robots.txt text up to the size crawlers must read (RFC 9309: 500 KiB), or null when there is none. */
   text: string | null;
 }
@@ -45,9 +52,14 @@ export interface RobotsResult {
 /** The part of a robots.txt file a crawler must read at least (RFC 9309 section 2.5). */
 const MAX_ROBOTS_BYTES = 512_000;
 
-/** Short bot token used for robots.txt matching, derived from the full UA string. */
+/**
+ * Short bot token used for robots.txt matching, derived from the full UA string: the local tool's
+ * `agentic-seo-check-local`, the hosted server's `agentic-seo-check`.
+ */
 export const robotsUserAgentToken = (userAgent: string): string => {
-  const match = /agentic-seo-check|Googlebot|bingbot/iu.exec(userAgent);
+  const match = /agentic-seo-check(?:-local)?|Googlebot|bingbot/iu.exec(
+    userAgent
+  );
 
   return match ? match[0] : userAgent;
 };
@@ -99,12 +111,19 @@ export const buildRobots = (
   }
 
   if (text === null) {
-    return { info, allows: () => true, crawlerAllows: () => true, text: null };
+    return {
+      info,
+      allows: () => true,
+      crawlerAllows: () => true,
+      crawlDelay: null,
+      text: null,
+    };
   }
 
   const robot = robotsParser(url, text);
   info.sitemaps = robot.getSitemaps();
   const token = robotsUserAgentToken(userAgent);
+  const delay = robot.getCrawlDelay(token);
 
   return {
     info,
@@ -113,21 +132,20 @@ export const buildRobots = (
     // robots-parser keeps what comes before the first "/" of a User-Agent ("Mozilla" for the
     // audit's own), so the product token is passed on its own.
     crawlerAllows: (target: string) => robot.isAllowed(target, token) ?? true,
+    crawlDelay:
+      delay !== undefined && Number.isFinite(delay) && delay > 0 ? delay : null,
   };
 };
 
-export const loadRobotsTxt = async (
-  origin: string,
-  userAgent: string,
-  options: FetchOptions = {}
-): Promise<RobotsResult> => {
-  const url = new URL("/robots.txt", origin).href;
+/** The most an audit waits for robots.txt. */
+export const ROBOTS_TIMEOUT_MS = 10_000;
 
-  const res = await fetchPage(url, {
-    ...options,
-    timeoutMs: Math.min(options.timeoutMs ?? 10_000, 10_000),
-  });
-
+/** robots.txt as the answer to its request gives it: an error page or HTML is no robots.txt. */
+export const robotsOf = (
+  url: string,
+  res: FetchResult,
+  userAgent: string
+): RobotsResult => {
   const found =
     res.status === 200 &&
     res.body !== null &&
@@ -141,4 +159,23 @@ export const loadRobotsTxt = async (
     found ? res.body : null,
     userAgent
   );
+};
+
+export const loadRobotsTxt = async (
+  origin: string,
+  userAgent: string,
+  options: FetchOptions = {}
+): Promise<RobotsResult> => {
+  const url = new URL("/robots.txt", origin).href;
+
+  const res = await (options.gate?.robotsTxt?.(origin) ??
+    fetchPage(url, {
+      ...options,
+      timeoutMs: Math.min(
+        options.timeoutMs ?? ROBOTS_TIMEOUT_MS,
+        ROBOTS_TIMEOUT_MS
+      ),
+    }));
+
+  return robotsOf(url, res, userAgent);
 };

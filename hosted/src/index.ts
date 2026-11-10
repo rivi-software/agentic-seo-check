@@ -17,6 +17,7 @@ import {
   notFoundPage,
   ROBOTS_TXT,
 } from "./pages.js";
+import { DIRECTORY_PATH, directoryResponse, signingKeys } from "./signing.js";
 import { isSiteHost, siteRoute } from "./site/routes.js";
 
 export { HostedState } from "./state.js";
@@ -132,6 +133,15 @@ const page = (
 
 const HTML = "text/html; charset=utf-8";
 
+/** The key directory of Web Bot Auth, or not found while there is no key to list. */
+const keyDirectory = async (request: Request, env: Env): Promise<Response> => {
+  const keys = await signingKeys(env.WEB_BOT_AUTH_KEYS);
+
+  return keys.length > 0
+    ? directoryResponse(keys, request)
+    : page(request, notFoundPage(), HTML, 404);
+};
+
 const route = (request: Request, env: Env, ctx: ExecutionContext) => {
   const { hostname, pathname, search } = new URL(request.url);
 
@@ -178,6 +188,10 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
 
     case "/favicon.svg": {
       return page(request, FAVICON_SVG, "image/svg+xml");
+    }
+
+    case DIRECTORY_PATH: {
+      return keyDirectory(request, env);
     }
 
     case "/.well-known/openai-apps-challenge": {

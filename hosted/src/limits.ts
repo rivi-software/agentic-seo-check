@@ -13,6 +13,7 @@ import type {
 } from "../../src/mcp.js";
 import { VERSION } from "../../src/version.js";
 import type { Caller } from "./callers.js";
+import { requestSigner } from "./signing.js";
 
 /** The rate limits of wrangler.jsonc by binding name, built in by scripts/defines.ts. */
 declare const HOSTED_RATE_LIMITS: Record<
@@ -119,6 +120,11 @@ export interface LimitsEnv {
   PLATFORM_CRAWLS: RateLimit;
   CALLS: AnalyticsEngineDataset;
   STATE: { getByName: (name: string) => DayCounter };
+  /**
+   * The Ed25519 keys that sign every request (Web Bot Auth, issue #41), a Worker secret: a JSON
+   * list of private JWKs, the first signing. Without it the requests go out unsigned.
+   */
+  WEB_BOT_AUTH_KEYS?: string;
 }
 
 /**
@@ -284,6 +290,7 @@ export const hostedProfile = (
   caller: Caller
 ): HostedProfile => ({
   userAgent: USER_AGENT,
+  sign: requestSigner(env.WEB_BOT_AUTH_KEYS, ORIGIN),
   startCall: async (call) => {
     const started = Date.now();
 
