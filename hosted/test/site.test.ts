@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { auditAeoHtml } from "../../src/core/aeo/audit.ts";
 import { auditHtml } from "../../src/core/audit.ts";
 import { ALL_RULES } from "../../src/core/rules/index.ts";
+import { readForm } from "../src/site/audit.ts";
 import { LLMS_TXT, SITE_ROBOTS_TXT, SITEMAP_XML } from "../src/site/files.ts";
 import { homePage, notFoundPage } from "../src/site/home.ts";
 import { SITE_ORIGIN } from "../src/site/layout.ts";
@@ -138,5 +139,43 @@ describe("the report of a page audit", () => {
     expect(report).not.toContain("<img");
     expect(report.match(/<script/gu)).toHaveLength(1);
     expect(report.match(/<\/script/gu)).toHaveLength(1);
+  });
+});
+
+/** The form as a POST with the Content-Length `length`, or without one. */
+const post = (length: string | null) =>
+  new Request("https://agentic-seo-check.rivi.software/audit", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      ...(length === null ? null : { "content-length": length }),
+    },
+    body: "url=https%3A%2F%2Fshop.example.com%2F",
+  });
+
+describe("the audit form's body", () => {
+  it("is read when it comes with its length", async () => {
+    const form = await readForm(post("37"));
+
+    expect(form?.get("url")).toBe("https://shop.example.com/");
+  });
+
+  it("is not read without a length, as a chunked body has none", async () => {
+    const request = post(null);
+
+    await expect(readForm(request)).resolves.toBeNull();
+    expect(request.bodyUsed).toBeFalsy();
+  });
+
+  it("is not read with a length that is no number, or one over the cap", async () => {
+    const answers = await Promise.all(
+      ["many", "1e3", "-1", "16385", ""].map(async (length) => {
+        const request = post(length);
+
+        return [await readForm(request), request.bodyUsed];
+      })
+    );
+
+    expect(answers).toStrictEqual(answers.map(() => [null, false]));
   });
 });

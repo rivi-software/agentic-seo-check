@@ -115,9 +115,19 @@ const field = (form: FormData, name: string): string => {
   return value.success ? value.data.trim() : "";
 };
 
-/** Reads the form, or null for a body that is not one. */
-const readForm = async (request: Request): Promise<FormData | null> => {
-  if (Number(request.headers.get("content-length") ?? "0") > MAX_FORM_BYTES) {
+/**
+ * Reads the form, or null for a body that is not one. A browser sends a form with its length; a
+ * body without a length, or with one that is not a number, could be any size, and reading it
+ * would buffer all of it before Turnstile or a limit has had a say.
+ */
+export const readForm = async (request: Request): Promise<FormData | null> => {
+  const length = request.headers.get("content-length");
+
+  if (
+    length === null ||
+    !/^\d+$/u.test(length) ||
+    Number(length) > MAX_FORM_BYTES
+  ) {
     return null;
   }
 
