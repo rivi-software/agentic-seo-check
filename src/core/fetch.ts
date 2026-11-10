@@ -17,6 +17,56 @@ const KEPT_HEADERS = [
   "content-security-policy",
 ];
 
+/** Why a request was not sent, or why its answer is not the page: see `RequestGate`. */
+export interface Refusal {
+  /** What happened and what the person who asked for the audit can do, in a sentence or two. */
+  message: string;
+  /**
+   * What it covers: this URL alone, every later request of the audit to the URL's host, or every
+   * later request.
+   */
+  scope: "url" | "host" | "all";
+}
+
+/**
+ * A request the gate refused, thrown out of `fetchPage` so that no caller takes it for an answer:
+ * a link that was not requested is not checked, never broken.
+ */
+export class RequestRefusedError extends Error {
+  readonly scope: Refusal["scope"];
+  /** The request that was refused: the URL asked for, or a redirect it led to. */
+  readonly url: string;
+
+  constructor(refusal: Refusal, url: string) {
+    super(refusal.message);
+    this.name = "RequestRefusedError";
+    this.scope = refusal.scope;
+    this.url = url;
+  }
+
+  get host(): string {
+    return new URL(this.url).hostname;
+  }
+}
+
+/**
+ * Decides what an audit may request: the hosted server's address rules and request limits, and
+ * the answers that are a site turning it away. The CLI and the local server have none.
+ */
+export interface RequestGate {
+  /** Asked before every request, the first and each redirect: a refusal stops the fetch. */
+  beforeRequest: (
+    url: URL
+  ) => Promise<Refusal | undefined> | Refusal | undefined;
+  /**
+   * Shown each answer before its body is read: a refusal when the answer is the site refusing the
+   * request (a challenge, a rate limit) rather than the page.
+   */
+  afterResponse?: (url: URL, response: Response) => Refusal | undefined;
+  /** Shown each body once read, for refusals that only the page itself shows (a challenge page). */
+  afterBody?: (url: URL, result: FetchResult) => Refusal | undefined;
+}
+
 export interface FetchOptions {
   timeoutMs?: number;
   userAgent?: string;
@@ -29,7 +79,12 @@ export interface FetchOptions {
    * text, such as a gzip sitemap.
    */
   keepBytes?: boolean;
+  /** What the audit may request; `fetchPage` throws RequestRefusedError for what it may not. */
+  gate?: RequestGate;
 }
+
+/** The most of a body an audit reads unless `maxBodyBytes` says otherwise. */
+export const MAX_BODY_BYTES = 5_000_000;
 
 export interface FetchResult {
   requestedUrl: string;
@@ -118,8 +173,10 @@ const readLimited = async (
     }
 
     if (value) {
-      chunks.push(value);
-      total += value.byteLength;
+      // A chunk can be large: keep only what fits, so the cap holds to the byte.
+      const room = maxBytes - total;
+      chunks.push(value.byteLength > room ? value.subarray(0, room) : value);
+      total += Math.min(value.byteLength, room);
 
       if (total >= maxBytes) {
         truncated = true;
@@ -160,11 +217,84 @@ interface RedirectWalk {
 /** One request of a redirect chain: the final result, or the URL the redirect points to next. */
 type HopOutcome = { done: FetchResult } | { next: string };
 
+/** Asks the gate before a request, and throws its refusal. */
+const askGate = async (
+  gate: RequestGate | undefined,
+  current: string
+): Promise<void> => {
+  // A URL that does not parse fails in fetch(), with an answer that says so.
+  if (!gate || !URL.canParse(current)) {
+    return;
+  }
+
+  const refusal = await gate.beforeRequest(new URL(current));
+
+  if (refusal) {
+    throw new RequestRefusedError(refusal, current);
+  }
+};
+
+/** Shows the gate an answer, and throws its refusal once the body is let go. */
+const showGate = async (
+  gate: RequestGate | undefined,
+  current: string,
+  res: Response
+): Promise<void> => {
+  const refusal = gate?.afterResponse?.(new URL(current), res);
+
+  if (refusal) {
+    await res.body?.cancel().catch(() => null);
+
+    throw new RequestRefusedError(refusal, current);
+  }
+};
+
+/** The answer with its body read, up to `maxBodyBytes`. */
+const readAnswer = async (
+  walk: RedirectWalk,
+  current: string,
+  res: Response,
+  headers: Record<string, string>
+): Promise<FetchResult> => {
+  const { url, options, started, chain } = walk;
+  const read = await readLimited(res, options.maxBodyBytes ?? MAX_BODY_BYTES);
+
+  const done = result(
+    url,
+    current,
+    res.status,
+    headers,
+    // The caller reads `bytes`; decoding them too would hold the body a second time.
+    options.keepBytes
+      ? ""
+      : decodeBody(read.bytes, res.headers.get("content-type")),
+    chain,
+    started
+  );
+
+  if (read.truncated) {
+    done.truncated = true;
+  }
+
+  if (options.keepBytes) {
+    done.bytes = read.bytes;
+  }
+
+  const refusal = options.gate?.afterBody?.(new URL(current), done);
+
+  if (refusal) {
+    throw new RequestRefusedError(refusal, current);
+  }
+
+  return done;
+};
+
 const fetchHop = async (
   walk: RedirectWalk,
   current: string
 ): Promise<HopOutcome> => {
   const { url, options, readBody, timeoutMs, started, chain } = walk;
+  await askGate(options.gate, current);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -182,6 +312,7 @@ const fetchHop = async (
       },
     });
 
+    await showGate(options.gate, current, res);
     const headers = pickHeaders(res.headers);
 
     if (REDIRECT_STATUSES.has(res.status) && headers["location"]) {
@@ -233,31 +364,13 @@ const fetchHop = async (
       };
     }
 
-    const read = await readLimited(res, options.maxBodyBytes ?? 5_000_000);
-
-    const done = result(
-      url,
-      current,
-      res.status,
-      headers,
-      // The caller reads `bytes`; decoding them too would hold the body a second time.
-      options.keepBytes
-        ? ""
-        : decodeBody(read.bytes, res.headers.get("content-type")),
-      chain,
-      started
-    );
-
-    if (read.truncated) {
-      done.truncated = true;
-    }
-
-    if (options.keepBytes) {
-      done.bytes = read.bytes;
-    }
-
-    return { done };
+    return { done: await readAnswer(walk, current, res, headers) };
   } catch (error) {
+    // A refusal is no failure of the request: it goes to the caller as it is.
+    if (error instanceof RequestRefusedError) {
+      throw error;
+    }
+
     let message = String(error);
 
     if (error instanceof Error) {
@@ -335,6 +448,10 @@ export const toResponseInfo = (r: FetchResult): ResponseInfo => {
 
   if (r.error) {
     info.error = r.error;
+  }
+
+  if (r.truncated) {
+    info.truncated = true;
   }
 
   return info;

@@ -5,6 +5,7 @@ import { XMLParser } from "fast-xml-parser";
 
 import { fetchPage } from "./fetch.js";
 import type { FetchOptions } from "./fetch.js";
+import type { Refusals } from "./refusals.js";
 import type { SitemapExamples, SitemapInfo, SitemapProblems } from "./types.js";
 import { isSameSite } from "./url.js";
 
@@ -17,9 +18,17 @@ export const SITEMAP_MAX_BYTES = 52_428_800;
 /** The most of one sitemap this audit reads, uncompressed; parsing more would cost too much memory. */
 export const SITEMAP_READ_BYTES = 15_000_000;
 
+/** A byte count in megabytes, as the findings write it ("15 MB"). */
+export const megabytes = (bytes: number): string =>
+  `${Number((bytes / 1_000_000).toFixed(1))} MB`;
+
 export interface SitemapLimits {
   maxSitemaps?: number;
   maxUrls?: number;
+  /** The most of one sitemap to read, uncompressed (default `SITEMAP_READ_BYTES`). */
+  maxBytes?: number;
+  /** The crawl's refusals: a sitemap the gate refuses is left unread, and not called missing. */
+  refusals?: Refusals;
   /**
    * The audited site's host. A sitemap the site's robots.txt names may list its URLs from another
    * host (Google allows it), so URLs are compared with this host, not the sitemap's.
@@ -155,11 +164,12 @@ const gunzipAsync = promisify(gunzip);
 
 /**
  * A sitemap file's text: gunzipped when it is gzip (a .xml.gz file), or an error. Inflating stops
- * at the same 15 MB budget a plain sitemap is read up to (`tooLarge`), so a small file that
- * inflates to gigabytes costs no more than a large plain one.
+ * at the same budget a plain sitemap is read up to (`tooLarge`), so a small file that inflates to
+ * gigabytes costs no more than a large plain one.
  */
 export const sitemapText = async (
-  bytes: Buffer
+  bytes: Buffer,
+  maxBytes = SITEMAP_READ_BYTES
 ): Promise<
   { text: string; bytes: number } | { error: string; tooLarge: boolean }
 > => {
@@ -169,7 +179,7 @@ export const sitemapText = async (
 
   try {
     const inflated = await gunzipAsync(bytes, {
-      maxOutputLength: SITEMAP_READ_BYTES + 1,
+      maxOutputLength: maxBytes + 1,
     });
 
     return { text: inflated.toString("utf-8"), bytes: inflated.length };
@@ -182,12 +192,29 @@ export const sitemapText = async (
 
     return {
       error: tooLarge
-        ? "inflates to more than the 15 MB this audit reads"
+        ? `inflates to more than the ${megabytes(maxBytes)} this audit reads`
         : `is not valid gzip (${error instanceof Error ? error.message : String(error)})`,
       tooLarge,
     };
   }
 };
+
+/** How the sitemaps behind one audit's `problems` were read. */
+export interface SitemapReading {
+  /** The most of one file the audit read, which its finding about larger sitemaps names. */
+  maxBytes: number;
+  /** Sitemaps a gate kept the audit from requesting (the hosted server's), so they were not read. */
+  refused: string[];
+}
+
+const readings = new WeakMap<SitemapProblems, SitemapReading>();
+
+/**
+ * How the sitemaps behind `problems` were read. Kept beside the problems, like the layout, so the
+ * JSON stays as it is.
+ */
+export const sitemapReading = (problems: SitemapProblems): SitemapReading =>
+  readings.get(problems) ?? { maxBytes: SITEMAP_READ_BYTES, refused: [] };
 
 /**
  * Which sitemap file lists what, for fixes that name the file to edit. It is kept beside the
@@ -344,12 +371,13 @@ type SitemapFetch =
 const fetchSitemap = async (
   url: string,
   candidates: string[],
-  options: FetchOptions
+  options: FetchOptions,
+  maxBytes: number
 ): Promise<SitemapFetch> => {
   const res = await fetchPage(url, {
     ...options,
     timeoutMs: Math.min(options.timeoutMs ?? 15_000, 20_000),
-    maxBodyBytes: SITEMAP_READ_BYTES,
+    maxBodyBytes: maxBytes,
     keepBytes: true,
   });
 
@@ -383,7 +411,7 @@ const fetchSitemap = async (
     };
   }
 
-  const text = await sitemapText(res.bytes);
+  const text = await sitemapText(res.bytes, maxBytes);
 
   if ("error" in text) {
     return text.tooLarge
@@ -417,6 +445,7 @@ export const loadSitemaps = async (
 ): Promise<SitemapInfo> => {
   const maxSitemaps = limits.maxSitemaps ?? 25;
   const maxUrls = limits.maxUrls ?? 5000;
+  const maxBytes = limits.maxBytes ?? SITEMAP_READ_BYTES;
 
   const info: SitemapInfo = {
     sources: [],
@@ -425,6 +454,9 @@ export const loadSitemaps = async (
     errors: [],
     problems: emptySitemapProblems(),
   };
+
+  const reading: SitemapReading = { maxBytes, refused: [] };
+  readings.set(info.problems, reading);
 
   const queue = [...new Set(candidates)].map((url) => ({
     url,
@@ -435,7 +467,13 @@ export const loadSitemaps = async (
   const urls = new Set<string>();
   const now = Date.now();
 
-  // Count every download, not only the sitemaps that parsed: one over the read limit still costs 15 MB.
+  const fetchOne = (url: string) => {
+    const request = () => fetchSitemap(url, candidates, options, maxBytes);
+
+    return limits.refusals ? limits.refusals.run(url, request) : request();
+  };
+
+  // Count every download, not only the sitemaps that parsed: one over the read limit still costs its full read.
   while (queue.length > 0 && seen.size < maxSitemaps && urls.size < maxUrls) {
     const next = queue.shift();
 
@@ -447,7 +485,12 @@ export const loadSitemaps = async (
     seen.add(url);
 
     // oxlint-disable-next-line eslint/no-await-in-loop -- a sitemap index adds the sitemaps to fetch next, and the limits count what the earlier ones gave
-    const fetched = await fetchSitemap(url, candidates, options);
+    const fetched = await fetchOne(url);
+
+    if (fetched === null) {
+      reading.refused.push(url);
+      continue;
+    }
 
     if (fetched.kind === "error") {
       info.errors.push(fetched.message);

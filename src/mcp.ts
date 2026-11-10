@@ -8,7 +8,6 @@ import {
   auditAeoHtml,
   auditAeoSite,
   auditAeoUrl,
-  compactAeoAudit,
 } from "./core/aeo/audit.js";
 import type { AeoOptions } from "./core/aeo/audit.js";
 import {
@@ -16,157 +15,48 @@ import {
   auditHtml,
   auditSite,
   auditUrl,
-  compactAudit,
 } from "./core/audit.js";
-import type { CrawlOptions } from "./core/audit.js";
 import { runLighthouse } from "./core/lighthouse.js";
 import { performanceFindings } from "./core/performance-rules.js";
-import { assignIds, baselineFromIds } from "./core/recheck.js";
-import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
-import { ALL_RULES } from "./core/rules/index.js";
+import { assignIds } from "./core/recheck.js";
 import type {
   AeoAudit,
   Audit,
   Finding,
   PerformanceResult,
 } from "./core/types.js";
+import { registerHostedTools } from "./mcp-hosted.js";
+import type { HostedProfile } from "./mcp-hosted.js";
+import {
+  commonOptions,
+  detail,
+  fail,
+  format,
+  LIST_RULES,
+  listRules,
+  respond,
+  respondAeo,
+  toOptions,
+} from "./mcp-shared.js";
 import { VERSION } from "./version.js";
+
+export type {
+  HostedCall,
+  HostedCallEnd,
+  HostedCallInfo,
+  HostedProfile,
+} from "./mcp-hosted.js";
 
 export const MCP_SERVER_NAME = "agentic-seo-check";
 export const MCP_SERVER_VERSION = VERSION;
 
-const format = z
-  .enum(["json", "markdown"])
-  .default("json")
-  .describe(
-    "json (default) returns the structured audit; markdown returns a human-readable report."
-  );
-
-const detail = z
-  .enum(["full", "compact"])
-  .default("compact")
-  .describe(
-    "compact trims evidence lists and bulky fields to save tokens (default); full returns everything."
-  );
-
-const commonOptions = {
-  keyword: z
-    .string()
-    .optional()
-    .describe(
-      "Target keyword/phrase. Enables keyword.* checks (title, H1, body, description, URL, density)."
-    ),
-  includeInfo: z
-    .boolean()
-    .default(true)
-    .describe(
-      "Include info-level findings (best practices). Set false to see only errors and warnings."
-    ),
-  disableRules: z
-    .array(z.string())
-    .optional()
-    .describe(
-      'Rule ids to skip, e.g. ["twitter.card-missing"]. Use seo_list_rules to see ids.'
-    ),
-  rules: z
-    .array(z.string())
-    .optional()
-    .describe(
-      'Run only these rule ids, e.g. ["img.alt-missing"] to re-check the findings a fix was for. Use with `baseline`.'
-    ),
-  baseline: z
-    .array(z.string())
-    .optional()
-    .describe(
-      "The `id` of every finding of the earlier audit. The result then has `baseline`: the ids since fixed, still open and new (a new one may be a problem a fix caused). Re-check with the same options; for a crawl or directory, run both audits with pageDetail full so page findings have ids."
-    ),
-  timeoutMs: z
-    .number()
-    .int()
-    .min(1000)
-    .max(120_000)
-    .optional()
-    .describe("Per-request timeout in milliseconds (default 15000)."),
-  userAgent: z.string().optional().describe("Override the User-Agent header."),
-  headers: z
-    .record(z.string(), z.string())
-    .optional()
-    .describe(
-      'Extra request headers, e.g. {"Authorization": "Basic ..."} for staging sites.'
-    ),
-  format,
-  detail,
-};
-
-const toOptions = (input: {
-  keyword?: string;
-  includeInfo?: boolean;
-  disableRules?: string[];
-  rules?: string[];
-  baseline?: string[];
-  timeoutMs?: number;
-  userAgent?: string;
-  headers?: Record<string, string>;
-}): CrawlOptions => ({
-  keyword: input.keyword,
-  includeInfo: input.includeInfo,
-  disableRules: input.disableRules,
-  onlyRules: input.rules,
-  baseline: input.baseline ? baselineFromIds(input.baseline) : undefined,
-  fetch: {
-    timeoutMs: input.timeoutMs,
-    userAgent: input.userAgent,
-    headers: input.headers,
-  },
-});
-
-const respond = (
-  audit: Audit,
-  fmt: "json" | "markdown",
-  det: "full" | "compact"
-) => {
-  const report = det === "compact" ? compactAudit(audit) : audit;
-
-  const text =
-    fmt === "markdown"
-      ? renderMarkdown(report)
-      : JSON.stringify(report, null, 2);
-
-  return {
-    content: [{ type: "text" as const, text }],
-    structuredContent: { ...report },
-  };
-};
-
-const respondAeo = (
-  audit: AeoAudit,
-  fmt: "json" | "markdown",
-  det: "full" | "compact"
-) => {
-  const report = det === "compact" ? compactAeoAudit(audit) : audit;
-
-  const text =
-    fmt === "markdown"
-      ? renderAeoMarkdown(report)
-      : JSON.stringify(report, null, 2);
-
-  return {
-    content: [{ type: "text" as const, text }],
-    structuredContent: { ...report },
-  };
-};
-
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
-const fail = (error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-
-  return {
-    isError: true,
-    content: [
-      { type: "text" as const, text: `agentic-seo-check error: ${message}` },
-    ],
-  };
-};
+export interface McpServerOptions {
+  /**
+   * Serve the hosted server's tools (hosted/, a Cloudflare Worker) instead of the local server's:
+   * no files on disk, rendering or Lighthouse, inputs capped, and every request through the gate.
+   */
+  hosted?: HostedProfile;
+}
 
 const metricCell = (name: string, value: number | null): string => {
   if (value === null) {
@@ -210,7 +100,9 @@ const lighthouseMarkdown = (
   return lines.join("\n");
 };
 
-export const createMcpServer = (): McpServer => {
+export const createMcpServer = (
+  serverOptions: McpServerOptions = {}
+): McpServer => {
   const server = new McpServer({
     name: MCP_SERVER_NAME,
     title: `agentic-seo-check by ${MAKER}`,
@@ -220,6 +112,12 @@ export const createMcpServer = (): McpServer => {
     websiteUrl: REPOSITORY_URL,
     icons: MCP_ICONS,
   });
+
+  if (serverOptions.hosted) {
+    registerHostedTools(server, serverOptions.hosted);
+
+    return server;
+  }
 
   server.registerTool(
     "seo_audit_page",
@@ -645,43 +543,8 @@ export const createMcpServer = (): McpServer => {
     }
   );
 
-  server.registerTool(
-    "seo_list_rules",
-    {
-      title: "List SEO rules",
-      description:
-        "List every rule this tool can report, with id, category, typical severity, what it checks and the generic fix. Filter by category or look up one rule id to understand a finding.",
-      inputSchema: {
-        category: z
-          .string()
-          .optional()
-          .describe(
-            "Filter by category (title, meta, headings, canonical, indexing, document, social, images, links, international, structured-data, content, keyword, response, rendering, performance, site, aeo)."
-          ),
-        rule: z.string().optional().describe("Return only this rule id."),
-      },
-      annotations: {
-        readOnlyHint: true,
-        openWorldHint: false,
-        idempotentHint: true,
-      },
-    },
-    (input) => {
-      const rules = ALL_RULES.filter(
-        (r) =>
-          (!input.category || r.category === input.category) &&
-          (!input.rule || r.id === input.rule)
-      );
-
-      const payload = { count: rules.length, rules };
-
-      return {
-        content: [
-          { type: "text" as const, text: JSON.stringify(payload, null, 2) },
-        ],
-        structuredContent: payload,
-      };
-    }
+  server.registerTool("seo_list_rules", LIST_RULES, (input) =>
+    listRules(input)
   );
 
   return server;

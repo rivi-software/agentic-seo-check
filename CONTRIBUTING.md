@@ -45,7 +45,7 @@ pnpm install
 pnpm run verify
 ```
 
-`verify` runs what CI runs, in order: `format:check` (Oxfmt), `lint` (Oxlint), `check` (TypeScript over the sources, tests and configs), `test` (Vitest), `build` and `check:package`, which packs the package as npm would get it and checks its types, its entry point and both commands from the tarball. `pnpm run dev audit https://example.com` runs the CLI from source; `pnpm run mcp` starts the MCP server from source.
+`verify` runs what CI runs, in order: `format:check` (Oxfmt), `lint` (Oxlint), `check` (TypeScript over the sources, tests and configs), `test` (Vitest), `build`, `check:package`, which packs the package as npm would get it and checks its types, its entry point and both commands from the tarball, and `hosted:verify`, the hosted server's typecheck, its bundle and its tests in workerd (`hosted/`). `pnpm run dev audit https://example.com` runs the CLI from source; `pnpm run mcp` starts the MCP server from source; `pnpm run hosted:dev` runs the hosted server locally.
 
 `--render` and `--lighthouse` need a Chromium: Google Chrome, or `pnpm run dev install-browser`. The test suite does not launch a browser.
 

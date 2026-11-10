@@ -1,0 +1,200 @@
+/**
+ * The hosted MCP server of agentic-seo-check (issue #35): a stateless Worker that answers MCP over
+ * Streamable HTTP at /mcp with the hosted tools of `createMcpServer`, and serves the pages that say
+ * how to use it and what its requests are.
+ */
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+
+import { HOSTED_LIMITS } from "../../src/core/hosted.js";
+import { createMcpServer } from "../../src/mcp.js";
+import { callerOf, OPENAI_RANGES_URL, parseOpenAiRanges } from "./callers.js";
+import { hostedProfile } from "./limits.js";
+import {
+  crawlerPage,
+  FAVICON_SVG,
+  landingPage,
+  notFoundPage,
+  ROBOTS_TXT,
+} from "./pages.js";
+
+export { HostedState } from "./state.js";
+
+/** Open to every origin, without credentials, so browser clients such as the MCP Inspector connect. */
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-expose-headers": "mcp-session-id, mcp-protocol-version",
+};
+
+const PREFLIGHT = {
+  ...CORS,
+  "access-control-allow-methods": "POST, GET, DELETE, OPTIONS",
+  "access-control-allow-headers":
+    "content-type, accept, authorization, mcp-protocol-version, mcp-session-id, last-event-id",
+  "access-control-max-age": "86400",
+};
+
+/** OpenAI's ranges as this isolate last read them: the Durable Object is asked at most once an hour. */
+let openAiCache: { ranges: string[]; readAt: number } | null = null;
+
+const openAiRanges = async (env: Env): Promise<string[]> => {
+  if (openAiCache && Date.now() - openAiCache.readAt < 3_600_000) {
+    return openAiCache.ranges;
+  }
+
+  const ranges = await env.STATE.getByName("global").openAiRanges();
+  openAiCache = { ranges, readAt: Date.now() };
+
+  return ranges;
+};
+
+/** Fetches OpenAI's list of ChatGPT connector addresses and keeps it for every isolate. */
+const refreshOpenAiRanges = async (env: Env): Promise<void> => {
+  const res = await fetch(OPENAI_RANGES_URL);
+
+  if (!res.ok) {
+    throw new Error(`${OPENAI_RANGES_URL} answered HTTP ${res.status}.`);
+  }
+
+  const ranges = parseOpenAiRanges(await res.text());
+
+  // An empty list is a broken file, not a ChatGPT without addresses: keep the last one.
+  if (ranges.length > 0) {
+    await env.STATE.getByName("global").setOpenAiRanges(ranges);
+  }
+};
+
+/**
+ * One MCP request: stateless, so every POST gets its own server and transport, and the answer is
+ * JSON. There are no sessions to resume or end, so GET and DELETE answer 405, as the protocol
+ * allows.
+ */
+const handleMcp = async (
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> => {
+  if (request.method !== "POST") {
+    return new Response("This MCP server takes POST requests only.\n", {
+      status: 405,
+      headers: { ...CORS, allow: "POST, OPTIONS" },
+    });
+  }
+
+  const caller = callerOf(
+    request.headers.get("cf-connecting-ip"),
+    await openAiRanges(env)
+  );
+
+  const server = createMcpServer({
+    hosted: hostedProfile(env, ctx, caller),
+  });
+
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true,
+    // The schemas cap inline HTML at 2,000,000 characters; this caps the whole request before it is
+    // parsed.
+    maxRequestBodySize: HOSTED_LIMITS.maxRequestBytes,
+  });
+
+  await server.connect(transport);
+
+  try {
+    const response = await transport.handleRequest(request);
+    const headers = new Headers(response.headers);
+
+    for (const [name, value] of Object.entries(CORS)) {
+      headers.set(name, value);
+    }
+
+    return new Response(response.body, { status: response.status, headers });
+  } finally {
+    ctx.waitUntil(server.close());
+  }
+};
+
+const page = (
+  request: Request,
+  body: string,
+  contentType: string,
+  status = 200
+): Response =>
+  new Response(request.method === "HEAD" ? null : body, {
+    status,
+    headers: {
+      "content-type": contentType,
+      "cache-control": "public, max-age=3600",
+      "x-content-type-options": "nosniff",
+    },
+  });
+
+const HTML = "text/html; charset=utf-8";
+
+const route = (request: Request, env: Env, ctx: ExecutionContext) => {
+  const { pathname } = new URL(request.url);
+
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: PREFLIGHT });
+  }
+
+  if (pathname === "/mcp") {
+    return handleMcp(request, env, ctx);
+  }
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("Method not allowed.\n", {
+      status: 405,
+      headers: { allow: "GET, HEAD" },
+    });
+  }
+
+  switch (pathname) {
+    case "/": {
+      return page(request, landingPage(env.DAILY_REQUESTS), HTML);
+    }
+
+    case "/crawler": {
+      return page(request, crawlerPage(), HTML);
+    }
+
+    case "/robots.txt": {
+      return page(request, ROBOTS_TXT, "text/plain; charset=utf-8");
+    }
+
+    case "/favicon.svg": {
+      return page(request, FAVICON_SVG, "image/svg+xml");
+    }
+
+    case "/.well-known/openai-apps-challenge": {
+      return env.OPENAI_APPS_CHALLENGE
+        ? page(request, env.OPENAI_APPS_CHALLENGE, "text/plain; charset=utf-8")
+        : page(request, notFoundPage(), HTML, 404);
+    }
+
+    default: {
+      return page(request, notFoundPage(), HTML, 404);
+    }
+  }
+};
+
+export default {
+  async fetch(request, env, ctx): Promise<Response> {
+    try {
+      return await route(request, env, ctx);
+    } catch (error) {
+      // Workers Logs keep errors only: the message, never the request's body or headers.
+      console.error(
+        `Request failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+
+      return new Response("Something went wrong on the hosted server.\n", {
+        status: 500,
+        headers: CORS,
+      });
+    }
+  },
+
+  async scheduled(_controller, env): Promise<void> {
+    await refreshOpenAiRanges(env);
+  },
+} satisfies ExportedHandler<Env>;

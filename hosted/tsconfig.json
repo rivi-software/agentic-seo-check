@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    // The Worker's runtime and bindings (wrangler types), and Node's types for the core it bundles.
+    "types": ["./worker-configuration.d.ts", "node"]
+  },
+  "include": ["src", "test", "scripts", "*.config.ts", "../src"],
+  "exclude": ["node_modules", "dist"]
+}

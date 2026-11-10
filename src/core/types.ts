@@ -447,6 +447,8 @@ export interface ResponseInfo {
   /** Lower-cased header names. Only SEO-relevant headers are kept. */
   headers: Record<string, string>;
   error?: string;
+  /** The body was larger than the audit reads, so the page was audited from its first part. */
+  truncated?: boolean;
 }
 
 export interface PageSummary {

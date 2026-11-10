@@ -1,0 +1,59 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  // The hosted MCP server (issue #35). Run Wrangler through `pnpm run hosted:dev|hosted:build|hosted:deploy`,
+  // which build in the package's version and the limits below (scripts/defines.ts).
+  "name": "agentic-seo-check-mcp",
+  "send_metrics": false,
+  "main": "src/index.ts",
+  // Node.js compatibility is on by default from 2026-08-04.
+  "compatibility_date": "2026-11-01",
+  // fetch() to a site on Cloudflare goes through its zone's front door (redirects, WAF, Workers), as a
+  // search engine's request does, rather than straight to its origin.
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "routes": [{ "pattern": "mcp.agentic-seo-check.rivi.software", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
+  // A crawl at the caps costs about 15 s of CPU; this is the default limit, written down.
+  "limits": { "cpu_ms": 30000 },
+  // The optional packages behind rendering and Lighthouse, which the hosted server leaves out: each import
+  // gets a module that fails to load, as a missing package does.
+  "alias": {
+    "playwright": "./src/unavailable.ts",
+    "lighthouse": "./src/unavailable.ts",
+    "lighthouse/core/config/desktop-config.js": "./src/unavailable.ts",
+    "chrome-launcher": "./src/unavailable.ts"
+  },
+  // Approximate, and counted per Cloudflare location. The landing page and the refusals state these numbers.
+  "ratelimits": [
+    // Requests to one hostname, from every caller together: a crawl at the caps sends about 150.
+    { "name": "SITE_REQUESTS", "namespace_id": "35001", "simple": { "limit": 300, "period": 60 } },
+    // Tool calls per IP address (seo_list_rules is not counted), and the crawls among them.
+    { "name": "CALLER_CALLS", "namespace_id": "35002", "simple": { "limit": 30, "period": 60 } },
+    { "name": "CALLER_CRAWLS", "namespace_id": "35003", "simple": { "limit": 3, "period": 60 } },
+    // claude.ai and ChatGPT call from their platforms' own addresses: one caller each, with ten times the limits.
+    { "name": "PLATFORM_CALLS", "namespace_id": "35004", "simple": { "limit": 300, "period": 60 } },
+    { "name": "PLATFORM_CRAWLS", "namespace_id": "35005", "simple": { "limit": 30, "period": 60 } }
+  ],
+  // The day's count of outgoing requests, and ChatGPT's connector addresses.
+  "durable_objects": { "bindings": [{ "name": "STATE", "class_name": "HostedState" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HostedState"] }],
+  // One record per tool call: the tool, the outcome, the duration, the requests and pages, the target hostname.
+  // Analytics Engine keeps data for three months.
+  "analytics_engine_datasets": [{ "binding": "CALLS", "dataset": "agentic_seo_check_calls" }],
+  // Fetches OpenAI's list of ChatGPT connector addresses once a day.
+  "triggers": { "crons": ["17 3 * * *"] },
+  "vars": {
+    // "open"; "no-crawls" refuses crawls; "closed" refuses every tool call. Change it and deploy.
+    "MODE": "open",
+    // Outgoing requests a day, all callers together: past it, audits that request sites wait for 00:00 UTC.
+    "DAILY_REQUESTS": 100000,
+    // The token OpenAI asks the domain to serve at /.well-known/openai-apps-challenge (#33); none yet.
+    "OPENAI_APPS_CHALLENGE": ""
+  },
+  // Errors only, as the Worker logs them: no invocation logs, which carry request details.
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true,
+    "logs": { "invocation_logs": false }
+  }
+}

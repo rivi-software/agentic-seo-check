@@ -7,6 +7,8 @@ description: Audit and fix SEO and AEO (answer engine optimization) for a websit
 
 You have `agentic-seo-check` available either as MCP tools (`seo_audit_page`, `seo_crawl_site`, `seo_audit_directory`, `seo_lighthouse`, `seo_aeo_audit`, `seo_list_rules`) or as a CLI (`agentic-seo-check`, or `npx @rivi-software/agentic-seo-check`). Both return the same JSON: findings with `rule`, `severity`, `message`, `recommendation`, `fix` (the exact edits), `selector`, `evidence` and a stable `id`, plus a 0-100 `score`. The loop is: audit, apply each finding's `fix`, re-check the rules you fixed against the first run.
 
+The MCP tools may come from the hosted server (`https://mcp.agentic-seo-check.rivi.software/mcp`; its tool descriptions say so), which runs on Cloudflare's network and has `seo_audit_page`, `seo_crawl_site`, `seo_aeo_audit` and `seo_list_rules` only. It cannot reach `localhost` or a private network, read build output, render JavaScript, run Lighthouse, send headers for a site behind a login, or probe with AI bots' User-Agents. For those, use the CLI or the local server (`npx -y @rivi-software/agentic-seo-check mcp`), or give the hosted server the page's HTML with `html` and `baseUrl`. When it answers that it reached a limit, or that a site turned it away, say so to the user rather than retrying in a loop.
+
 ## 1. Pick the target
 
 | Situation | Use |

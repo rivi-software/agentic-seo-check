@@ -5,6 +5,9 @@ allowBuilds:
   # lefthook's postinstall runs `lefthook install`, which writes the pre-commit hook of lefthook.yml into .git/hooks
   # (it skips that where CI is set).
   lefthook: true
+  # Wrangler runs the hosted server locally in workerd, whose binary comes from an optional platform package; its
+  # script only checks it, as esbuild's does.
+  workerd: true
 
 # No transitive dependencies from git or tarball URLs.
 blockExoticSubdeps: true

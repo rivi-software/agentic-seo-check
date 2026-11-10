@@ -1,6 +1,8 @@
 # Security
 
-This policy covers the code in this repository: the `@rivi-software/agentic-seo-check` package on npm, its `agentic-seo-check` command line tool and `agentic-seo-check-mcp` MCP server, the `seo-audit` agent skill, and the workflows that test, review and release them.
+This policy covers the code in this repository: the `@rivi-software/agentic-seo-check` package on npm, its `agentic-seo-check` command line tool and `agentic-seo-check-mcp` MCP server, the hosted MCP server that RIVI Software runs at `https://mcp.agentic-seo-check.rivi.software/mcp` from [`hosted/`](hosted/), the `seo-audit` agent skill, and the workflows that test, review, release and deploy them.
+
+Abuse of the hosted server, such as too many requests to one site or requests you did not expect, is not a vulnerability: report it through [help.rivi.software/contact](https://help.rivi.software/contact), with the hostname and the time in UTC. [The page for site owners](https://mcp.agentic-seo-check.rivi.software/crawler) says how to recognise and block its requests.
 
 ## Reporting a vulnerability
 
@@ -32,7 +34,7 @@ There is no bug bounty.
 
 ## Supported versions
 
-Only the latest published version gets fixes. A fix comes out as a new version: upgrade to get it.
+Only the latest published version gets fixes. A fix comes out as a new version: upgrade to get it. The hosted server deploys with each release, so it always runs the latest version.
 
 ## Scope
 
@@ -43,6 +45,8 @@ The tool reads what it is pointed at: a URL and the pages it links to, a directo
 - A secret the user passes, such as a value in `headers`, that the tool sends to another origin than the one it audits, or writes into a report.
 - A way to run code, read a secret or write to this repository through its workflows, for example from a pull request from a fork.
 - A way to publish the package to npm, or to move or delete a release tag, without a maintainer.
+- On the hosted server: a way past its URL rules (to `localhost`, a private network, an IP address, another scheme), a way to see or change another caller's input or results, or a way past its limits per site, per caller or per day that makes it send far more than they allow. The limits are approximate and counted per Cloudflare location, so a small overshoot is expected.
+- A way to deploy to the hosted server, or to reach its Cloudflare token, without a maintainer.
 
 Out of scope:
 
@@ -58,7 +62,8 @@ Out of scope:
 Test against your own copy and your own sites: a fork, a local checkout, and pages and servers you control.
 
 - Do not open pull requests or issues here to try an attack on the workflows. Reproduce it in a fork, with your own secrets.
-- Do not point the crawler at sites you do not own or have permission to test.
+- Do not point the crawler at sites you do not own or have permission to test, through the hosted server or otherwise.
+- Do not load-test the hosted server or try its limits at scale: run your own copy of the Worker in `hosted/` (`pnpm run hosted:dev`) instead.
 - Do not publish to, or tamper with, `@rivi-software/agentic-seo-check` on npm.
 - No denial of service, spam or social engineering of maintainers.
 

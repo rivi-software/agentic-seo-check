@@ -6,6 +6,8 @@ import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { auditDirectory, auditSite } from "../src/core/audit.js";
+import { DEFAULT_USER_AGENT } from "../src/core/fetch.js";
+import { buildRobots } from "../src/core/robots.js";
 import {
   emptySitemapProblems,
   inspectSitemap,
@@ -350,6 +352,39 @@ describe("sitemap protocol limits", () => {
       text: "not gzip, plain text",
       bytes: 20,
     });
+  });
+
+  it("names the read budget it stopped at", async () => {
+    const bomb = gzipSync(Buffer.alloc(6_000_000, 0x20));
+
+    await expect(sitemapText(bomb, 5_000_000)).resolves.toStrictEqual({
+      error: "inflates to more than the 5 MB this audit reads",
+      tooLarge: true,
+    });
+  });
+});
+
+describe("the crawler's own robots.txt group", () => {
+  const robots = buildRobots(
+    "https://www.example.com/robots.txt",
+    200,
+    undefined,
+    "User-agent: *\nDisallow: /cart\n\nUser-agent: agentic-seo-check\nDisallow: /reports/\n",
+    DEFAULT_USER_AGENT
+  );
+
+  it("keeps the crawl out of what the agentic-seo-check group disallows", () => {
+    expect(
+      robots.crawlerAllows("https://www.example.com/reports/q3")
+    ).toBeFalsy();
+    expect(robots.crawlerAllows("https://www.example.com/")).toBeTruthy();
+    // The group replaces `*` for the crawler (RFC 9309), so `*`'s rules do not add to it.
+    expect(robots.crawlerAllows("https://www.example.com/cart")).toBeTruthy();
+  });
+
+  it("leaves the rules the site rules judge by as they were", () => {
+    expect(robots.allows("https://www.example.com/reports/q3")).toBeTruthy();
+    expect(robots.allows("https://www.example.com/cart")).toBeFalsy();
   });
 });
 

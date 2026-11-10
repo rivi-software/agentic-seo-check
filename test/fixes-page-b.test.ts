@@ -196,6 +196,11 @@ const CASES: Case[] = [
       headers: { "content-encoding": "gzip", "set-cookie": "s=1" },
     }),
   },
+  {
+    name: "response: read only in part",
+    html: doc("", `<h1>Blue widgets</h1><p>${words(320)}</p>`),
+    input: live(PAGE, { truncated: true }),
+  },
 ];
 
 /** Every finding of every case, with the case's HTML. */

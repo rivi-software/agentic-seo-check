@@ -131,6 +131,12 @@ export const AEO_SITE_RULES: RuleMeta[] = [
     "ai-bots"
   ),
   meta(
+    "aeo.crawl-stopped",
+    "info",
+    "The hosted server stopped requesting the site before the crawl was done: the site refused its requests (a challenge, HTTP 429), or the server reached its request limit for the site. The audit covers the pages it read.",
+    "Crawl again in a minute, or with the local server or the CLI, which send the requests from your machine: npx -y @rivi-software/agentic-seo-check mcp."
+  ),
+  meta(
     "aeo.bot-probe-inconclusive",
     "info",
     "The AI bot probe could not run: the target is not a URL, or the audit's own request did not get the page.",
@@ -161,6 +167,8 @@ export interface AeoSiteContext {
   pageCount: number;
   /** Set when the caller asked for the bot probe but it could not run. */
   probeSkipped?: string;
+  /** Why the crawl stopped requesting the site before it was done (the hosted server's gate). */
+  crawlStopped?: string;
 }
 
 const ROBOTS_RULES: Record<AiBotPurpose, string> = {
@@ -863,6 +871,17 @@ export const aeoSiteFindings = (ctx: AeoSiteContext): Finding[] => {
         `The AI bot probe did not run: ${ctx.probeSkipped}.`,
         // About the audit, not the site: aeo.page-error carries the fix for a page that fails.
         { fix: [] }
+      )
+    );
+  }
+
+  if (ctx.crawlStopped) {
+    out.push(
+      finding(
+        m("aeo.crawl-stopped"),
+        `The crawl stopped after ${ctx.pageCount} page(s): ${ctx.crawlStopped}`,
+        // About the audit, not the site: the way out is a crawl from somewhere else.
+        { fix: [], evidence: { pagesCrawled: ctx.pageCount } }
       )
     );
   }

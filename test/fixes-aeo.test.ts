@@ -43,6 +43,7 @@ const pageFindings = (
     url?: string;
     headers?: Record<string, string>;
     status?: number;
+    truncated?: boolean;
   } = {}
 ): Finding[] => {
   const url = options.url ?? PAGE_URL;
@@ -60,6 +61,7 @@ const pageFindings = (
         timeMs: 10,
         contentType: "text/html",
         headers: options.headers ?? {},
+        truncated: options.truncated,
       },
       thresholds: DEFAULT_THRESHOLDS,
     },
@@ -807,12 +809,15 @@ describe("every AEO rule", () => {
         '<html><head><meta name="googlebot" content="max-snippet:50"><meta name="bingbot" content="nocache"></head><body><p>x</p></body></html>'
       ),
       ...pageFindings("<p>x</p>", { status: 500 }),
+      ...pageFindings("<p>x</p>", { truncated: true }),
       ...pageFindings("<p>Welcome</p>", { url: "https://www.example.com/" }),
       ...aeoSiteFindings({
         crawlers: report,
         llmsTxt: llms({ status: "missing" }),
         pageCount: 1,
         probeSkipped: "it needs a live URL",
+        crawlStopped:
+          "www.example.com answered with HTTP 429 (Too Many Requests).",
       }),
       ...aeoSiteFindings({
         crawlers: crawlersFor(
