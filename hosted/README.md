@@ -7,8 +7,9 @@ The MCP server of agentic-seo-check as a Cloudflare Worker, at `https://mcp.agen
 Each POST to `/mcp` builds an MCP server with `createMcpServer({ hosted })` (`src/mcp-hosted.ts`) and answers it with the SDK's `WebStandardStreamableHTTPServerTransport`, stateless and in JSON. Wrangler bundles `src/` from the same commit; `playwright`, `lighthouse` and `chrome-launcher` resolve to `src/unavailable.ts`, so the bundle leaves them out.
 
 - `wrangler.jsonc`: the Custom Domains, the rate limits, the Durable Object, the Analytics Engine dataset, the daily Cron Trigger and the variables `MODE`, `DAILY_REQUESTS` and `OPENAI_APPS_CHALLENGE`.
-- `src/index.ts`: the routes (`/mcp`, `/`, `/crawler`, `/robots.txt`, `/favicon.svg`, `/.well-known/openai-apps-challenge`), CORS, and the Cron Trigger that fetches OpenAI's ChatGPT connector ranges. `mcp.agentic-seo-check.rivi.software`, the MCP server's hostname in 0.7.0, still answers at `/mcp`, so clients set up with it keep working, and sends every other path to `mcp.agentic-seo.rivi.software` with a 301.
-- `src/limits.ts`: the limits per caller, per platform, per site and per day, and one Analytics Engine record per tool call. The URL rules, the caps and the answers that count as a site refusing the server are in the core, `src/core/hosted.ts`, so the npm package's tests cover them too.
+- `src/index.ts`: the routes (`/mcp`, `/`, `/crawler`, `/robots.txt`, `/favicon.svg`, `/.well-known/http-message-signatures-directory`, `/.well-known/openai-apps-challenge`), CORS, and the Cron Trigger that fetches OpenAI's ChatGPT connector ranges. `mcp.agentic-seo-check.rivi.software`, the MCP server's hostname in 0.7.0, still answers at `/mcp`, so clients set up with it keep working, and sends every other path to `mcp.agentic-seo.rivi.software` with a 301.
+- `src/limits.ts`: the limits per caller, per platform, per site and per day, and one Analytics Engine record per tool call. The URL rules, the caps, the answers that count as a site refusing the server, and the gate that obeys robots.txt (and, in a crawl, `Crawl-delay`) before every request are in the core, `src/core/hosted.ts` (`hostedFetch`), so the npm package's tests cover them too.
+- `src/signing.ts`: Web Bot Auth ([issue #41](https://github.com/rivi-software/agentic-seo-check/issues/41)). Every request to a site is signed with the first Ed25519 key of the Worker secret `WEB_BOT_AUTH_KEYS`, as HTTP Message Signatures (RFC 9421) over `@authority` and `Signature-Agent: "https://mcp.agentic-seo.rivi.software"`, and the key directory lists each key's public half, signed by that key. Without the secret the requests go out unsigned and the directory answers 404.
 - `src/callers.ts`: who is calling. claude.ai and ChatGPT call from their platforms' address ranges and count as one caller each, with ten times the limits.
 - `src/state.ts`: the Durable Object that counts the day's requests and keeps OpenAI's ranges.
 - `src/pages.ts`: the landing page and the page for site owners, which the User-Agent links to. Both state the limits from `wrangler.jsonc`.
@@ -25,9 +26,10 @@ pnpm run hosted:check    # generate the Worker's types (worker-configuration.d.t
 pnpm run hosted:build    # bundle it as a deploy does, into hosted/dist
 pnpm run hosted:test     # its limits and pages in Node, and the bundle in workerd
 pnpm run hosted:deploy   # deploy it (needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)
+pnpm run --silent hosted:key  # print a new Web Bot Auth key for the secret WEB_BOT_AUTH_KEYS
 ```
 
-`hosted:dev` answers as the MCP server's hostname, since Wrangler gives every local request the hostname of the first route. To see the website, run `pnpm run hosted:dev --host agentic-seo.rivi.software`. `.dev.vars` holds Cloudflare's public Turnstile test keys, which pass every check, so the form works locally.
+`hosted:dev` answers as the MCP server's hostname, since Wrangler gives every local request the hostname of the first route. To see the website, run `pnpm run hosted:dev --host agentic-seo.rivi.software`. `.dev.vars` holds Cloudflare's public Turnstile test keys, which pass every check, so the form works locally, and the Ed25519 test key of RFC 9421, so requests are signed locally with a key nobody trusts.
 
 `pnpm run verify` runs `hosted:check`, `hosted:build` and `hosted:test` after the package's own checks. Run Wrangler through these scripts, not on its own: a bundle without the defines does not start.
 
@@ -57,6 +59,14 @@ Once, before the first deploy:
 6. **A privacy notice and terms of use** on rivi.software (#33 needs their URLs too). The landing page states what the server records and for how long; the privacy notice should say the same, and name Cloudflare as processor.
 
 7. **A Turnstile widget** for the audit form, done on 2026-11-10: the widget "agentic-seo-check website audit form" for the hostname `agentic-seo.rivi.software` (its hostnames list it), with the mode *Invisible*. Its site key is `TURNSTILE_SITE_KEY` in `wrangler.jsonc`, and its secret key is the Worker secret `TURNSTILE_SECRET_KEY`, which stays through later deploys. To replace it, rotate the secret in the Cloudflare dashboard (Turnstile) and run `pnpm run hosted:secret TURNSTILE_SECRET_KEY`.
+
+8. **A Web Bot Auth key, and Cloudflare's verified bots** ([issue #41](https://github.com/rivi-software/agentic-seo-check/issues/41)):
+   1. Make a key with `pnpm run --silent hosted:key`, which prints the secret's value, a JSON list of one private JWK, and writes nothing to disk. Keep it where you keep secrets: Cloudflare never shows a secret again.
+   2. Set it with `pnpm run hosted:secret WEB_BOT_AUTH_KEYS` and paste the value, then deploy. Check `https://mcp.agentic-seo.rivi.software/.well-known/http-message-signatures-directory`: it lists the public key, and Cloudflare's `http-signature-directory` tool (crates.io) validates it.
+   3. In the Cloudflare dashboard, open the Bot Submission Form (Application security, BotBase, or Manage Account, Configurations), and submit: verification method *Request Signature*; under *Validation Instructions* the directory's URL; the categories *SEO* and *Agent*; `https://mcp.agentic-seo.rivi.software/crawler` as the bot's documentation. If the form asks for a User-Agent pattern, give `agentic-seo-check/` with `+https://mcp.agentic-seo.rivi.software/crawler`, which only the hosted server sends: the local tool's token is `agentic-seo-check-local`. Its status is under BotBase, History.
+   4. Once accepted, `https://crawltest.com/cdn-cgi/web-bot-auth` answers a signed request with 200 (401 while the key is unknown).
+
+   To rotate the key, make a new one, set the secret to a list of the new key and the old (`[new, old]`), deploy, and ask Cloudflare to rotate the registration; once it has, set the new key alone.
 
 ## Answering an abuse report
 

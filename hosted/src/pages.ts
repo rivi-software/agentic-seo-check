@@ -5,12 +5,14 @@
  * so they cannot drift from what the Worker enforces, and they pass the server's own audit.
  */
 import { MAKER, MAKER_URL, REPOSITORY_URL } from "../../src/brand.js";
+import { LOCAL_PRODUCT_TOKEN } from "../../src/core/fetch.js";
 import { HOSTED_LIMITS, LOCAL_SERVER } from "../../src/core/hosted.js";
 import type {
   JsonObject,
   JsonValue,
 } from "../../src/core/html/structured-data.js";
 import { ORIGIN, rateLimit, SITE_ORIGIN, USER_AGENT } from "./limits.js";
+import { DIRECTORY_PATH } from "./signing.js";
 
 export const ABUSE_URL = "https://help.rivi.software/contact";
 
@@ -19,6 +21,9 @@ const MCP_URL = `${ORIGIN}/mcp`;
 export { MARK_SVG as FAVICON_SVG } from "../../src/brand.js";
 
 export const ROBOTS_TXT = "User-agent: *\nDisallow: /mcp\n";
+
+/** How long Crawl-delay may hold up a hosted crawl, as the pages say it. */
+const CRAWL_DELAY_BUDGET = `${HOSTED_LIMITS.crawlDelayBudgetMs / 1000} seconds`;
 
 const STYLE = `
 :root{color-scheme:light dark;--ink:#15171a;--paper:#fbfbfa;--muted:#5b6068;--line:#dcdfe3;--green:#0e9f55;--code:#f0f2f4}
@@ -186,8 +191,11 @@ ${limitRow("A page", `the first ${MB(HOSTED_LIMITS.maxBodyBytes)} of its HTML, w
 <li>audit a site behind a login, or send your own headers or User-Agent;</li>
 <li>request a page with each AI bot's User-Agent.</li>
 </ul>
-<p>Some sites also turn away requests from Cloudflare Workers; the server then says so. For all of this, run the local server, which does everything above from your own machine:</p>
+<p>For all of this, run the local server, which does everything above from your own machine:</p>
 <pre><code>${LOCAL_SERVER}</code></pre>
+
+<h2>robots.txt</h2>
+<p>The server obeys robots.txt for every request it sends, an audit of one page included: the group for <code>agentic-seo-check</code>, or <code>*</code> when there is none. A crawl waits between requests to a site as its <code>Crawl-delay</code> asks, for at most ${CRAWL_DELAY_BUDGET} in all. When robots.txt keeps it out, or a site turns it away, the server says so and requests nothing more there.</p>
 
 <h2>Privacy</h2>
 <p>The server keeps no HTML you send, no reports and no headers. For each tool call, and each run of the website's page audit, it records the tool, the outcome, the duration, the number of requests and pages, and the hostname it audited, so that a report about too many requests to a site can be checked against what the server sent there. It records the hostname only, never the path or the query, and never your IP address. Records are kept for three months. The server runs on Cloudflare, which processes the requests for ${MAKER}.</p>
@@ -213,19 +221,22 @@ export const crawlerPage = (): string =>
 <p class="lead">Someone asked their AI assistant to audit your site for search engines or AI answer engines, or entered one of its pages in the form on <a href="${SITE_ORIGIN}/">the agentic-seo-check website</a>. Both use the hosted agentic-seo-check server, run by ${MAKER}. Every request is part of an audit a person started; the server does not crawl the web on its own.</p>
 
 <h2>What the requests are</h2>
-<p>An audit of one page is one request, plus any redirects; the website's form audits one page for search engines and for answer engines, which also reads robots.txt and llms.txt. A crawl requests up to ${HOSTED_LIMITS.maxPages} pages, robots.txt, up to ${HOSTED_LIMITS.maxSitemaps} sitemaps and up to ${HOSTED_LIMITS.maxLinkChecks} link and image targets: about 150 requests. The server sends at most ${perPeriod("SITE_REQUESTS", "requests")} to one hostname, from all its callers together.</p>
+<p>Every audit reads robots.txt first and obeys it: the group for <code>agentic-seo-check</code>, or <code>*</code> when there is none. An audit of one page is then one request, plus any redirects; the website's form audits one page for search engines and for answer engines, which also reads llms.txt. A crawl requests up to ${HOSTED_LIMITS.maxPages} pages, up to ${HOSTED_LIMITS.maxSitemaps} sitemaps and up to ${HOSTED_LIMITS.maxLinkChecks} link and image targets: about 150 requests. It waits between requests as <code>Crawl-delay</code> asks, and stops requesting a site once that adds up to more than ${CRAWL_DELAY_BUDGET}. The server sends at most ${perPeriod("SITE_REQUESTS", "requests")} to one hostname, from all its callers together. A 429 or a challenge page ends its requests to the site, and a 403 those to the page: it does not retry, and sends no other User-Agent.</p>
 
 <h2>How to recognise them</h2>
 <p>The requests carry this User-Agent:</p>
 <pre><code>${USER_AGENT}</code></pre>
+<p>Each one is signed with <a href="https://datatracker.ietf.org/doc/html/rfc9421">HTTP Message Signatures</a>, as Web Bot Auth asks: it carries <code>Signature-Agent: "${ORIGIN}"</code> and the headers <code>Signature-Input</code> and <code>Signature</code>, made with an Ed25519 key that <a href="${DIRECTORY_PATH}">the key directory</a> lists. A request without a valid signature did not come from this server, whatever its User-Agent says.</p>
 <p>They come from Cloudflare's network, with the header <code>CF-Worker: rivi.software</code>. A site on Cloudflare sees them with the address <code>2a06:98c0:3600::103</code>, which every Cloudflare Worker shares.</p>
+<p>The User-Agent <code>${LOCAL_PRODUCT_TOKEN}</code> is the same tool run on someone's own machine, as a command or a local MCP server. Its requests come from that machine, unsigned, and its crawls obey a robots.txt group for <code>${LOCAL_PRODUCT_TOKEN}</code>, or <code>*</code>.</p>
 
 <h2>How to block them</h2>
 <ul>
-<li>In robots.txt, a group for the product token keeps crawls out. An audit of one page is one request a person asked for, as a visit in a browser is, and does not read robots.txt.
+<li>In robots.txt, a group for the product token keeps the server out: every audit reads it before anything else.
 <pre><code>User-agent: agentic-seo-check
-Disallow: /</code></pre></li>
-<li>In a firewall, block requests whose User-Agent contains <code>agentic-seo-check</code>.</li>
+Disallow: /</code></pre>
+Add a <code>User-agent: ${LOCAL_PRODUCT_TOKEN}</code> line to the group to keep out crawls run from people's own machines too.</li>
+<li>In a firewall, block requests whose User-Agent contains <code>agentic-seo-check</code>, which both product tokens do.</li>
 <li>On Cloudflare, a WAF custom rule on <code>cf.worker.upstream_zone eq "rivi.software"</code> blocks the server, and with it every other Worker on rivi.software.</li>
 </ul>
 

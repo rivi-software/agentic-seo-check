@@ -70,6 +70,20 @@ describe("the hosted server's pages", () => {
     expect(html).toContain("https://help.rivi.software/contact");
     expect(html).toContain("User-agent: agentic-seo-check\nDisallow: /");
     expect(html).toContain('cf.worker.upstream_zone eq "rivi.software"');
+    expect(html).toContain("User-agent: agentic-seo-check-local");
+  });
+
+  it("say how to recognise a request by its signature, and what robots.txt does", () => {
+    const html = crawlerPage();
+
+    expect(html).toContain(`Signature-Agent: "${ORIGIN}"`);
+    expect(html).toContain(
+      'href="/.well-known/http-message-signatures-directory"'
+    );
+    expect(html).toContain("Every audit reads robots.txt first and obeys it");
+    expect(landingPage(100_000)).toContain(
+      "The server obeys robots.txt for every request it sends"
+    );
     expect(landingPage(100_000)).toContain(
       "https://help.rivi.software/contact"
     );

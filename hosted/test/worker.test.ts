@@ -92,6 +92,12 @@ const site = new Map<string, Route>(
 /** What the Worker requested, with the User-Agent it sent. */
 const requests: { url: string; userAgent: string | null }[] = [];
 
+/** The Web Bot Auth headers of each request the Worker sent, by URL. */
+const signatures = new Map<string, Record<string, string | null>>();
+
+/** The keyid of the RFC 9421 test key in .dev.vars: its JWK thumbprint. */
+const TEST_KEYID = "poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U";
+
 let worker: Awaited<ReturnType<typeof unstable_startWorker>>;
 
 /** The same Worker, answering as the website's hostname. */
@@ -179,6 +185,15 @@ const start = (origin: string) =>
           url: request.url,
           userAgent: request.headers.get("user-agent"),
         });
+        signatures.set(
+          request.url,
+          Object.fromEntries(
+            ["signature-agent", "signature-input", "signature"].map((name) => [
+              name,
+              request.headers.get(name),
+            ])
+          )
+        );
 
         // The hosted server auditing its own pages: answer from the Worker itself.
         if (request.url.startsWith(`${ORIGIN}/`)) {
@@ -291,6 +306,26 @@ describe("the hosted Worker in workerd", () => {
       );
     });
 
+    it("signs every request with Web Bot Auth, robots.txt first", async () => {
+      await audit("seo_audit_page", { url: "https://shop.example.com/about" });
+
+      for (const url of [
+        "https://shop.example.com/robots.txt",
+        "https://shop.example.com/about",
+      ]) {
+        expect(signatures.get(url)).toStrictEqual({
+          "signature-agent": `"${ORIGIN}"`,
+          "signature-input": expect.stringMatching(
+            new RegExp(
+              `^sig1=\\("@authority" "signature-agent"\\);created=\\d+;expires=\\d+;keyid="${TEST_KEYID}";alg="ed25519";nonce="[^"]+";tag="web-bot-auth"$`,
+              "u"
+            )
+          ),
+          signature: expect.stringMatching(/^sig1=:[\w+/]+={0,2}:$/u),
+        });
+      }
+    });
+
     it("reads windows-1252 and Shift_JIS pages as Node does", async () => {
       const titles = await Promise.all(
         ["cp1252", "sjis"].map(async (path) => {
@@ -385,6 +420,29 @@ describe("the hosted Worker in workerd", () => {
       expect(preflight.status).toBe(204);
       expect(preflight.headers.get("access-control-allow-origin")).toBe("*");
       expect(get.status).toBe(405);
+    });
+
+    it("serve the Web Bot Auth key directory, signed", async () => {
+      const res = await fetch(
+        new URL("/.well-known/http-message-signatures-directory", base)
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe(
+        "application/http-message-signatures-directory+json"
+      );
+      expect(res.headers.get("signature-input")).toContain(
+        `("@authority";req);alg="ed25519";keyid="${TEST_KEYID}";`
+      );
+      await expect(res.json()).resolves.toStrictEqual({
+        keys: [
+          {
+            kty: "OKP",
+            crv: "Ed25519",
+            x: "JrQLj5P_89iXES9-vFgrIy29clF9CC_oPPsw3c5D0bs",
+          },
+        ],
+      });
     });
 
     it("answer no OpenAI domain challenge until one is set", async () => {

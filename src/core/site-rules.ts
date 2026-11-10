@@ -387,8 +387,8 @@ export const SITE_RULES: RuleMeta[] = [
   meta(
     "site.crawl-stopped",
     "info",
-    "The hosted server stopped requesting the site before the crawl was done: the site refused its requests (a challenge, HTTP 429), or the server reached its request limit for the site. Site-wide checks (broken links, duplicates, sitemap coverage) are partial.",
-    "Crawl again in a minute, or with the local server or the CLI, which send the requests from your machine: npx -y @rivi-software/agentic-seo-check mcp."
+    "The hosted server stopped requesting the site before the crawl was done: the site refused its requests (a challenge, HTTP 429), robots.txt asked for a Crawl-delay longer than a hosted crawl waits, or the server reached its request limit for the site. Site-wide checks (broken links, duplicates, sitemap coverage) are partial.",
+    "The message says which. The hosted server's own limit for a site lifts within a minute: crawl again then. A refusal or a Crawl-delay is the site's choice, which the hosted server keeps."
   ),
 ];
 
@@ -2672,7 +2672,7 @@ const stoppedFindings = (ctx: SiteContext): Finding[] =>
           m("site.crawl-stopped"),
           `The crawl stopped after ${ctx.crawl.pagesCrawled} page(s): ${ctx.crawlStopped}`,
           {
-            // About the audit, not the site: the way out is a crawl from somewhere else.
+            // About the audit, not the site: there is nothing on the site to change.
             fix: [],
             evidence: {
               pagesCrawled: ctx.crawl.pagesCrawled,
