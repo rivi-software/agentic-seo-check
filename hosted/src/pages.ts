@@ -226,7 +226,7 @@ export const crawlerPage = (): string =>
 <h2>How to recognise them</h2>
 <p>The requests carry this User-Agent:</p>
 <pre><code>${USER_AGENT}</code></pre>
-<p>Each one over https is signed with <a href="https://datatracker.ietf.org/doc/html/rfc9421">HTTP Message Signatures</a>, as Web Bot Auth asks: it carries <code>Signature-Agent: "${ORIGIN}"</code> and the headers <code>Signature-Input</code> and <code>Signature</code>, made with an Ed25519 key that <a href="${DIRECTORY_PATH}">the key directory</a> lists. A request without a valid signature did not come from this server, whatever its User-Agent says.</p>
+<p>Each one over https is signed with <a href="https://datatracker.ietf.org/doc/html/rfc9421">HTTP Message Signatures</a>, as Web Bot Auth asks: it carries <code>Signature-Agent: "${ORIGIN}"</code> and the headers <code>Signature-Input</code> and <code>Signature</code>, made with an Ed25519 key that <a href="${DIRECTORY_PATH}">the key directory</a> lists. A request over https without a valid signature did not come from this server, whatever its User-Agent says. Requests over plain http go unsigned, since anyone on their path could copy a signature and send it again.</p>
 <p>They come from Cloudflare's network, with the header <code>CF-Worker: rivi.software</code>. A site on Cloudflare sees them with the address <code>2a06:98c0:3600::103</code>, which every Cloudflare Worker shares.</p>
 <p>The User-Agent <code>${LOCAL_PRODUCT_TOKEN}</code> is the same tool run on someone's own machine, as a command or a local MCP server. Its requests come from that machine, unsigned, and its crawls obey a robots.txt group for <code>${LOCAL_PRODUCT_TOKEN}</code>, or <code>*</code>.</p>
 

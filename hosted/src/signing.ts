@@ -1,6 +1,6 @@
 /**
- * Web Bot Auth (issue #41): the hosted server signs every request it sends to a site with an
- * Ed25519 key, as HTTP Message Signatures (RFC 9421) with the `web-bot-auth` tag, and publishes
+ * Web Bot Auth (issue #41): the hosted server signs every https request it sends to a site with
+ * an Ed25519 key, as HTTP Message Signatures (RFC 9421) with the `web-bot-auth` tag, and publishes
  * the public keys at /.well-known/http-message-signatures-directory. A site, and Cloudflare's
  * verified bots, can then tell its requests from others that send its User-Agent, which no
  * address can do: every Cloudflare Worker sends from the same ones. The keys are the Worker secret
