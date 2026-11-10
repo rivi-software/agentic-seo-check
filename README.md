@@ -10,7 +10,8 @@
 <p align="center">
   SEO and AEO analysis built for coding agents: a CLI and an MCP server that audit URLs,<br>
   static build output or raw HTML, and return findings an agent can act on.<br>
-  Open source, from <a href="https://rivi.software">RIVI Software</a>.
+  Open source, from <a href="https://rivi.software">RIVI Software</a>.<br>
+  <a href="https://agentic-seo-check.rivi.software">agentic-seo-check.rivi.software</a>: audit a page in your browser, and read every rule.
 </p>
 
 <p align="center">
@@ -164,6 +165,8 @@ https://mcp.agentic-seo-check.rivi.software/mcp
 ```
 
 It speaks MCP over Streamable HTTP, so it works where a local server cannot run: claude.ai, Cowork and the Claude apps, ChatGPT, and any machine without Node.
+
+The same server is behind the form on [agentic-seo-check.rivi.software](https://agentic-seo-check.rivi.software): enter a URL and it shows the SEO and AEO audits of that page, with no assistant and no model in between. The form audits one public page per run, within the limits below, and [the site's rules page](https://agentic-seo-check.rivi.software/rules) lists every rule.
 
 | Client | Setup |
 | --- | --- |

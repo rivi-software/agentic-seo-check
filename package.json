@@ -57,6 +57,7 @@
     "hosted:test": "vitest run --config hosted/vitest.config.ts",
     "hosted:verify": "pnpm run hosted:check && pnpm run hosted:build && pnpm run hosted:test",
     "hosted:deploy": "node hosted/scripts/wrangler.ts deploy",
+    "hosted:secret": "cd hosted && wrangler secret put",
     "changeset": "changeset",
     "version-packages": "changeset version && pnpm install --lockfile-only",
     "release": "changeset publish",

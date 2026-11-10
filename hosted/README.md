@@ -1,6 +1,6 @@
-# The hosted MCP server
+# The hosted MCP server and the website
 
-The MCP server of agentic-seo-check as a Cloudflare Worker, at `https://mcp.agentic-seo-check.rivi.software/mcp`, run by RIVI Software and free to use ([issue #35](https://github.com/rivi-software/agentic-seo-check/issues/35)). The README's [Hosted server](../README.md#hosted-server) section is for its users; this page is for running it. It is not part of the npm package: `hosted/` is outside `files`.
+The MCP server of agentic-seo-check as a Cloudflare Worker, at `https://mcp.agentic-seo-check.rivi.software/mcp`, run by RIVI Software and free to use ([issue #35](https://github.com/rivi-software/agentic-seo-check/issues/35)). The same Worker serves the project's website at `https://agentic-seo-check.rivi.software`, with a page audit to run in the browser ([issue #39](https://github.com/rivi-software/agentic-seo-check/issues/39)). The README's [Hosted server](../README.md#hosted-server) section is for its users; this page is for running it. It is not part of the npm package: `hosted/` is outside `files`.
 
 ## How it works
 
@@ -12,6 +12,7 @@ Each POST to `/mcp` builds an MCP server with `createMcpServer({ hosted })` (`sr
 - `src/callers.ts`: who is calling. claude.ai and ChatGPT call from their platforms' address ranges and count as one caller each, with ten times the limits.
 - `src/state.ts`: the Durable Object that counts the day's requests and keeps OpenAI's ranges.
 - `src/pages.ts`: the landing page and the page for site owners, which the User-Agent links to. Both state the limits from `wrangler.jsonc`.
+- `src/site/`: the website, which the Worker serves when the request's hostname is `agentic-seo-check.rivi.software`. `routes.ts` has its routes (`/`, `/rules`, `/audit`, `/robots.txt`, `/sitemap.xml`, `/llms.txt`, `/site.js`, the font) and the Content-Security-Policy; `home.ts` and `rules-page.ts` the pages, in the frame of `layout.ts` and the styles of `style.ts`; `audit.ts` answers the audit form; `report.ts` renders the two audits as HTML, with everything quoted from the audited page escaped; `files.ts` holds robots.txt, the sitemap, llms.txt and the page's script. `assets/` holds the heading font, Bricolage Grotesque at weight 600 as a Latin subset, with its licence (SIL OFL 1.1).
 - `scripts/wrangler.ts`: runs Wrangler in this directory with the defines a build needs (`scripts/defines.ts`): the npm package's version and the rate limits.
 
 ## Commands
@@ -26,7 +27,15 @@ pnpm run hosted:test     # its limits and pages in Node, and the bundle in worke
 pnpm run hosted:deploy   # deploy it (needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)
 ```
 
+`hosted:dev` answers as the MCP server's hostname, since Wrangler gives every local request the hostname of the first route. To see the website, run `pnpm run hosted:dev --host agentic-seo-check.rivi.software`. `.dev.vars` holds Cloudflare's public Turnstile test keys, which pass every check, so the form works locally.
+
 `pnpm run verify` runs `hosted:check`, `hosted:build` and `hosted:test` after the package's own checks. Run Wrangler through these scripts, not on its own: a bundle without the defines does not start.
+
+## The audit form
+
+`POST /audit` on the website's hostname runs the SEO audit and the AEO audit of one URL and answers with the homepage and the report. It uses no model and stores nothing. Before it requests anything it checks, in this order: that the form came from the site's own page (the `Origin` header), that the address is one the hosted server may request (`hostedUrlProblem`), that Cloudflare Turnstile gave the form's token, and the limits of `src/limits.ts`, where a run counts as one call of its IP address. Its requests go through the hosted gate, as a tool call's do, and it writes the same Analytics Engine record, with `web_audit_page` as the tool. A GET never audits: `/?url=…` fills the field only.
+
+The form is off, and says so, while `TURNSTILE_SITE_KEY` or `TURNSTILE_SECRET_KEY` is missing, and when `MODE` is `closed`.
 
 ## Deploys
 
@@ -43,13 +52,15 @@ Once, before the first deploy:
 1. **Workers Paid** on the Cloudflare account, for the CPU an audit needs (the Free plan stops a request at 10 ms).
 2. **A Cloudflare API token** for deploys: start from the *Edit Cloudflare Workers* template, and limit it to the account and the `rivi.software` zone. Cloudflare cannot limit a token to one Worker; the GitHub environment keeps it from every other job.
 3. **The GitHub environment `hosted`**, with the secret `CLOUDFLARE_API_TOKEN` and the variable `CLOUDFLARE_ACCOUNT_ID`. Limit its deployment branches and tags to `main` and `v*`.
-4. **The hostname free:** a Custom Domain cannot be created where `mcp.agentic-seo-check.rivi.software` already has a CNAME record. The first deploy creates the DNS record and the certificate.
+4. **The hostnames free:** a Custom Domain cannot be created where `mcp.agentic-seo-check.rivi.software` or `agentic-seo-check.rivi.software` already has a CNAME record. The first deploy creates the DNS records and the certificates.
 5. **A billing notification** on the account, for usage past what Workers Paid includes.
 6. **A privacy notice and terms of use** on rivi.software (#33 needs their URLs too). The landing page states what the server records and for how long; the privacy notice should say the same, and name Cloudflare as processor.
 
+7. **A Turnstile widget** for the audit form, done on 2026-11-10: the widget "agentic-seo-check website audit form" for the hostname `agentic-seo-check.rivi.software`, with the mode *Invisible*. Its site key is `TURNSTILE_SITE_KEY` in `wrangler.jsonc`, and its secret key is the Worker secret `TURNSTILE_SECRET_KEY`, which stays through later deploys. To replace it, rotate the secret in the Cloudflare dashboard (Turnstile) and run `pnpm run hosted:secret TURNSTILE_SECRET_KEY`.
+
 ## Answering an abuse report
 
-Every tool call writes one record to the Analytics Engine dataset `agentic_seo_check_calls`, kept for three months: `index1` and `blob3` the hostname audited, `blob1` the tool, `blob2` the outcome (`ok`, `refused`, `error`, `limited`), `double1` the duration in ms, `double2` the requests sent and `double3` the pages audited. No path, query or caller address. To see what the server sent a site, with a token that has *Account Analytics: Read*:
+Every tool call writes one record to the Analytics Engine dataset `agentic_seo_check_calls`, kept for three months: `index1` and `blob3` the hostname audited, `blob1` the tool (`web_audit_page` for a run of the website's form), `blob2` the outcome (`ok`, `refused`, `error`, `limited`), `double1` the duration in ms, `double2` the requests sent and `double3` the pages audited. No path, query or caller address. To see what the server sent a site, with a token that has *Account Analytics: Read*:
 
 ```bash
 curl "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/analytics_engine/sql" \
