@@ -30,6 +30,7 @@ import type { HostedProfile } from "./mcp-hosted.js";
 import {
   commonOptions,
   detail,
+  docsNote,
   fail,
   format,
   LIST_RULES,
@@ -124,12 +125,14 @@ export const createMcpServer = (
     {
       title: "Audit one page for SEO",
       description:
-        "Audit a single page and return prioritised, actionable findings (rule id, severity, message, recommendation, CSS selector, evidence) with a `fix` for each: the exact edits that resolve it, quoting the code to replace (`{{…}}` marks words the author writes). " +
-        "Checks title, meta description, headings, canonical, robots/noindex, viewport/lang, Open Graph/Twitter cards, images, links, hreflang, structured data (JSON-LD/microdata), content quality and the HTTP response. " +
-        "Provide either `url` (live site, staging or http://localhost dev server) or `html` (raw HTML string, e.g. from a template or test render). " +
-        "Set `render: true` to also load the page in headless Chromium and report content that only exists after JavaScript runs (SPA/CSR problems). " +
-        "Set `lighthouse: true` for Core Web Vitals (LCP, CLS, TBT) and Lighthouse SEO audits; this takes 20-60 seconds. " +
-        "Typical workflow: audit, apply the `fix` of each error and warning in the source code, then re-check with `rules` (the rules you fixed) and `baseline` (the finding ids) to confirm they are fixed and nothing new appeared.",
+        `Audit a single page and return prioritised, actionable findings (rule id, severity, message, recommendation, CSS selector, evidence) with a \`fix\` for each: the exact edits that resolve it, quoting the code to replace (\`{{…}}\` marks words the author writes). ` +
+        `Checks title, meta description, headings, canonical, robots/noindex, viewport/lang, Open Graph/Twitter cards, images, links, hreflang, structured data (JSON-LD/microdata), content quality and the HTTP response. ` +
+        `Provide either \`url\` (live site, staging or http://localhost dev server) or \`html\` (raw HTML string, e.g. from a template or test render). ` +
+        `Set \`render: true\` to also load the page in headless Chromium and report content that only exists after JavaScript runs (SPA/CSR problems). ` +
+        `Set \`lighthouse: true\` for Core Web Vitals (LCP, CLS, TBT) and Lighthouse SEO audits; this takes 20-60 seconds. ` +
+        `Typical workflow: audit, apply the \`fix\` of each error and warning in the source code, then re-check with \`rules\` (the rules you fixed) and \`baseline\` (the finding ids) to confirm they are fixed and nothing new appeared. ${docsNote(
+          "local"
+        )}`,
       inputSchema: {
         url: z
           .string()
@@ -166,6 +169,7 @@ export const createMcpServer = (
         ...commonOptions,
       },
       annotations: {
+        title: "Audit one page for SEO",
         readOnlyHint: true,
         openWorldHint: true,
         idempotentHint: true,
@@ -209,9 +213,11 @@ export const createMcpServer = (
     {
       title: "Crawl a site and audit every page",
       description:
-        "Crawl internal links from a start URL (default 25 pages, depth 3), audit every HTML page, and run site-wide checks: robots.txt, XML sitemap coverage (missing/noindex/non-canonical/broken URLs), broken internal links with their sources, redirect chains, duplicate titles/descriptions/H1s/content, orphan and deep pages, soft-404 behaviour, http→https and www redirects, hreflang return links. " +
-        "Returns site findings plus `issues` (page findings rolled up by rule with example URLs) and per-page scores. Use seo_audit_page on a specific URL for full per-page detail. " +
-        "Works on http://localhost dev servers; for those set `respectRobots: false` if the dev server serves a blocking robots.txt.",
+        `Crawl internal links from a start URL (default 25 pages, depth 3), audit every HTML page, and run site-wide checks: robots.txt, XML sitemap coverage (missing/noindex/non-canonical/broken URLs), broken internal links with their sources, redirect chains, duplicate titles/descriptions/H1s/content, orphan and deep pages, soft-404 behaviour, http→https and www redirects, hreflang return links. ` +
+        `Returns site findings plus \`issues\` (page findings rolled up by rule with example URLs) and per-page scores. Use seo_audit_page on a specific URL for full per-page detail. ` +
+        `Works on http://localhost dev servers; for those set \`respectRobots: false\` if the dev server serves a blocking robots.txt. ${docsNote(
+          "local"
+        )}`,
       inputSchema: {
         url: z.string().url().describe("Start URL (usually the homepage)."),
         maxPages: z
@@ -272,7 +278,11 @@ export const createMcpServer = (
           ),
         ...commonOptions,
       },
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: {
+        title: "Crawl a site and audit every page",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async (input) => {
       try {
@@ -302,8 +312,10 @@ export const createMcpServer = (
     {
       title: "Audit a static build output directory",
       description:
-        "Audit every .html file in a build output directory (dist/, out/, build/, .output/public) without running a server. Runs all page checks plus directory-level checks: internal links that resolve to no file, sitemap.xml/robots.txt in the output, duplicate titles/descriptions/content, unlinked files. " +
-        "Pass `baseUrl` as the production origin (e.g. https://www.example.com) so absolute links, canonicals and sitemap URLs are classified correctly.",
+        `Audit every .html file in a build output directory (dist/, out/, build/, .output/public) without running a server. Runs all page checks plus directory-level checks: internal links that resolve to no file, sitemap.xml/robots.txt in the output, duplicate titles/descriptions/content, unlinked files. ` +
+        `Pass \`baseUrl\` as the production origin (e.g. https://www.example.com) so absolute links, canonicals and sitemap URLs are classified correctly. ${docsNote(
+          "local"
+        )}`,
       inputSchema: {
         dir: z
           .string()
@@ -331,6 +343,7 @@ export const createMcpServer = (
         ...commonOptions,
       },
       annotations: {
+        title: "Audit a static build output directory",
         readOnlyHint: true,
         openWorldHint: false,
         idempotentHint: true,
@@ -357,7 +370,10 @@ export const createMcpServer = (
     {
       title: "Run Lighthouse on a URL",
       description:
-        "Run Google Lighthouse (performance, SEO and agentic-browsing categories) against one URL using a local headless Chrome. Returns Core Web Vitals lab metrics (LCP, CLS, TBT, FCP, Speed Index, TTFB), the top opportunities with estimated savings, failed Lighthouse SEO audits, and findings with thresholds applied. Takes 20-60 seconds. Requires Chrome or Playwright Chromium on this machine.",
+        `Run Google Lighthouse (performance, SEO and agentic-browsing categories) against one URL using a local headless Chrome. Returns Core Web Vitals lab metrics (LCP, CLS, TBT, FCP, Speed Index, TTFB), the top opportunities with estimated savings, failed Lighthouse SEO audits, and findings with thresholds applied. Takes 20-60 seconds. Requires Chrome or Playwright Chromium on this machine. ` +
+        `Lighthouse's own documentation: https://developer.chrome.com/docs/lighthouse/overview. ${docsNote(
+          "local"
+        )}`,
       inputSchema: {
         url: z.string().url().describe("Absolute http(s) URL."),
         formFactor: z
@@ -372,7 +388,11 @@ export const createMcpServer = (
           .describe("Extra request headers (e.g. auth for staging)."),
         format,
       },
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: {
+        title: "Run Lighthouse on a URL",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async (input) => {
       try {
@@ -405,11 +425,13 @@ export const createMcpServer = (
     {
       title: "Audit a page or site for answer engines (AEO)",
       description:
-        "Answer engine optimization audit: can AI answer engines (ChatGPT search, Claude, Perplexity, Google AI Overviews and AI Mode, Copilot, Gemini) reach, quote and trust the content? " +
-        "Checks robots.txt for each AI crawler (search crawlers, answer bots, training bots), Content-Signal lines and the shared `__usage_ai-training` opt-out, /llms.txt, nosnippet/max-snippet/data-nosnippet, Bing's noarchive/nocache for Copilot, noai, content that needs JavaScript, question headings without a direct answer, FAQPage/HowTo markup that the page does not show, article author and dates, and Organization/Person entities with sameAs. " +
-        "Returns its own AEO score, a per-bot `crawlers` table and findings with rule ids (aeo.*). " +
-        "Provide one of `url` (one page, or a site with `crawl: true`), `html` or `dir` (build output). " +
-        "Set `aiBots: true` to also request the page with each AI bot's User-Agent and catch CDN or firewall blocks that robots.txt does not show.",
+        `Answer engine optimization audit: can AI answer engines (ChatGPT search, Claude, Perplexity, Google AI Overviews and AI Mode, Copilot, Gemini) reach, quote and trust the content? ` +
+        `Checks robots.txt for each AI crawler (search crawlers, answer bots, training bots), Content-Signal lines and the shared \`__usage_ai-training\` opt-out, /llms.txt, nosnippet/max-snippet/data-nosnippet, Bing's noarchive/nocache for Copilot, noai, content that needs JavaScript, question headings without a direct answer, FAQPage/HowTo markup that the page does not show, article author and dates, and Organization/Person entities with sameAs. ` +
+        `Returns its own AEO score, a per-bot \`crawlers\` table and findings with rule ids (aeo.*). ` +
+        `Provide one of \`url\` (one page, or a site with \`crawl: true\`), \`html\` or \`dir\` (build output). ` +
+        `Set \`aiBots: true\` to also request the page with each AI bot's User-Agent and catch CDN or firewall blocks that robots.txt does not show. ${docsNote(
+          "local"
+        )}`,
       inputSchema: {
         url: z
           .string()
@@ -494,7 +516,11 @@ export const createMcpServer = (
         format,
         detail,
       },
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: {
+        title: "Audit a page or site for answer engines (AEO)",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async (input) => {
       try {

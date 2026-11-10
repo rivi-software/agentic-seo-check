@@ -4,6 +4,7 @@ import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { assert, describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { REPOSITORY_URL, WEBSITE_URL } from "../src/brand.js";
 import { createMcpServer } from "../src/mcp.js";
 import { VERSION } from "../src/version.js";
 
@@ -75,6 +76,20 @@ describe("MCP server", () => {
     expect(page.annotations?.readOnlyHint).toBeTruthy();
     expect(page.inputSchema).toMatchObject({ type: "object" });
     expect(JSON.stringify(page.inputSchema)).toContain('"render"');
+  });
+
+  it("names every tool in its annotations and links each audit to its docs", async () => {
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+
+    for (const tool of tools) {
+      expect(tool.annotations?.title).toBe(tool.title);
+    }
+
+    for (const tool of tools.filter((t) => t.name !== "seo_list_rules")) {
+      expect(tool.description).toContain(`${REPOSITORY_URL}#mcp-server`);
+      expect(tool.description).toContain(`${WEBSITE_URL}/rules`);
+    }
   });
 
   it("audits inline HTML and returns structured content", async () => {

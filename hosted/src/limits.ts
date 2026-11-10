@@ -30,7 +30,7 @@ export const ORIGIN = "https://mcp.agentic-seo.rivi.software";
 export const FORMER_HOST = "mcp.agentic-seo-check.rivi.software";
 
 /** The project's website, which the same Worker serves on a hostname of its own (issue #39). */
-export const SITE_ORIGIN = "https://agentic-seo.rivi.software";
+export { WEBSITE_URL as SITE_ORIGIN } from "../../src/brand.js";
 
 /**
  * The User-Agent of every request: the product token that robots.txt groups match, and the page
