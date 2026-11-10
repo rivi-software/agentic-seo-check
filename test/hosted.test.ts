@@ -3,13 +3,22 @@ import { gzipSync } from "node:zlib";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { afterEach, assert, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  assert,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { z } from "zod";
 
 import { sleep } from "../src/core/concurrency.js";
 import type { RequestGate } from "../src/core/fetch.js";
 import {
   HOSTED_LIMITS,
+  hostedFetch,
   hostedUrlProblem,
   siteRefusal,
 } from "../src/core/hosted.js";
@@ -198,6 +207,37 @@ describe("the hosted server", () => {
         "http://metadata.google.internal/":
           expect.stringContaining("cannot reach"),
         "http://intranet/": expect.stringContaining("cannot reach intranet"),
+      });
+    });
+
+    it("waits at most 30 s for Crawl-delay in a crawl, every site's together", async () => {
+      vi.useFakeTimers();
+      onTestFinished(() => {
+        vi.useRealTimers();
+      });
+
+      serve({
+        "https://a.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nCrawl-delay: 20\n",
+        },
+        "https://b.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nCrawl-delay: 20\n",
+        },
+      });
+
+      const { gate } = hostedFetch({ userAgent: USER_AGENT, crawl: true });
+      assert(gate, "a hosted call has a gate");
+      const first = gate.beforeRequest(new URL("https://a.example.com/"));
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      await expect(first).resolves.toBeUndefined();
+      await expect(
+        gate.beforeRequest(new URL("https://b.example.com/"))
+      ).resolves.toMatchObject({
+        scope: "host",
+        message: expect.stringContaining("at most 30 s in all for Crawl-delay"),
       });
     });
 
@@ -1024,7 +1064,7 @@ describe("the hosted server", () => {
       });
 
       expect(JSON.stringify(result)).toContain(
-        "https://shop.example.com/robots.txt asks agentic-seo-check to wait 60 s between requests (Crawl-delay), and a crawl on the hosted server waits at most 30 s in all for a site, so it sent shop.example.com no more requests."
+        "https://shop.example.com/robots.txt asks agentic-seo-check to wait 60 s between requests (Crawl-delay), and a crawl on the hosted server waits at most 30 s in all for Crawl-delay, so it sent shop.example.com no more requests."
       );
       expect(requests.map((r) => r.url)).toStrictEqual([
         "https://shop.example.com/robots.txt",

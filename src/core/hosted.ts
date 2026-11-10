@@ -60,9 +60,9 @@ export const HOSTED_LIMITS = {
   maxBaselineIdChars: 300,
   maxKeywordChars: 200,
   /**
-   * How long robots.txt's Crawl-delay may add to a crawl of one site, the delays of its requests
-   * added up: past it, the crawl stops requesting the site rather than keep the caller waiting for
-   * minutes.
+   * How long robots.txt's Crawl-delay may add to one crawl, the delays of its requests to every
+   * site added up: past it, the crawl stops requesting the site it would wait for, rather than keep
+   * the caller waiting for minutes. One total, so that links to many sites cannot add more.
    */
   crawlDelayBudgetMs: 30_000,
 } as const;
@@ -250,13 +250,16 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
   const base = siteGate(limits);
   const files = new Map<string, Promise<FetchResult>>();
   const parsed = new Map<string, Promise<RobotsResult>>();
-  /**
-   * When each origin's robots.txt was requested, when its next request may go, and the delay its
-   * Crawl-delay has added to the crawl so far.
-   */
+  /** When each origin's robots.txt was requested. */
   const sentRobots = new Map<string, number>();
-  const nextRequest = new Map<string, number>();
-  const delayed = new Map<string, number>();
+  /**
+   * Each origin's requests under Crawl-delay, one after another: when the last of them went. A
+   * request waits for the one before it to go, then for the delay, so a timer that fires late
+   * never shortens the next gap.
+   */
+  const lanes = new Map<string, Promise<number>>();
+  /** The delay Crawl-delay has added to the crawl so far, every site's together. */
+  let delayedMs = 0;
 
   const robotsTxt = (origin: string): Promise<FetchResult> => {
     let pending = files.get(origin);
@@ -298,27 +301,29 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
     }
 
     const delayMs = robots.crawlDelay * 1000;
-    // Each request costs the crawl one delay, however slow the site is to answer.
-    const added = (delayed.get(url.origin) ?? 0) + delayMs;
 
-    if (added > HOSTED_LIMITS.crawlDelayBudgetMs) {
+    // Each request costs the crawl one delay, however slow the site is to answer.
+    if (delayedMs + delayMs > HOSTED_LIMITS.crawlDelayBudgetMs) {
       return {
         scope: "host",
-        message: `${robots.info.url} asks ${token} to wait ${robots.crawlDelay} s between requests (Crawl-delay), and a crawl on the hosted server waits at most ${HOSTED_LIMITS.crawlDelayBudgetMs / 1000} s in all for a site, so it sent ${url.hostname} no more requests.`,
+        message: `${robots.info.url} asks ${token} to wait ${robots.crawlDelay} s between requests (Crawl-delay), and a crawl on the hosted server waits at most ${HOSTED_LIMITS.crawlDelayBudgetMs / 1000} s in all for Crawl-delay, so it sent ${url.hostname} no more requests.`,
       };
     }
 
-    const now = Date.now();
+    delayedMs += delayMs;
 
-    const at = Math.max(
-      now,
-      nextRequest.get(url.origin) ??
-        (sentRobots.get(url.origin) ?? now) + delayMs
-    );
+    const previous =
+      lanes.get(url.origin) ??
+      Promise.resolve(sentRobots.get(url.origin) ?? Date.now());
 
-    delayed.set(url.origin, added);
-    nextRequest.set(url.origin, at + delayMs);
-    await sleep(at - now);
+    const turn = previous.then(async (went) => {
+      await sleep(went + delayMs - Date.now());
+
+      return Date.now();
+    });
+
+    lanes.set(url.origin, turn);
+    await turn;
 
     return undefined;
   };
