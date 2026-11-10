@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import type { HostedCallInfo } from "../../src/mcp.ts";
 import type { Caller } from "../src/callers.ts";
-import { hostedProfile, USER_AGENT } from "../src/limits.ts";
+import { hostedProfile, MAX_INDEX_BYTES, USER_AGENT } from "../src/limits.ts";
 import type { LimitsEnv } from "../src/limits.ts";
 
 /** A rate limiter that allows `limit` calls per key, and never forgets them. */
@@ -48,7 +48,20 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
     CALLER_CRAWLS: limiter(3),
     PLATFORM_CALLS: limiter(300),
     PLATFORM_CRAWLS: limiter(30),
-    CALLS: { writeDataPoint: (point) => points.push(point ?? {}) },
+    CALLS: {
+      // As Analytics Engine does, throw for an index longer than it holds.
+      writeDataPoint: (point) => {
+        if (
+          point?.indexes?.some(
+            (index) => String(index ?? "").length > MAX_INDEX_BYTES
+          )
+        ) {
+          throw new TypeError("An index is longer than 96 bytes.");
+        }
+
+        points.push(point ?? {});
+      },
+    },
     STATE: { getByName: () => counter },
     ...overrides,
   };
@@ -265,5 +278,57 @@ describe("the hosted server's limits", () => {
       },
     ]);
     expect(JSON.stringify(points)).not.toMatch(/\/a|b=c|203\.0\.113\.9/u);
+  });
+
+  it("record a hostname longer than an index holds, cut in the index and whole in the blob", async () => {
+    // 203 characters; a hostname can have 253.
+    const host = `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.example.com`;
+    const { env, ctx, points } = fakeEnv();
+
+    const call = await hostedProfile(env, ctx, PERSON).startCall({
+      ...PAGE,
+      host,
+    });
+
+    call.end?.({ outcome: "ok", pages: 1 });
+
+    expect(points).toMatchObject([
+      {
+        indexes: [host.slice(0, MAX_INDEX_BYTES)],
+        blobs: ["seo_audit_page", "ok", host],
+      },
+    ]);
+  });
+
+  it("never fail a call, or lose its requests from the day's count, over a record they could not write", async () => {
+    const { env, ctx, settled, stored } = fakeEnv({
+      CALLER_CRAWLS: limiter(0),
+      CALLS: {
+        writeDataPoint: () => {
+          throw new TypeError("Analytics Engine is unavailable.");
+        },
+      },
+    });
+
+    // The Worker's logs get the failure; the test only reads it.
+    const logged = vi.spyOn(console, "error").mockReturnValue();
+    onTestFinished(() => logged.mockRestore());
+
+    const profile = hostedProfile(env, ctx, PERSON);
+    const call = await profile.startCall(PAGE);
+    await call.gate?.beforeRequest(new URL("https://www.example.com/"));
+
+    expect(() => call.end?.({ outcome: "ok", pages: 1 })).not.toThrow();
+    // A refusal keeps its own message.
+    await expect(refusalOf(profile.startCall(CRAWL))).resolves.toContain(
+      "This address has started 3 crawls"
+    );
+
+    await settled();
+
+    expect(stored().count).toBe(1);
+    expect(logged).toHaveBeenCalledWith(
+      "Could not record a seo_audit_page call: Analytics Engine is unavailable."
+    );
   });
 });

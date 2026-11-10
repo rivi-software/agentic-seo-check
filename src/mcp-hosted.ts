@@ -58,7 +58,7 @@ export interface HostedCallEnd {
 export interface HostedCall {
   /** The server's limits on this call's requests; the address rules and site refusals come first. */
   gate?: RequestGate;
-  /** Told once, when the call ends. */
+  /** Told once, when the call's answer is ready. What it throws is ignored: the answer stands. */
   end?: (end: HostedCallEnd) => void;
 }
 
@@ -175,9 +175,28 @@ interface Answer {
   pages: number;
 }
 
+/** The answer of a tool's work, or its error as a tool error, and how the call ended. */
+const settle = async (
+  work: () => Promise<Answer> | Answer
+): Promise<{ result: CallToolResult; end: HostedCallEnd }> => {
+  try {
+    const { result, pages } = await work();
+
+    return { result, end: { outcome: "ok", pages } };
+  } catch (error) {
+    return {
+      result: fail(error),
+      end: {
+        outcome: error instanceof RequestRefusedError ? "refused" : "error",
+        pages: 0,
+      },
+    };
+  }
+};
+
 /**
  * Runs one tool call through the hosted profile: `startCall` may refuse it, every request goes
- * through the hosted gate, and `end` hears how it went.
+ * through the hosted gate, and `end` hears how it went, once the answer is ready.
  */
 const runCall = async (
   profile: HostedProfile,
@@ -192,24 +211,22 @@ const runCall = async (
     return fail(error);
   }
 
-  try {
-    const { result, pages } = await work({
+  const { result, end } = await settle(() =>
+    work({
       userAgent: profile.userAgent,
       maxBodyBytes: LIMITS.maxBodyBytes,
       gate: hostedGate(call.gate),
-    });
+    })
+  );
 
-    call.end?.({ outcome: "ok", pages });
-
-    return result;
-  } catch (error) {
-    call.end?.({
-      outcome: error instanceof RequestRefusedError ? "refused" : "error",
-      pages: 0,
-    });
-
-    return fail(error);
+  try {
+    call.end?.(end);
+  } catch {
+    // The record of a call is the server's to keep; failing to keep it never costs the caller
+    // the answer.
   }
+
+  return result;
 };
 
 /** The options of an audit on the hosted server: the caller's, with the hosted fetch. */

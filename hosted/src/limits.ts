@@ -189,10 +189,18 @@ const admit = async (
 type Outcome = HostedCallEnd["outcome"] | "limited";
 
 /**
+ * Analytics Engine throws for an index longer than this many bytes, and a hostname can have 253
+ * characters. Hostnames are ASCII (a URL holds a Unicode name in punycode), so cutting characters
+ * cuts bytes; the whole hostname is in `blob3`.
+ */
+export const MAX_INDEX_BYTES = 96;
+
+/**
  * One record per tool call in Analytics Engine, which keeps it for three months: the tool, the
  * outcome, the duration, the requests sent and pages audited, and the target hostname, so that an
  * abuse report about a site can be checked against what was sent to it. Never a path, a query, the
- * caller's address or anything the caller sent.
+ * caller's address or anything the caller sent. A record that cannot be written is logged, and
+ * never fails the call it is about.
  */
 const record = (
   env: LimitsEnv,
@@ -200,11 +208,17 @@ const record = (
   outcome: Outcome,
   numbers: { durationMs: number; requests: number; pages: number }
 ): void => {
-  env.CALLS.writeDataPoint({
-    indexes: [call.host ?? call.tool],
-    blobs: [call.tool, outcome, call.host ?? ""],
-    doubles: [numbers.durationMs, numbers.requests, numbers.pages],
-  });
+  try {
+    env.CALLS.writeDataPoint({
+      indexes: [(call.host ?? call.tool).slice(0, MAX_INDEX_BYTES)],
+      blobs: [call.tool, outcome, call.host ?? ""],
+      doubles: [numbers.durationMs, numbers.requests, numbers.pages],
+    });
+  } catch (error) {
+    console.error(
+      `Could not record a ${call.tool} call: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 };
 
 /**

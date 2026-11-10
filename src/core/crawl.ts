@@ -213,29 +213,36 @@ const addSource = (
   set.add(source);
 };
 
-/** Probes that failed or were refused say nothing, so they are left out (null). */
+/**
+ * The soft-404, http and host variant probes, each only where robots.txt lets the crawl request
+ * it. The http and www probes ask for `/` under another scheme or host, which should redirect to
+ * this one, so this origin's robots.txt decides for them. Probes that failed or were refused say
+ * nothing, so they are left out (null); those robots.txt kept out are not run.
+ */
 const runProbes = async (
-  startUrl: string,
-  fetchOpts: FetchOptions,
+  options: ProbeOptions,
   refusals: Refusals
 ): Promise<ProbeResults> => {
   const probes: ProbeResults = {};
+  const { startUrl, fetch: fetchOpts, allows } = options;
   const url = new URL(startUrl);
 
-  const probe = (target: string, options: FetchOptions) =>
-    refusals.run(target, () => probeUrl(target, options));
+  const probe = (target: string, fetchOptions: FetchOptions) =>
+    refusals.run(target, () => probeUrl(target, fetchOptions));
 
   const soft404Url = new URL(
     `/agentic-seo-probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     url.origin
   ).href;
 
-  const soft = await probe(soft404Url, fetchOpts);
+  if (allows(soft404Url)) {
+    const soft = await probe(soft404Url, fetchOpts);
 
-  probes.soft404 =
-    !soft || soft.error ? null : { url: soft404Url, status: soft.status };
+    probes.soft404 =
+      !soft || soft.error ? null : { url: soft404Url, status: soft.status };
+  }
 
-  if (isLocalHost(startUrl)) {
+  if (isLocalHost(startUrl) || !allows(new URL("/", url.origin).href)) {
     return probes;
   }
 
@@ -347,7 +354,7 @@ const checkSite = async (
     message: "Probing soft-404, host redirects and URL variants",
   });
 
-  const probes = await runProbes(options.startUrl, options.fetch, refusals);
+  const probes = await runProbes(options, refusals);
   probes.urlVariants = await probeUrlVariants(
     records,
     options.startUrl,

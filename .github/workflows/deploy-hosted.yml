@@ -3,19 +3,13 @@ name: Deploy the hosted server
 # The hosted MCP server (hosted/) runs the latest npm release: the release workflow calls this once
 # it has published one. A maintainer can run it by hand too, on a release tag to roll back, or on
 # main to apply a change to hosted/wrangler.jsonc (a limit, MODE) before the next release.
+#
+# A run deploys the commit it runs on, and nothing else: the environment's rule for main and v*
+# checks the ref a run is for, so an input naming other code would take the Cloudflare token
+# past it. The first step checks that ref as well, in case the rule is missing.
 on:
   workflow_call:
-    inputs:
-      ref:
-        description: "What to deploy; the release workflow leaves it out, for the commit it published"
-        required: false
-        type: string
   workflow_dispatch:
-    inputs:
-      ref:
-        description: "What to deploy: a release tag such as v0.7.0, or main"
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -33,11 +27,20 @@ jobs:
       group: deploy-hosted
       cancel-in-progress: false
     steps:
+      - name: Only main or a release tag
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "$REF" != refs/heads/main && "$REF" != refs/tags/v[0-9]* ]]; then
+            echo "::error::The hosted server deploys from main or a release tag (v0.7.0), not from $REF."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Called by the release workflow: the commit it published. Run by hand: the ref asked for.
-          ref: ${{ inputs.ref || github.sha }}
+          # The commit the run is for: the one the release workflow published, or main's or the tag's.
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Setup pnpm

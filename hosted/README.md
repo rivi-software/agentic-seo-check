@@ -32,7 +32,7 @@ pnpm run hosted:deploy   # deploy it (needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_
 
 The release workflow publishes a version to npm, then calls [`deploy-hosted.yml`](../.github/workflows/deploy-hosted.yml), so the server runs the latest release, the only version SECURITY.md supports. That job runs in the GitHub environment `hosted`, which holds the Cloudflare token; the publish job never sees it.
 
-To change a limit or `MODE` before the next release, merge the change to `wrangler.jsonc`, then run **Deploy the hosted server** by hand on `main`. To roll back, run it on an earlier release tag (`v0.7.0`) that has `hosted/`.
+To change a limit or `MODE` before the next release, merge the change to `wrangler.jsonc`, then run **Deploy the hosted server** by hand on `main`. To roll back, run it on an earlier release tag that has `hosted/` (`gh workflow run deploy-hosted.yml --ref v0.7.0`). A run deploys the commit it runs on and refuses any ref but `main` and release tags, so no input can hand the token other code.
 
 `MODE` is `open`, `no-crawls` (crawls are refused, single page audits work) or `closed` (every tool call is refused, with the local server as the way out).
 

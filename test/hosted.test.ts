@@ -293,6 +293,38 @@ describe("the hosted server", () => {
       );
     });
 
+    it("answers a call whose end the server could not record, and tells it the end once", async () => {
+      serve({
+        "https://shop.example.com/": {
+          body: page("Shop home page for the fixture", ""),
+        },
+      });
+
+      const ends: HostedCallEnd[] = [];
+
+      const client = await connect({
+        userAgent: USER_AGENT,
+        // oxlint-disable-next-line eslint/require-await -- the Worker's startCall awaits its limits
+        startCall: async () => ({
+          end: (end) => {
+            ends.push(end);
+            throw new TypeError("An index is longer than 96 bytes.");
+          },
+        }),
+      });
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(
+        Findings.parse(result.structuredContent).findings
+      ).not.toHaveLength(0);
+      expect(ends).toStrictEqual([{ outcome: "ok", pages: 1 }]);
+    });
+
     it("refuses a URL it may not request before the call starts", async () => {
       const requests = serve({});
       const { profile, calls } = profileWith();
@@ -646,6 +678,32 @@ describe("the hosted server", () => {
       expect(requests.map((r) => r.url)).not.toContain(
         "https://other.example.com/"
       );
+    });
+
+    it("sends a site whose robots.txt keeps every crawler out nothing but robots.txt and sitemap requests", async () => {
+      const requests = serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: agentic-seo-check\nDisallow: /\n\nUser-agent: *\nDisallow: /\n",
+        },
+        "*": { body: page("Shop home page for the fixture", "") },
+      });
+
+      const client = await connect(profileWith().profile);
+
+      const result = await client.callTool({
+        name: "seo_crawl_site",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      const { siteFindings } = SiteFindings.parse(result.structuredContent);
+
+      // No page, and none of the soft-404, http and www probes: all are under the disallowed /.
+      expect(requests.map((r) => r.url)).toStrictEqual([
+        "https://shop.example.com/robots.txt",
+        "https://shop.example.com/sitemap.xml",
+      ]);
+      expect(rulesOf(siteFindings)).toContain("site.robots-txt-blocks-all");
     });
 
     it("reads sitemaps up to 5 MB and says which were larger", async () => {
