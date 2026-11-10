@@ -22,7 +22,7 @@ jobs:
     # The Cloudflare API token lives in this environment's secrets, so only this job sees it.
     environment:
       name: hosted
-      url: https://mcp.agentic-seo-check.rivi.software/
+      url: https://mcp.agentic-seo.rivi.software/
     concurrency:
       group: deploy-hosted
       cancel-in-progress: false

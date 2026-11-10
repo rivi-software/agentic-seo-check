@@ -20,10 +20,16 @@ declare const HOSTED_RATE_LIMITS: Record<
   { limit: number; period: number }
 >;
 
-export const ORIGIN = "https://mcp.agentic-seo-check.rivi.software";
+export const ORIGIN = "https://mcp.agentic-seo.rivi.software";
+
+/**
+ * The MCP server's hostname in 0.7.0, which clients may still be set up with: it keeps answering
+ * at /mcp, and sends its pages to ORIGIN.
+ */
+export const FORMER_HOST = "mcp.agentic-seo-check.rivi.software";
 
 /** The project's website, which the same Worker serves on a hostname of its own (issue #39). */
-export const SITE_ORIGIN = "https://agentic-seo-check.rivi.software";
+export const SITE_ORIGIN = "https://agentic-seo.rivi.software";
 
 /**
  * The User-Agent of every request: the product token that robots.txt groups match, and the page

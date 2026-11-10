@@ -20,7 +20,7 @@ import type {
 } from "../src/mcp.js";
 
 const USER_AGENT =
-  "Mozilla/5.0 (compatible; agentic-seo-check/0.0.0-test; +https://mcp.agentic-seo-check.rivi.software/crawler)";
+  "Mozilla/5.0 (compatible; agentic-seo-check/0.0.0-test; +https://mcp.agentic-seo.rivi.software/crawler)";
 
 interface Route {
   status?: number;

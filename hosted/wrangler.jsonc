@@ -10,10 +10,12 @@
   // fetch() to a site on Cloudflare goes through its zone's front door (redirects, WAF, Workers), as a
   // search engine's request does, rather than straight to its origin.
   "compatibility_flags": ["global_fetch_strictly_public"],
-  // The MCP server's hostname, and the website's (issue #39): the Worker routes by hostname.
+  // The MCP server's hostname, and the website's (issue #39): the Worker routes by hostname. The
+  // third is the MCP server's hostname in 0.7.0, which still answers at /mcp (FORMER_HOST).
   "routes": [
-    { "pattern": "mcp.agentic-seo-check.rivi.software", "custom_domain": true },
-    { "pattern": "agentic-seo-check.rivi.software", "custom_domain": true }
+    { "pattern": "mcp.agentic-seo.rivi.software", "custom_domain": true },
+    { "pattern": "agentic-seo.rivi.software", "custom_domain": true },
+    { "pattern": "mcp.agentic-seo-check.rivi.software", "custom_domain": true }
   ],
   // The website's heading font, bundled as its bytes.
   "rules": [{ "type": "Data", "globs": ["**/*.woff2"], "fallthrough": true }],

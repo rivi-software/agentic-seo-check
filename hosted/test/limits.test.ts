@@ -119,7 +119,7 @@ const refusalOf = async (start: Promise<unknown>): Promise<string> => {
 describe("the hosted server's limits", () => {
   it("send the hosted User-Agent, which links to the page for site owners", () => {
     expect(USER_AGENT).toMatch(
-      /^Mozilla\/5\.0 \(compatible; agentic-seo-check\/\d+\.\d+\.\d+; \+https:\/\/mcp\.agentic-seo-check\.rivi\.software\/crawler\)$/u
+      /^Mozilla\/5\.0 \(compatible; agentic-seo-check\/\d+\.\d+\.\d+; \+https:\/\/mcp\.agentic-seo\.rivi\.software\/crawler\)$/u
     );
   });
 
