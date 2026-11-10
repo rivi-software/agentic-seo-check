@@ -19,6 +19,8 @@ import type {
   SeverityCounts,
   Severity,
 } from "../../../src/core/types.js";
+import { ORIGIN as MCP_ORIGIN } from "../limits.js";
+import { icon } from "../ui/icons.js";
 import { esc, safeHref, scriptSafe } from "./html.js";
 
 const SEVERITY_LABEL: Record<Severity, string> = {
@@ -26,6 +28,8 @@ const SEVERITY_LABEL: Record<Severity, string> = {
   warning: "Warning",
   info: "Info",
 };
+
+const SEVERITIES: Severity[] = ["error", "warning", "info"];
 
 const ACTION_LABEL: Record<FixEdit["action"], string> = {
   add: "Add",
@@ -42,18 +46,67 @@ const TARGET_LABEL: Record<FixEdit["in"], string> = {
   asset: "a file the site serves",
 };
 
+/** What each kind of AI crawler fetches pages for, as the report groups them. */
+export const PURPOSE_LABEL: Record<AiBotAccess["purpose"], string> = {
+  search: "Search index",
+  answer: "AI answers",
+  training: "Model training",
+};
+
 /** The most characters of a finding's evidence the report prints. */
 const MAX_EVIDENCE_CHARS = 4000;
 
 const plural = (count: number, noun: string): string =>
   `${count} ${noun}${count === 1 ? "" : "s"}`;
 
-const countsText = (counts: SeverityCounts): string =>
-  `${plural(counts.error, "error")}, ${plural(counts.warning, "warning")}, ${counts.info} info`;
+const COUNT_NOUN: Record<Severity, (count: number) => string> = {
+  error: (count) => plural(count, "error"),
+  warning: (count) => plural(count, "warning"),
+  info: (count) => `${count} info`,
+};
 
 const code = (text: string): string => `<code>${esc(text)}</code>`;
 
-const editHtml = (edit: FixEdit): string => {
+/** The severity as a coloured label, as the report and the rules page show it. */
+export const severityChip = (severity: Severity): string =>
+  `<span class="sev">${icon(severity)}${SEVERITY_LABEL[severity]}</span>`;
+
+/** Lighthouse's bands: 90 and up is good, under 50 is poor. */
+const band = (score: number): string => {
+  if (score >= 90) {
+    return "good";
+  }
+
+  return score >= 50 ? "fair" : "poor";
+};
+
+/** A score out of 100 as a ring that fills to it, coloured by its band. */
+export const scoreRing = (score: number, size = ""): string =>
+  `<span class="ring band-${band(score)}${size ? ` ${size}` : ""}" aria-hidden="true"><svg viewBox="0 0 64 64"><circle class="ring-track" cx="32" cy="32" r="28"/>${
+    score > 0
+      ? `<circle class="ring-fill" cx="32" cy="32" r="28" pathLength="100" stroke-dasharray="${score} 100"/>`
+      : ""
+  }</svg><span class="ring-value">${score}</span></span>`;
+
+/** The counts of each severity, and a bar split by them. */
+const countsHtml = (counts: SeverityCounts): string => {
+  const total = counts.error + counts.warning + counts.info;
+
+  const parts = SEVERITIES.flatMap((severity) =>
+    counts[severity] > 0
+      ? [`<i class="is-${severity}" style="--n:${counts[severity]}"></i>`]
+      : []
+  );
+
+  return `<span class="counts">${SEVERITIES.map(
+    (severity) =>
+      `<span class="is-${severity}">${COUNT_NOUN[severity](counts[severity])}</span>`
+  ).join("")}</span><span class="sev-bar" aria-hidden="true">${
+    total === 0 ? '<i class="is-clear" style="--n:1"></i>' : parts.join("")
+  }</span>`;
+};
+
+const editHtml = (edit: FixEdit, index: number): string => {
   const where = [
     `${ACTION_LABEL[edit.action]} in ${TARGET_LABEL[edit.in]}`,
     edit.at ? ` at ${code(edit.at)}` : "",
@@ -61,16 +114,18 @@ const editHtml = (edit: FixEdit): string => {
   ].join("");
 
   const current = edit.current
-    ? `<span class="edit-label">Now</span><pre class="current"><code>${esc(edit.current)}</code></pre>`
+    ? `<div class="diff diff-del"><span class="diff-label">Now</span><pre><code>${esc(edit.current)}</code></pre></div>`
     : "";
 
   const next = edit.code
-    ? `<span class="edit-label">${edit.action === "add" ? "Add" : "Write"}</span><pre class="code"><code>${esc(edit.code)}</code></pre>`
+    ? `<div class="diff diff-add"><span class="diff-label">${edit.action === "add" ? "Add" : "Write"}</span><pre data-copy><code>${esc(edit.code)}</code></pre></div>`
     : "";
 
-  const write = edit.write ? `<p>${esc(edit.write)}</p>` : "";
+  const write = edit.write
+    ? `<p class="edit-write">${icon("pencil")}<span>${esc(edit.write)}</span></p>`
+    : "";
 
-  return `<li><p class="edit-head">${where}</p>${current}${next}${write}</li>`;
+  return `<li class="edit"><p class="edit-head"><span class="edit-step">${index + 1}</span><span>${where}</span></p>${current}${next}${write}</li>`;
 };
 
 const evidenceHtml = (evidence: NonNullable<Finding["evidence"]>): string => {
@@ -81,63 +136,95 @@ const evidenceHtml = (evidence: NonNullable<Finding["evidence"]>): string => {
       ? `${json.slice(0, MAX_EVIDENCE_CHARS)}\n… (the JSON download has all of it)`
       : json;
 
-  return `<details class="evidence"><summary>Evidence</summary><pre><code>${esc(shown)}</code></pre></details>`;
+  return `<details class="evidence"><summary>${icon("chevron")}Evidence</summary><pre><code>${esc(shown)}</code></pre></details>`;
 };
 
 const findingHtml = (finding: Finding): string => {
   const docs = finding.docs ? safeHref(finding.docs) : null;
 
   const body = [
-    `<p><strong>What to change:</strong> ${esc(finding.recommendation)}</p>`,
-    finding.selector ? `<p>Where: ${code(finding.selector)}</p>` : "",
+    `<div class="todo"><p class="label">What to change</p><p>${esc(finding.recommendation)}</p></div>`,
+    finding.selector
+      ? `<p class="where"><span class="label">Where</span>${code(finding.selector)}</p>`
+      : "",
     finding.fix && finding.fix.length > 0
       ? `<ol class="edits">${finding.fix.map(editHtml).join("")}</ol>`
       : "",
     finding.evidence && Object.keys(finding.evidence).length > 0
       ? evidenceHtml(finding.evidence)
       : "",
-    docs ? `<p><a href="${docs}" rel="noopener">Documentation</a></p>` : "",
+    docs
+      ? `<p><a class="link-arrow" href="${docs}" rel="noopener">Documentation${icon("arrow", "arrow")}</a></p>`
+      : "",
   ].join("");
 
   // Errors start open: they are what to fix first.
   return `<details class="finding sev-${finding.severity}"${finding.severity === "error" ? " open" : ""}>
-<summary><span class="sev">${SEVERITY_LABEL[finding.severity]}</span>${code(finding.rule)}<span class="msg">${esc(finding.message)}</span></summary>
+<summary>${severityChip(finding.severity)}${code(finding.rule)}<span class="msg">${esc(finding.message)}</span>${icon("chevron", "chev")}</summary>
 <div class="finding-body">${body}</div>
 </details>`;
 };
 
 const findingsHtml = (findings: Finding[]): string =>
   findings.length === 0
-    ? "<p>No findings: nothing to fix on this page.</p>"
+    ? `<p class="empty">${icon("check")}No findings: nothing to fix on this page.</p>`
     : `<div class="findings">${findings.map(findingHtml).join("\n")}</div>`;
 
-/** A list of facts; a fact without a value is left out. */
-const facts = (rows: [label: string, value: string | null][]): string =>
-  `<dl class="facts">${rows
-    .flatMap(([label, value]) =>
-      value === null || value === ""
-        ? []
-        : [`<dt>${label}</dt><dd>${esc(value)}</dd>`]
-    )
-    .join("")}</dl>`;
+/** How a fact reads at a glance: a good, doubtful or bad value gets a coloured dot. */
+type Tone = "good" | "warn" | "bad" | null;
+
+type Fact = [label: string, value: string | null, tone?: Tone];
+
+/** Facts as a list or as tiles; a fact without a value is left out. */
+const facts = (kind: "text" | "tiles", rows: Fact[]): string => {
+  const shown = rows.flatMap(([label, value, tone]) =>
+    value === null || value === ""
+      ? []
+      : [
+          `<div class="fact"><dt>${label}</dt><dd>${tone ? `<span class="tone tone-${tone}" aria-hidden="true"></span>` : ""}${esc(value)}</dd></div>`,
+        ]
+  );
+
+  return shown.length === 0
+    ? ""
+    : `<dl class="facts facts-${kind}">${shown.join("")}</dl>`;
+};
+
+const statusTone = (status: number): Tone => {
+  if (status < 300) {
+    return "good";
+  }
+
+  return status < 400 ? "warn" : "bad";
+};
 
 const seoFacts = (audit: PageAudit): string => {
   const { summary, response } = audit;
 
-  return facts([
+  return `${facts("text", [
     ["Title", summary.title],
     ["Description", summary.metaDescription],
     ["Canonical", summary.canonical],
-    ["HTTP status", response?.status ? String(response.status) : null],
+    ["H1", summary.h1.join(" · ")],
+    ["Structured data", summary.structuredDataTypes.join(", ")],
+  ])}${facts("tiles", [
+    [
+      "HTTP status",
+      response?.status ? String(response.status) : null,
+      response?.status ? statusTone(response.status) : null,
+    ],
     [
       "Redirects",
       response && response.redirectChain.length > 0
         ? String(response.redirectChain.length)
         : null,
     ],
-    ["Indexable", summary.indexable ? "Yes" : "No"],
+    [
+      "Indexable",
+      summary.indexable ? "Yes" : "No",
+      summary.indexable ? "good" : "bad",
+    ],
     ["Language", summary.lang],
-    ["H1", summary.h1.join(" · ")],
     ["Words", summary.wordCount.toLocaleString("en")],
     [
       "Links",
@@ -145,25 +232,45 @@ const seoFacts = (audit: PageAudit): string => {
     ],
     [
       "Images",
-      `${summary.images.total}, ${summary.images.missingAlt} without alt text`,
+      `${summary.images.total}, ${summary.images.missingAlt} without alt`,
+      summary.images.missingAlt > 0 ? "warn" : null,
     ],
-    ["Structured data", summary.structuredDataTypes.join(", ")],
-  ]);
+  ])}`;
 };
+
+/** The tone of each value the AEO summary's states take. */
+const TONES = {
+  found: "good",
+  allowed: "good",
+  missing: null,
+  unreachable: "bad",
+  invalid: "warn",
+  limited: "warn",
+  "snippet-only": "warn",
+  blocked: "bad",
+  excluded: "bad",
+} as const satisfies Record<string, Tone>;
+
+const toned = (label: string, value: keyof typeof TONES | null): Fact => [
+  label,
+  value,
+  value === null ? null : TONES[value],
+];
 
 const aeoFacts = (audit: AeoAudit): string => {
   const { summary } = audit;
   const { page } = summary;
 
-  return facts([
-    ["robots.txt", summary.robotsTxt],
-    ["llms.txt", summary.llmsTxt],
+  return facts("tiles", [
+    toned("robots.txt", summary.robotsTxt),
+    toned("llms.txt", summary.llmsTxt),
+    // Keeping AI training bots out is the owner's choice, so it gets no colour.
     [
-      "AI training preference",
+      "AI training",
       summary.trainingPreference === "none" ? null : summary.trainingPreference,
     ],
-    ["Google snippets", page?.googleSnippets ?? null],
-    ["Copilot answers", page?.copilotAnswers ?? null],
+    toned("Google snippets", page?.googleSnippets ?? null),
+    toned("Copilot answers", page?.copilotAnswers ?? null),
     ["Question headings", page ? String(page.questions) : null],
     ["Author", page?.author ?? null],
     ["Published", page?.datePublished ?? null],
@@ -171,14 +278,8 @@ const aeoFacts = (audit: AeoAudit): string => {
   ]);
 };
 
-const PURPOSE_LABEL: Record<AiBotAccess["purpose"], string> = {
-  search: "Search index",
-  answer: "AI answers",
-  training: "Model training",
-};
-
-const botRow = (bot: AiBotAccess): string =>
-  `<tr><td>${code(bot.name)}</td><td>${esc(bot.operator)}</td><td>${PURPOSE_LABEL[bot.purpose]}</td><td>${bot.allowed ? "Allowed" : "Blocked"}</td></tr>`;
+const botItem = (bot: AiBotAccess): string =>
+  `<li class="crawler ${bot.allowed ? "is-allowed" : "is-blocked"}">${code(bot.name)}<span class="crawler-op">${esc(bot.operator)}</span><span class="crawler-state">${icon(bot.allowed ? "check" : "x")}${bot.allowed ? "Allowed" : "Blocked"}</span></li>`;
 
 const crawlersHtml = (audit: AeoAudit): string => {
   const bots = audit.crawlers?.bots ?? [];
@@ -187,11 +288,24 @@ const crawlersHtml = (audit: AeoAudit): string => {
     return "";
   }
 
-  return `<h3>AI crawlers in robots.txt</h3>
-<div class="table-scroll"><table>
-<thead><tr><th>Crawler</th><th>Operator</th><th>Fetches pages for</th><th>This page</th></tr></thead>
-<tbody>${bots.map(botRow).join("")}</tbody>
-</table></div>`;
+  const allowed = bots.filter((bot) => bot.allowed).length;
+
+  const groups = (["search", "answer", "training"] as const).flatMap(
+    (purpose) => {
+      const group = bots.filter((bot) => bot.purpose === purpose);
+
+      return group.length === 0
+        ? []
+        : [
+            `<div class="crawler-group is-${purpose}"><h4>${PURPOSE_LABEL[purpose]}</h4><ul>${group.map(botItem).join("")}</ul></div>`,
+          ];
+    }
+  );
+
+  return `<div class="report-section" id="crawlers">
+<div class="report-section-head"><h3>AI crawlers in robots.txt</h3><span class="chip">${allowed} of ${bots.length} may fetch this page</span></div>
+<div class="crawler-groups">${groups.join("")}</div>
+</div>`;
 };
 
 const scoreCard = (
@@ -200,7 +314,18 @@ const scoreCard = (
   score: number,
   counts: SeverityCounts
 ): string =>
-  `<a class="card score" href="#${anchor}"><span class="score-number">${score}<small>/100</small></span><span><span class="score-name">${name}</span><br><span class="score-counts">${countsText(counts)}</span></span></a>`;
+  `<a class="score-card" href="#${anchor}">${scoreRing(score)}<span class="score-text"><span class="score-name">${name}</span><span class="sr-only">Score ${score} of 100.</span>${countsHtml(counts)}</span></a>`;
+
+const auditSection = (
+  anchor: string,
+  title: string,
+  factsHtml: string,
+  findings: Finding[]
+): string => `<div class="report-section" id="${anchor}">
+<div class="report-section-head"><h3>${title}</h3><span class="chip">${plural(findings.length, "finding")}</span></div>
+${factsHtml}
+${findingsHtml(findings)}
+</div>`;
 
 /**
  * The report's data for its buttons: the two audits as the MCP tools return them, and the same as
@@ -217,19 +342,21 @@ const reportData = (seo: PageAudit, aeo: AeoAudit): string =>
 
 /** The report of one page's SEO and AEO audits, to put under the audit form. */
 export const renderReport = (seo: PageAudit, aeo: AeoAudit): string =>
-  `<section class="wrap report" id="report" aria-labelledby="report-title">
-<div class="report-head">
-<div><h2 id="report-title">Audit report</h2><p>${esc(seo.url)}</p></div>
-<div class="report-actions"><button class="button quiet" type="button" data-report="download">Download JSON</button><button class="button quiet" type="button" data-report="copy">Copy as Markdown</button></div>
+  `<section class="report" id="report" aria-labelledby="report-title">
+<div class="wrap">
+<div class="window report-window">
+<div class="report-bar">
+<div class="report-title"><h2 id="report-title">Audit report</h2><p class="report-url">${icon("globe")}<span>${esc(seo.url)}</span></p></div>
+<div class="report-actions"><button class="btn btn-secondary btn-sm" type="button" data-report="download">${icon("download")}<span class="btn-label">Download JSON</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="copy">${icon("copy")}<span class="btn-label">Copy as Markdown</span></button></div>
 </div>
+<div class="report-body">
 <div class="scores">${scoreCard("seo", "SEO: search engines", seo.score, seo.counts)}${scoreCard("aeo", "AEO: AI answer engines", aeo.score, aeo.counts)}</div>
-<h3 id="seo">SEO findings</h3>
-${seoFacts(seo)}
-${findingsHtml(seo.findings)}
-<h3 id="aeo">AEO findings</h3>
-${aeoFacts(aeo)}
-${findingsHtml(aeo.findings)}
+${auditSection("seo", "SEO findings", seoFacts(seo), seo.findings)}
+${auditSection("aeo", "AEO findings", aeoFacts(aeo), aeo.findings)}
 ${crawlersHtml(aeo)}
-<p class="hint">This is the audit of one page. A crawl adds site-wide checks, such as broken links, sitemap coverage and duplicate titles: run <code>npx @rivi-software/agentic-seo-check crawl ${esc(new URL(seo.url).origin)}</code>, or give your assistant the hosted server.</p>
+<div class="report-note">${icon("info")}<p>This is the audit of one page. A crawl adds site-wide checks, such as broken links, sitemap coverage and duplicate titles: run <code>npx @rivi-software/agentic-seo-check crawl ${esc(new URL(seo.url).origin)}</code>, or give your assistant <a href="${MCP_ORIGIN}/">the hosted server</a>.</p></div>
+</div>
+</div>
+</div>
 <script type="application/json" id="report-data">${reportData(seo, aeo)}</script>
 </section>`;

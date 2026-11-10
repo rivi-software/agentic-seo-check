@@ -1,9 +1,10 @@
 /**
- * The website's files besides its pages: robots.txt, the sitemap, llms.txt and the script of the
- * audit form and the report's buttons.
+ * The website's files besides its pages: robots.txt, the sitemap, llms.txt and the pages' script,
+ * which the hosted server's pages load too.
  */
 import { LOCAL_SERVER } from "../../../src/core/hosted.js";
 import { ORIGIN as MCP_ORIGIN } from "../limits.js";
+import { icon } from "../ui/icons.js";
 import { SITE_ORIGIN } from "./layout.js";
 
 /** /audit answers a form, and its answer is a report nobody else should find. */
@@ -36,16 +37,64 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
 `;
 
 /**
- * The page's script, served at /site.js so that the Content-Security-Policy needs no inline
- * script. It waits for Turnstile's token before the form is sent, shows that an audit is running,
- * and gives the report as a JSON file or as Markdown on the clipboard.
+ * The pages' script, served at /site.js on both hostnames so that the Content-Security-Policy
+ * needs no inline script. It gives every command and snippet marked data-copy a button that copies
+ * it, waits for Turnstile's token before the audit form is sent, shows that an audit is running,
+ * and gives the report as a JSON file or as Markdown on the clipboard. Without it every page still
+ * reads and works, but the form.
  */
 export const SITE_JS = `(() => {
+  const COPY = ${JSON.stringify(`${icon("copy")}<span class="sr-only">Copy</span>`)};
+  const COPIED = ${JSON.stringify(`${icon("check")}<span class="sr-only">Copied</span>`)};
+
+  // Shows \`text\` on a button for two seconds, then what it said before.
+  const say = (button, text) => {
+    const label = button.querySelector(".btn-label") || button;
+    const before = label.textContent;
+    label.textContent = text;
+    setTimeout(() => {
+      label.textContent = before;
+    }, 2000);
+  };
+
+  for (const block of document.querySelectorAll("[data-copy]")) {
+    const code = block.querySelector("code") || block;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "copy";
+    button.innerHTML = COPY;
+
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(code.textContent);
+        button.classList.add("is-copied");
+        button.innerHTML = COPIED;
+        setTimeout(() => {
+          button.classList.remove("is-copied");
+          button.innerHTML = COPY;
+        }, 1600);
+      } catch {
+        button.title = "Could not copy";
+      }
+    });
+
+    // A <pre> scrolls, which would take the button with it: it goes beside the <pre> instead.
+    if (block.tagName === "PRE") {
+      const holder = document.createElement("div");
+      holder.className = "copyable";
+      block.replaceWith(holder);
+      holder.append(block, button);
+    } else {
+      block.append(button);
+    }
+  }
+
   const form = document.querySelector("#audit[data-check]");
 
   if (form) {
-    const button = form.querySelector("button");
-    const label = button.textContent;
+    const button = form.querySelector('button[type="submit"]');
+    const label = button.querySelector(".btn-label");
+    const text = label.textContent;
     let waiting = false;
 
     const token = () => {
@@ -68,14 +117,16 @@ export const SITE_JS = `(() => {
       }
 
       button.disabled = true;
-      button.textContent = "Auditing…";
+      button.classList.add("is-busy");
+      label.textContent = "Auditing…";
     });
 
     // A page restored from the back/forward cache still has the button as it was left.
     window.addEventListener("pageshow", () => {
       waiting = false;
       button.disabled = false;
-      button.textContent = label;
+      button.classList.remove("is-busy");
+      label.textContent = text;
     });
   }
 
@@ -83,14 +134,6 @@ export const SITE_JS = `(() => {
 
   if (source) {
     const data = JSON.parse(source.textContent);
-
-    const say = (button, text) => {
-      const label = button.textContent;
-      button.textContent = text;
-      setTimeout(() => {
-        button.textContent = label;
-      }, 2000);
-    };
 
     for (const button of document.querySelectorAll("[data-report]")) {
       button.addEventListener("click", async () => {

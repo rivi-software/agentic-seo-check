@@ -4,14 +4,14 @@ import { MARK_SVG } from "../../../src/brand.js";
  * serves beside the MCP server's own hostname: the homepage with the audit form, the rules, the
  * form's answer at /audit, and the files a crawler asks for.
  */
-import font from "../../assets/bricolage-grotesque-600.woff2";
+import { fontResponse, shareImageResponse } from "../ui/assets.js";
+import { OG_IMAGE } from "../ui/og.js";
 import { answerAudit, formOpen } from "./audit.js";
 import type { SiteEnv } from "./audit.js";
 import { LLMS_TXT, SITE_JS, SITE_ROBOTS_TXT, SITEMAP_XML } from "./files.js";
 import { homePage, notFoundPage } from "./home.js";
 import { SITE_HOST } from "./layout.js";
 import { rulesPage } from "./rules-page.js";
-import { FONT_PATH } from "./style.js";
 
 /**
  * The website's hostname. Wrangler's dev server gives every request the hostname of the first
@@ -47,15 +47,15 @@ const SECURITY = {
 
 const file = (
   request: Request,
-  body: string | ArrayBuffer,
+  body: string,
   contentType: string,
-  options: { status?: number; cache?: string } = {}
+  status = 200
 ): Response =>
   new Response(request.method === "HEAD" ? null : body, {
-    status: options.status ?? 200,
+    status,
     headers: {
       "content-type": contentType,
-      "cache-control": options.cache ?? "public, max-age=3600",
+      "cache-control": "public, max-age=3600",
       ...SECURITY,
     },
   });
@@ -155,14 +155,15 @@ export const siteRoute = (
       return file(request, MARK_SVG, "image/svg+xml");
     }
 
-    case FONT_PATH: {
-      return file(request, font, "font/woff2", {
-        cache: "public, max-age=31536000, immutable",
-      });
+    case OG_IMAGE.path: {
+      return shareImageResponse(request, "site");
     }
 
     default: {
-      return file(request, notFoundPage(), HTML, { status: 404 });
+      return (
+        fontResponse(request, url.pathname) ??
+        file(request, notFoundPage(), HTML, 404)
+      );
     }
   }
 };

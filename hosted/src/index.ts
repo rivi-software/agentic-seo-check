@@ -18,7 +18,10 @@ import {
   ROBOTS_TXT,
 } from "./pages.js";
 import { DIRECTORY_PATH, directoryResponse, signingKeys } from "./signing.js";
+import { SITE_JS } from "./site/files.js";
 import { isSiteHost, siteRoute } from "./site/routes.js";
+import { fontResponse, shareImageResponse } from "./ui/assets.js";
+import { OG_IMAGE } from "./ui/og.js";
 
 export { HostedState } from "./state.js";
 
@@ -190,6 +193,15 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
       return page(request, FAVICON_SVG, "image/svg+xml");
     }
 
+    // The pages share the website's script and fonts.
+    case "/site.js": {
+      return page(request, SITE_JS, "text/javascript; charset=utf-8");
+    }
+
+    case OG_IMAGE.path: {
+      return shareImageResponse(request, "server");
+    }
+
     case DIRECTORY_PATH: {
       return keyDirectory(request, env);
     }
@@ -201,7 +213,10 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
     }
 
     default: {
-      return page(request, notFoundPage(), HTML, 404);
+      return (
+        fontResponse(request, pathname) ??
+        page(request, notFoundPage(), HTML, 404)
+      );
     }
   }
 };

@@ -95,6 +95,12 @@ const requests: { url: string; userAgent: string | null }[] = [];
 /** The Web Bot Auth headers of each request the Worker sent, by URL. */
 const signatures = new Map<string, Record<string, string | null>>();
 
+/** The eight bytes every PNG file starts with, as hex. */
+const PNG_SIGNATURE = "89504e470d0a1a0a";
+
+const signatureOf = (bytes: ArrayBuffer) =>
+  Buffer.from(bytes.slice(0, 8)).toString("hex");
+
 /** The keyid of the RFC 9421 test key in .dev.vars: its JWK thumbprint. */
 const TEST_KEYID = "poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U";
 
@@ -390,15 +396,24 @@ describe("the hosted Worker in workerd", () => {
   });
 
   describe("the hosted Worker's other addresses", () => {
-    it("serve the landing page, the page for site owners, robots.txt and the icon", async () => {
+    it("serve the landing page, the page for site owners, robots.txt, the icon, and the website's script and fonts", async () => {
       const answers = await Promise.all(
-        ["/", "/crawler", "/robots.txt", "/favicon.svg", "/nope"].map(
-          async (path) => {
-            const res = await fetch(new URL(path, base));
+        [
+          "/",
+          "/crawler",
+          "/robots.txt",
+          "/favicon.svg",
+          "/site.js",
+          "/og.png",
+          "/fonts/geist-latin.woff2",
+          "/fonts/geist-mono-latin.woff2",
+          "/nope",
+        ].map(async (path) => {
+          const res = await fetch(new URL(path, base));
+          await res.arrayBuffer();
 
-            return [path, res.status, res.headers.get("content-type")];
-          }
-        )
+          return [path, res.status, res.headers.get("content-type")];
+        })
       );
 
       expect(answers).toStrictEqual([
@@ -406,6 +421,10 @@ describe("the hosted Worker in workerd", () => {
         ["/crawler", 200, "text/html; charset=utf-8"],
         ["/robots.txt", 200, "text/plain; charset=utf-8"],
         ["/favicon.svg", 200, "image/svg+xml"],
+        ["/site.js", 200, "text/javascript; charset=utf-8"],
+        ["/og.png", 200, "image/png"],
+        ["/fonts/geist-latin.woff2", 200, "font/woff2"],
+        ["/fonts/geist-mono-latin.woff2", 200, "font/woff2"],
         ["/nope", 404, "text/html; charset=utf-8"],
       ]);
     });
@@ -508,7 +527,9 @@ describe("the hosted Worker in workerd", () => {
           "/llms.txt",
           "/site.js",
           "/favicon.svg",
-          "/fonts/bricolage-grotesque-600.woff2",
+          "/og.png",
+          "/fonts/geist-latin.woff2",
+          "/fonts/geist-mono-latin.woff2",
           "/nope",
         ].map(async (path) => {
           const res = await website.fetch(`${SITE}${path}`);
@@ -526,20 +547,40 @@ describe("the hosted Worker in workerd", () => {
         ["/llms.txt", 200, "text/markdown; charset=utf-8"],
         ["/site.js", 200, "text/javascript; charset=utf-8"],
         ["/favicon.svg", 200, "image/svg+xml"],
-        ["/fonts/bricolage-grotesque-600.woff2", 200, "font/woff2"],
+        ["/og.png", 200, "image/png"],
+        ["/fonts/geist-latin.woff2", 200, "font/woff2"],
+        ["/fonts/geist-mono-latin.woff2", 200, "font/woff2"],
         ["/nope", 404, "text/html; charset=utf-8"],
       ]);
     });
 
-    it("serves the font as a WOFF2 file and no MCP endpoint", async () => {
-      const font = await website.fetch(
-        `${SITE}/fonts/bricolage-grotesque-600.woff2`
-      );
+    it("serves its own share image, not the hosted server's", async () => {
+      const [ours, theirs] = await Promise.all([
+        website.fetch(`${SITE}/og.png`),
+        fetch(new URL("/og.png", base)),
+      ]);
 
+      const [siteCard, serverCard] = await Promise.all([
+        ours.arrayBuffer(),
+        theirs.arrayBuffer(),
+      ]);
+
+      expect([signatureOf(siteCard), signatureOf(serverCard)]).toStrictEqual([
+        PNG_SIGNATURE,
+        PNG_SIGNATURE,
+      ]);
+      expect(Buffer.from(siteCard).equals(Buffer.from(serverCard))).toBeFalsy();
+    });
+
+    it("serves the fonts as WOFF2 files that never change, and no MCP endpoint", async () => {
+      const font = await website.fetch(`${SITE}/fonts/geist-latin.woff2`);
       const bytes = new Uint8Array(await font.arrayBuffer());
       const mcp = await website.fetch(`${SITE}/mcp`, { method: "POST" });
 
       expect(new TextDecoder().decode(bytes.slice(0, 4))).toBe("wOF2");
+      expect(font.headers.get("cache-control")).toBe(
+        "public, max-age=31536000, immutable"
+      );
       expect(mcp.status).toBe(405);
     });
 
