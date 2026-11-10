@@ -1,28 +1,56 @@
-import { createRequire } from "node:module";
-
-import type robotsParserModule from "robots-parser";
+import robotsParserModule from "robots-parser";
 
 import { fetchPage } from "./fetch.js";
 import type { FetchOptions } from "./fetch.js";
 import type { RobotsTxtInfo } from "./types.js";
 
-// robots-parser is CommonJS; require() avoids ESM default-export interop mismatches.
-// SAFETY: require() returns the package's module.exports, which is the parser function that its
-// index.d.ts declares as the default export.
-const robotsParser = createRequire(import.meta.url)(
-  "robots-parser"
-) as (typeof robotsParserModule)["default"];
+/** A robots.txt file as robots-parser reads it: the methods the audit calls. */
+interface Robot {
+  isAllowed: (url: string, ua?: string) => boolean | undefined;
+  getMatchingLineNumber: (url: string, ua?: string) => number;
+  getSitemaps: () => string[];
+}
+
+type RobotsParser = (url: string, robotstxt: string) => Robot;
+
+/**
+ * robots-parser is CommonJS, imported statically so a bundler (the hosted server's) takes it in.
+ * Node and bundlers hand a default import its module.exports, the parser function itself; its
+ * index.d.ts declares the parser as the module's `default`, so TypeScript's Node resolution types
+ * the import as the module and its bundler resolution as the parser. Either way, this is the parser.
+ */
+const parserOf = (
+  imported: RobotsParser | { default: RobotsParser }
+): RobotsParser => ("default" in imported ? imported.default : imported);
+
+const robotsParser = parserOf(robotsParserModule);
 
 export interface RobotsResult {
   info: RobotsTxtInfo;
-  /** Returns true when crawling the URL is allowed (unknown/missing robots.txt allows everything). */
+  /**
+   * Returns true when robots.txt allows the URL for the audit's User-Agent as robots-parser reads
+   * it (unknown/missing robots.txt allows everything). The site rules judge blocked pages by this.
+   */
   allows: (url: string) => boolean;
+  /**
+   * Returns true when this crawler may request the URL: the group for its product token
+   * (`agentic-seo-check`), or `*` when there is none (RFC 9309, section 2.2.1). A site can keep
+   * the audit out without blocking anyone else.
+   */
+  crawlerAllows: (url: string) => boolean;
   /** The robots.txt text up to the size crawlers must read (RFC 9309: 500 KiB), or null when there is none. */
   text: string | null;
 }
 
 /** The part of a robots.txt file a crawler must read at least (RFC 9309 section 2.5). */
 const MAX_ROBOTS_BYTES = 512_000;
+
+/** Short bot token used for robots.txt matching, derived from the full UA string. */
+export const robotsUserAgentToken = (userAgent: string): string => {
+  const match = /agentic-seo-check|Googlebot|bingbot/iu.exec(userAgent);
+
+  return match ? match[0] : userAgent;
+};
 
 /**
  * Whether robots.txt at `url` lets the crawler with product token `agent` fetch `target`. A URL
@@ -71,20 +99,20 @@ export const buildRobots = (
   }
 
   if (text === null) {
-    return { info, allows: () => true, text: null };
+    return { info, allows: () => true, crawlerAllows: () => true, text: null };
   }
 
   const robot = robotsParser(url, text);
   info.sitemaps = robot.getSitemaps();
+  const token = robotsUserAgentToken(userAgent);
 
   return {
     info,
     text: text.slice(0, MAX_ROBOTS_BYTES),
-    allows: (target: string) => {
-      const allowed = robot.isAllowed(target, userAgent);
-
-      return allowed === undefined ? true : allowed;
-    },
+    allows: (target: string) => robot.isAllowed(target, userAgent) ?? true,
+    // robots-parser keeps what comes before the first "/" of a User-Agent ("Mozilla" for the
+    // audit's own), so the product token is passed on its own.
+    crawlerAllows: (target: string) => robot.isAllowed(target, token) ?? true,
   };
 };
 
@@ -113,11 +141,4 @@ export const loadRobotsTxt = async (
     found ? res.body : null,
     userAgent
   );
-};
-
-/** Short bot token used for robots.txt matching, derived from the full UA string. */
-export const robotsUserAgentToken = (userAgent: string): string => {
-  const match = /agentic-seo-check|Googlebot|bingbot/iu.exec(userAgent);
-
-  return match ? match[0] : userAgent;
 };

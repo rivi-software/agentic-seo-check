@@ -4,3 +4,6 @@ coverage/
 *.log
 .DS_Store
 .seo-reports/
+# hosted/: Wrangler's local state, and the types `wrangler types` writes before each typecheck.
+.wrangler/
+hosted/worker-configuration.d.ts

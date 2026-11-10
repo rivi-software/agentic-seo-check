@@ -223,6 +223,28 @@ export const responseRules = [
   ),
   defineRule(
     {
+      id: "response.truncated",
+      category: "response",
+      severity: "info",
+      description:
+        "The page is larger than the audit reads (5 MB; 2 MB on the hosted server), so only its first part was audited.",
+      recommendation:
+        "Findings about the rest of the page are missing, and counts such as words, links and images cover only the part that was read. HTML this large is slow for crawlers too: make it smaller (document.html-too-large says how). On the hosted server, the local server reads up to 5 MB.",
+    },
+    ({ page, response }, make) =>
+      response?.truncated
+        ? make(
+            `The audit read the first ${(page.htmlBytes / 1_000_000).toFixed(1)} MB of the page and stopped there.`,
+            {
+              // About the audit, not the page: document.html-too-large carries the fix.
+              fix: [],
+              evidence: { bytesRead: page.htmlBytes },
+            }
+          )
+        : null
+  ),
+  defineRule(
+    {
       id: "response.not-https",
       category: "response",
       severity: "warning",

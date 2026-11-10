@@ -7,11 +7,16 @@ export const editsOf = (findings: Finding[]): [Finding, FixEdit][] =>
 
 /**
  * Findings that have no fix on purpose: they describe the audit rather than the site (the crawl
- * limit, a bot probe that could not run), or there is nothing to change (a retired rich result,
- * whose markup answer engines still read). `tool.*` findings are about this machine.
+ * limit, a crawl the hosted server stopped, a page read in part, a bot probe that could not run),
+ * or there is nothing to change (a retired rich result, whose markup answer engines still read).
+ * `tool.*` findings are about this machine.
  */
 export const RULES_WITHOUT_FIX = new Set([
   "site.crawl-limit-reached",
+  "site.crawl-stopped",
+  "response.truncated",
+  "aeo.page-truncated",
+  "aeo.crawl-stopped",
   "aeo.bot-probe-inconclusive",
   "structured-data.retired-type",
 ]);

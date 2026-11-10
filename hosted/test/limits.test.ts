@@ -1,0 +1,269 @@
+import { describe, expect, it } from "vitest";
+
+import type { HostedCallInfo } from "../../src/mcp.ts";
+import type { Caller } from "../src/callers.ts";
+import { hostedProfile, USER_AGENT } from "../src/limits.ts";
+import type { LimitsEnv } from "../src/limits.ts";
+
+/** A rate limiter that allows `limit` calls per key, and never forgets them. */
+const limiter = (limit: number): RateLimit => {
+  const counts = new Map<string, number>();
+
+  return {
+    // oxlint-disable-next-line eslint/require-await -- the binding answers with a promise
+    limit: async ({ key }) => {
+      const count = (counts.get(key) ?? 0) + 1;
+      counts.set(key, count);
+
+      return { success: count <= limit };
+    },
+  };
+};
+
+/** The Worker's bindings, as wrangler.jsonc sets them, in memory. */
+const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
+  const points: AnalyticsEngineDataPoint[] = [];
+  const waiting: Promise<unknown>[] = [];
+  let stored = { day: "", count: 0 };
+
+  const counter = {
+    // oxlint-disable-next-line eslint/require-await -- the Durable Object answers with a promise
+    requests: async (day: string) => (stored.day === day ? stored.count : 0),
+    // oxlint-disable-next-line eslint/require-await -- the Durable Object answers with a promise
+    addRequests: async (day: string, count: number) => {
+      stored = {
+        day,
+        count: (stored.day === day ? stored.count : 0) + count,
+      };
+
+      return stored.count;
+    },
+  };
+
+  const env: LimitsEnv = {
+    MODE: "open",
+    DAILY_REQUESTS: 100_000,
+    SITE_REQUESTS: limiter(300),
+    CALLER_CALLS: limiter(30),
+    CALLER_CRAWLS: limiter(3),
+    PLATFORM_CALLS: limiter(300),
+    PLATFORM_CRAWLS: limiter(30),
+    CALLS: { writeDataPoint: (point) => points.push(point ?? {}) },
+    STATE: { getByName: () => counter },
+    ...overrides,
+  };
+
+  const ctx = {
+    waitUntil: (promise: Promise<unknown>) => {
+      waiting.push(promise);
+    },
+  };
+
+  return {
+    env,
+    ctx,
+    points,
+    settled: () => Promise.all(waiting),
+    stored: () => stored,
+  };
+};
+
+const PERSON: Caller = { key: "ip:203.0.113.9", platform: null };
+const CLAUDE: Caller = { key: "platform:anthropic", platform: "anthropic" };
+
+const PAGE: HostedCallInfo = {
+  tool: "seo_audit_page",
+  fetches: true,
+  crawl: false,
+  host: "www.example.com",
+};
+
+const CRAWL: HostedCallInfo = {
+  tool: "seo_crawl_site",
+  fetches: true,
+  crawl: true,
+  host: "www.example.com",
+};
+
+const INLINE: HostedCallInfo = {
+  tool: "seo_audit_page",
+  fetches: false,
+  crawl: false,
+  host: null,
+};
+
+/** The message of the refusal `start` ends in, or "admitted". */
+const refusalOf = async (start: Promise<unknown>): Promise<string> => {
+  try {
+    await start;
+
+    return "admitted";
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+};
+
+describe("the hosted server's limits", () => {
+  it("send the hosted User-Agent, which links to the page for site owners", () => {
+    expect(USER_AGENT).toMatch(
+      /^Mozilla\/5\.0 \(compatible; agentic-seo-check\/\d+\.\d+\.\d+; \+https:\/\/mcp\.agentic-seo-check\.rivi\.software\/crawler\)$/u
+    );
+  });
+
+  it("let a caller start 30 calls a minute, 3 of them crawls", async () => {
+    const { env, ctx } = fakeEnv();
+    const profile = hostedProfile(env, ctx, PERSON);
+
+    const crawls = await Promise.all(
+      [1, 2, 3, 4].map(() => refusalOf(profile.startCall(CRAWL)))
+    );
+
+    const pages = await Promise.all(
+      Array.from({ length: 27 }, () => refusalOf(profile.startCall(PAGE)))
+    );
+
+    expect(crawls.slice(0, 3)).toStrictEqual([
+      "admitted",
+      "admitted",
+      "admitted",
+    ]);
+    expect(crawls[3]).toBe(
+      "This address has started 3 crawls on the hosted server in the last minute, its limit per caller. Try again in a minute. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp"
+    );
+    // The fourth crawl counted as a call: 30 calls in all, then a refusal.
+    expect(pages.filter((p) => p === "admitted")).toHaveLength(26);
+    expect(pages.at(-1)).toContain("started 30 tool calls");
+  });
+
+  it("count every user of a platform as one caller with ten times the limits", async () => {
+    const { env, ctx } = fakeEnv();
+    const profile = hostedProfile(env, ctx, CLAUDE);
+
+    const crawls = await Promise.all(
+      Array.from({ length: 31 }, () => refusalOf(profile.startCall(CRAWL)))
+    );
+
+    expect(crawls.filter((c) => c === "admitted")).toHaveLength(30);
+    expect(crawls.at(-1)).toContain(
+      "The users of claude.ai, Cowork and the Claude apps have together started 30 crawls on the hosted server in the last minute, its limit for the platform."
+    );
+  });
+
+  it("leave seo_list_rules uncounted", async () => {
+    const { env, ctx } = fakeEnv({ CALLER_CALLS: limiter(0) });
+    const profile = hostedProfile(env, ctx, PERSON);
+
+    await expect(
+      refusalOf(
+        profile.startCall({
+          tool: "seo_list_rules",
+          fetches: false,
+          crawl: false,
+          host: null,
+        })
+      )
+    ).resolves.toBe("admitted");
+    // The refusal states the limit wrangler.jsonc sets; this binding allows none.
+    await expect(refusalOf(profile.startCall(INLINE))).resolves.toContain(
+      "started 30 tool calls"
+    );
+  });
+
+  it("send a site 300 requests a minute from all callers together, and count what they send", async () => {
+    const { env, ctx, settled, stored } = fakeEnv();
+    const first = await hostedProfile(env, ctx, PERSON).startCall(PAGE);
+    const second = await hostedProfile(env, ctx, CLAUDE).startCall(PAGE);
+    const url = new URL("https://www.example.com/page");
+
+    const answers = await Promise.all(
+      Array.from({ length: 301 }, (_, i) =>
+        (i % 2 ? first : second).gate?.beforeRequest(url)
+      )
+    );
+
+    first.end?.({ outcome: "ok", pages: 1 });
+    second.end?.({ outcome: "refused", pages: 0 });
+    await settled();
+
+    expect(answers.filter((a) => a === undefined)).toHaveLength(300);
+    expect(answers.at(-1)).toStrictEqual({
+      scope: "host",
+      message:
+        "The hosted server has sent www.example.com 300 requests in the last minute, its limit per site for all its callers together. Try again in a minute. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp",
+    });
+    expect(stored().count).toBe(300);
+  });
+
+  it("count a call's requests as they go, so one cut off midway still counts", async () => {
+    const { env, ctx, settled, stored } = fakeEnv();
+    const call = await hostedProfile(env, ctx, PERSON).startCall(CRAWL);
+    const url = new URL("https://www.example.com/");
+
+    for (let i = 0; i < 60; i += 1) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- a crawl's requests, one after another
+      await call.gate?.beforeRequest(url);
+    }
+
+    await settled();
+
+    // Two batches of 25; the last 10 wait for the call's end, which never comes.
+    expect(stored().count).toBe(50);
+  });
+
+  it("refuse audits that request sites once the day's requests are sent, and nothing else", async () => {
+    const { env, ctx } = fakeEnv({ DAILY_REQUESTS: 2 });
+
+    await env.STATE.getByName("global").addRequests(
+      new Date().toISOString().slice(0, 10),
+      2
+    );
+
+    const profile = hostedProfile(env, ctx, PERSON);
+
+    await expect(refusalOf(profile.startCall(PAGE))).resolves.toBe(
+      "The hosted server has sent its 2 requests for today, its daily limit for all callers together. Audits that request a site wait until 00:00 UTC; audits of inline HTML and seo_list_rules still work. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp"
+    );
+    await expect(refusalOf(profile.startCall(INLINE))).resolves.toBe(
+      "admitted"
+    );
+  });
+
+  it("turn crawls, or every call, off with MODE", async () => {
+    const noCrawls = fakeEnv({ MODE: "no-crawls" });
+    const closed = fakeEnv({ MODE: "closed" });
+
+    const crawl = hostedProfile(noCrawls.env, noCrawls.ctx, PERSON);
+    const any = hostedProfile(closed.env, closed.ctx, PERSON);
+
+    await expect(refusalOf(crawl.startCall(CRAWL))).resolves.toContain(
+      "does not crawl sites at the moment"
+    );
+    await expect(refusalOf(crawl.startCall(PAGE))).resolves.toBe("admitted");
+    await expect(refusalOf(any.startCall(INLINE))).resolves.toContain(
+      "The hosted server is paused."
+    );
+  });
+
+  it("record each call by tool, outcome and hostname, never the path or the caller", async () => {
+    const { env, ctx, points } = fakeEnv({ CALLER_CRAWLS: limiter(0) });
+    const profile = hostedProfile(env, ctx, PERSON);
+    const call = await profile.startCall(PAGE);
+    await call.gate?.beforeRequest(new URL("https://www.example.com/a?b=c"));
+    call.end?.({ outcome: "ok", pages: 1 });
+    await refusalOf(profile.startCall(CRAWL));
+
+    expect(points).toMatchObject([
+      {
+        indexes: ["www.example.com"],
+        blobs: ["seo_audit_page", "ok", "www.example.com"],
+        doubles: [expect.any(Number), 1, 1],
+      },
+      {
+        indexes: ["www.example.com"],
+        blobs: ["seo_crawl_site", "limited", "www.example.com"],
+        doubles: [expect.any(Number), 0, 0],
+      },
+    ]);
+    expect(JSON.stringify(points)).not.toMatch(/\/a|b=c|203\.0\.113\.9/u);
+  });
+});

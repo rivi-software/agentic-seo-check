@@ -50,7 +50,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check:package": "node scripts/check-package.ts",
-    "verify": "pnpm run format:check && pnpm run lint && pnpm run check && pnpm run test && pnpm run build && pnpm run check:package",
+    "verify": "pnpm run format:check && pnpm run lint && pnpm run check && pnpm run test && pnpm run build && pnpm run check:package && pnpm run hosted:verify",
+    "hosted:dev": "node hosted/scripts/wrangler.ts dev",
+    "hosted:check": "node hosted/scripts/wrangler.ts types --strict-vars=false && tsc -p hosted/tsconfig.json",
+    "hosted:build": "node hosted/scripts/wrangler.ts deploy --dry-run --outdir dist",
+    "hosted:test": "vitest run --config hosted/vitest.config.ts",
+    "hosted:verify": "pnpm run hosted:check && pnpm run hosted:build && pnpm run hosted:test",
+    "hosted:deploy": "node hosted/scripts/wrangler.ts deploy",
     "changeset": "changeset",
     "version-packages": "changeset version && pnpm install --lockfile-only",
     "release": "changeset publish",
@@ -109,6 +115,7 @@
     "tsx": "^4.20.0",
     "typescript": "^7.0.2",
     "ultracite": "8.1.1",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "wrangler": "4.158.0"
   }
 }

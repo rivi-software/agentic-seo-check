@@ -6,12 +6,19 @@ import {
   probeUrl,
   toResponseInfo,
 } from "./fetch.js";
-import type { FetchOptions, FetchResult } from "./fetch.js";
+import type {
+  FetchOptions,
+  FetchResult,
+  RequestRefusedError,
+} from "./fetch.js";
 import { extractPage } from "./html/extract.js";
-import { loadRobotsTxt } from "./robots.js";
+import { trackRefusals } from "./refusals.js";
+import type { Refusals } from "./refusals.js";
+import { loadRobotsTxt, robotsUserAgentToken } from "./robots.js";
+import type { RobotsResult } from "./robots.js";
 import { isLocalHost } from "./rules/canonical.js";
 import { checkImages, probeUrlVariants } from "./site-probes.js";
-import type { ImageCheckResult } from "./site-probes.js";
+import type { ImageCheckResult, ProbeOptions } from "./site-probes.js";
 import type { LinkCheck, PageRecord, ProbeResults } from "./site-rules.js";
 import { emptySitemapProblems, loadSitemaps } from "./sitemap.js";
 import type {
@@ -61,6 +68,10 @@ export interface CrawlOptions {
   onProgress?: (event: ProgressEvent) => void;
   /** Fetch sitemaps and probe soft 404s and host redirects (default true); the AEO audit needs neither. */
   siteChecks?: boolean;
+  /** Sitemap files to read at most, sitemap indexes included (default 25). */
+  maxSitemaps?: number;
+  /** The most of one sitemap to read, uncompressed (default 15 MB). */
+  maxSitemapBytes?: number;
 }
 
 export interface CrawlResult {
@@ -81,6 +92,10 @@ export interface CrawlResult {
   unlinkedPages?: string[];
   imageChecks?: Map<string, LinkCheck>;
   imageSources?: Map<string, Set<string>>;
+  /** The requests the gate refused (the hosted server's), for the requests that follow the crawl. */
+  refusals?: Refusals;
+  /** The refusal that ended the requests to the site before the crawl was done. */
+  stopped?: RequestRefusedError;
 }
 
 /** Image URLs a crawl requests at most, the ones shown on most pages first. */
@@ -198,20 +213,27 @@ const addSource = (
   set.add(source);
 };
 
+/** Probes that failed or were refused say nothing, so they are left out (null). */
 const runProbes = async (
   startUrl: string,
-  fetchOpts: FetchOptions
+  fetchOpts: FetchOptions,
+  refusals: Refusals
 ): Promise<ProbeResults> => {
   const probes: ProbeResults = {};
   const url = new URL(startUrl);
+
+  const probe = (target: string, options: FetchOptions) =>
+    refusals.run(target, () => probeUrl(target, options));
 
   const soft404Url = new URL(
     `/agentic-seo-probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     url.origin
   ).href;
 
-  const soft = await probeUrl(soft404Url, fetchOpts);
-  probes.soft404 = soft.error ? null : { url: soft404Url, status: soft.status };
+  const soft = await probe(soft404Url, fetchOpts);
+
+  probes.soft404 =
+    !soft || soft.error ? null : { url: soft404Url, status: soft.status };
 
   if (isLocalHost(startUrl)) {
     return probes;
@@ -219,31 +241,175 @@ const runProbes = async (
 
   if (url.protocol === "https:") {
     const httpUrl = `http://${url.host}/`;
-    const res = await probeUrl(httpUrl, { ...fetchOpts, timeoutMs: 10_000 });
-    probes.httpRedirect = res.error
-      ? null
-      : {
-          url: httpUrl,
-          status: res.status,
-          finalUrl: res.finalUrl,
-          redirectsToHttps: res.finalUrl.startsWith("https://"),
-        };
+    const res = await probe(httpUrl, { ...fetchOpts, timeoutMs: 10_000 });
+    probes.httpRedirect =
+      !res || res.error
+        ? null
+        : {
+            url: httpUrl,
+            status: res.status,
+            finalUrl: res.finalUrl,
+            redirectsToHttps: res.finalUrl.startsWith("https://"),
+          };
   }
 
   const host = url.hostname;
   const variantHost = host.startsWith("www.") ? stripWww(host) : `www.${host}`;
   const variantUrl = `${url.protocol}//${variantHost}/`;
-  const res = await probeUrl(variantUrl, { ...fetchOpts, timeoutMs: 10_000 });
-  probes.hostVariant = res.error
-    ? null
-    : {
-        url: variantUrl,
-        status: res.status,
-        finalUrl: res.finalUrl,
-        redirectsToMain: (hostOf(res.finalUrl) ?? "") === host,
-      };
+  const res = await probe(variantUrl, { ...fetchOpts, timeoutMs: 10_000 });
+  probes.hostVariant =
+    !res || res.error
+      ? null
+      : {
+          url: variantUrl,
+          status: res.status,
+          finalUrl: res.finalUrl,
+          redirectsToMain: (hostOf(res.finalUrl) ?? "") === host,
+        };
 
   return probes;
+};
+
+/** The sitemaps robots.txt names, and /sitemap.xml; none for a crawl without site checks. */
+// oxlint-disable-next-line eslint/require-await -- the crawl awaits the sitemaps either way
+const crawlSitemaps = async (
+  robots: RobotsResult,
+  startUrl: string,
+  options: CrawlOptions,
+  refusals: Refusals
+): Promise<SitemapInfo> => {
+  if (!(options.siteChecks ?? true)) {
+    return {
+      sources: [],
+      urls: [],
+      urlCount: 0,
+      errors: [],
+      problems: emptySitemapProblems(),
+    };
+  }
+
+  const { origin } = new URL(startUrl);
+  options.onProgress?.({ phase: "sitemap", message: "Fetching sitemaps" });
+
+  const candidates = [
+    ...new Set([...robots.info.sitemaps, new URL("/sitemap.xml", origin).href]),
+  ];
+
+  return loadSitemaps(candidates, options.fetch, {
+    siteHost: hostOf(startUrl) ?? "",
+    includeSubdomains: options.includeSubdomains,
+    maxSitemaps: options.maxSitemaps,
+    maxBytes: options.maxSitemapBytes,
+    refusals,
+  });
+};
+
+interface SiteChecks {
+  images?: ImageCheckResult;
+  probes: ProbeResults;
+  /** The refusal that ended the requests to the site before the crawl was done. */
+  stopped?: RequestRefusedError;
+}
+
+/**
+ * The checks after the pages and their links: the images, then the soft-404, host redirect and URL
+ * variant probes, for a crawl with site checks. The probes ask how the server answers URLs nobody
+ * links to, not for the site's pages and links, so a refusal they meet does not make the crawl one
+ * that stopped early: that is decided before them.
+ */
+const checkSite = async (
+  records: PageRecord[],
+  crawl: CrawlOptions,
+  options: ProbeOptions,
+  refusals: Refusals
+): Promise<SiteChecks> => {
+  const startHost = hostOf(options.startUrl) ?? "";
+
+  const isSite = (host: string) =>
+    isSameSite(`https://${host}/`, startHost, options.includeSubdomains);
+
+  if (!(crawl.siteChecks ?? true)) {
+    return { probes: {}, stopped: refusals.stopped(isSite) };
+  }
+
+  crawl.onProgress?.({ phase: "links", message: "Checking images" });
+
+  const images = await checkImages(
+    records,
+    Math.min(MAX_IMAGE_CHECKS, crawl.maxLinkChecks),
+    options
+  );
+
+  const stopped = refusals.stopped(isSite);
+
+  crawl.onProgress?.({
+    phase: "probes",
+    message: "Probing soft-404, host redirects and URL variants",
+  });
+
+  const probes = await runProbes(options.startUrl, options.fetch, refusals);
+  probes.urlVariants = await probeUrlVariants(
+    records,
+    options.startUrl,
+    options
+  );
+
+  return { images, probes, stopped };
+};
+
+/** Requests external link targets (checkExternalLinks); one the gate refused is left unchecked. */
+const checkExternalTargets = async (
+  targets: string[],
+  options: CrawlOptions,
+  refusals: Refusals
+): Promise<Map<string, LinkCheck>> => {
+  const checks = new Map<string, LinkCheck>();
+
+  const fetchOptions: FetchOptions = {
+    ...options.fetch,
+    timeoutMs: Math.min(options.fetch.timeoutMs ?? 15_000, 10_000),
+  };
+
+  await mapConcurrent(targets, Math.min(options.concurrency, 4), async (u) => {
+    const res = await refusals.run(u, () => probeUrl(u, fetchOptions));
+
+    if (res) {
+      checks.set(u, {
+        url: u,
+        status: res.status,
+        finalUrl: res.finalUrl,
+        redirectChain: res.redirectChain,
+        error: res.error,
+      });
+    }
+  });
+
+  return checks;
+};
+
+/**
+ * What the crawl may request: robots.txt's group for its product token when it obeys robots.txt,
+ * or everything. Throws when that group keeps it from the start URL while the rules the site rules
+ * judge by allow it: the site asks this crawler to stay out, which is not a finding about the site.
+ */
+const crawlPolicy = (
+  robots: RobotsResult,
+  startUrl: string,
+  options: { respectRobots: boolean; userAgent: string }
+): ((url: string) => boolean) => {
+  if (!options.respectRobots) {
+    return () => true;
+  }
+
+  if (!robots.crawlerAllows(startUrl) && robots.allows(startUrl)) {
+    const token = robotsUserAgentToken(options.userAgent);
+
+    throw new Error(
+      `${robots.info.url} asks ${token} not to crawl ${startUrl} (in a User-agent: ${token} group), so there is nothing to crawl. Audit single pages instead; for a site of your own, crawl without obeying robots.txt (respectRobots: false with the local server, --ignore-robots with the CLI).`
+    );
+  }
+
+  return robots.crawlerAllows;
 };
 
 /** Same-site URLs the crawled pages name as canonical or as hreflang alternates, normalized. */
@@ -277,8 +443,17 @@ const ignoreProgress = (): void => {
 
 export const crawlSite = async (
   startInput: string,
-  options: CrawlOptions
+  input: CrawlOptions
 ): Promise<CrawlResult> => {
+  const refusals = trackRefusals();
+
+  // Every request also goes past the refusals, so a redirect to a host that refused the crawl is
+  // not sent again.
+  const options: CrawlOptions = {
+    ...input,
+    fetch: refusals.guard(input.fetch),
+  };
+
   const started = performance.now();
   const progress = options.onProgress ?? ignoreProgress;
   const startUrl = normalizeUrl(startInput) ?? startInput;
@@ -287,34 +462,22 @@ export const crawlSite = async (
   const userAgent = options.fetch.userAgent ?? DEFAULT_USER_AGENT;
 
   progress({ phase: "robots", message: `Fetching ${origin}/robots.txt` });
+  // Without robots.txt the crawl cannot tell what it may request, so a refusal here ends it.
   const robots = await loadRobotsTxt(origin, userAgent, options.fetch);
-  const allows = options.respectRobots ? robots.allows : () => true;
 
-  const siteChecks = options.siteChecks ?? true;
+  const fetchable = crawlPolicy(robots, startUrl, {
+    respectRobots: options.respectRobots,
+    userAgent,
+  });
 
-  let sitemaps: SitemapInfo = {
-    sources: [],
-    urls: [],
-    urlCount: 0,
-    errors: [],
-    problems: emptySitemapProblems(),
-  };
+  /**
+   * Whether robots.txt keeps the crawl from `url` and the site rules report it: only when the
+   * rules they judge by block it too, not when the site keeps out this tool alone.
+   */
+  const isBlocked = (url: string): boolean =>
+    !fetchable(url) && !robots.allows(url);
 
-  if (siteChecks) {
-    progress({ phase: "sitemap", message: "Fetching sitemaps" });
-
-    const sitemapCandidates = [
-      ...new Set([
-        ...robots.info.sitemaps,
-        new URL("/sitemap.xml", origin).href,
-      ]),
-    ];
-
-    sitemaps = await loadSitemaps(sitemapCandidates, options.fetch, {
-      siteHost: startHost,
-      includeSubdomains: options.includeSubdomains,
-    });
-  }
+  const sitemaps = await crawlSitemaps(robots, startUrl, options, refusals);
 
   const visited = new Set<string>([startUrl]);
   const discovered = new Set<string>([startUrl]);
@@ -454,13 +617,23 @@ export const crawlSite = async (
   };
 
   const processItem = async (item: QueueItem): Promise<void> => {
-    if (!allows(item.url)) {
-      blocked.push(item.url);
+    if (!fetchable(item.url)) {
+      if (isBlocked(item.url)) {
+        blocked.push(item.url);
+      }
 
       return;
     }
 
-    const res = await fetchPage(item.url, options.fetch);
+    const res = await refusals.run(item.url, () =>
+      fetchPage(item.url, options.fetch)
+    );
+
+    // A page the gate refused was not requested: it is neither crawled nor broken.
+    if (!res) {
+      return;
+    }
+
     const requestedKey = item.url;
     const finalKey = normalizeUrl(res.finalUrl) ?? res.finalUrl;
 
@@ -519,6 +692,13 @@ export const crawlSite = async (
 
   await runQueue(queue, options.concurrency, options.delayMs, processItem);
 
+  // With the start page refused there is no site to audit: the refusal says why.
+  const startRefusal = refusals.of(startUrl);
+
+  if (records.length === 0 && startRefusal) {
+    throw startRefusal;
+  }
+
   // Site rules that keep the first of a group (the page a spelling variant duplicates, the page
   // a duplicate's canonical should name) then pick the same page on every run.
   // One at a time: spreading 100,000 records into splice() overflows the stack.
@@ -530,7 +710,7 @@ export const crawlSite = async (
   progress({ phase: "links", message: "Checking internal link targets" });
 
   const toCheck = [...linkSources.keys()]
-    .filter((u) => !linkChecks.has(u) && allows(u))
+    .filter((u) => !linkChecks.has(u) && fetchable(u))
     .slice(0, options.maxLinkChecks);
 
   const sitemapExtra = sitemaps.urls
@@ -540,7 +720,7 @@ export const crawlSite = async (
         isSameSite(u, startHost, options.includeSubdomains) &&
         !linkChecks.has(u) &&
         !toCheck.includes(u) &&
-        allows(u)
+        fetchable(u)
     )
     .slice(0, Math.max(0, options.maxLinkChecks - toCheck.length));
 
@@ -555,14 +735,14 @@ export const crawlSite = async (
         !linkChecks.has(u) &&
         !toCheck.includes(u) &&
         !sitemapExtra.includes(u) &&
-        allows(u)
+        fetchable(u)
     )
     .slice(
       0,
       Math.max(0, options.maxLinkChecks - toCheck.length - sitemapExtra.length)
     );
 
-  for (const target of [...linkSources.keys()].filter((u) => !allows(u))) {
+  for (const target of [...linkSources.keys()].filter(isBlocked)) {
     if (!blocked.includes(target)) {
       blocked.push(target);
     }
@@ -572,7 +752,13 @@ export const crawlSite = async (
     [...toCheck, ...sitemapExtra, ...metadataExtra],
     options.concurrency,
     async (u) => {
-      const res = await probeUrl(u, options.fetch);
+      const res = await refusals.run(u, () => probeUrl(u, options.fetch));
+
+      // A link the gate refused is left unchecked, never broken.
+      if (!res) {
+        return;
+      }
+
       linkChecks.set(u, {
         url: u,
         status: res.status,
@@ -594,61 +780,30 @@ export const crawlSite = async (
       phase: "links",
       message: `Checking ${Math.min(externalSources.size, options.maxLinkChecks)} external links`,
     });
-    const checks = new Map<string, LinkCheck>();
-    externalChecks = checks;
-    const targets = [...externalSources.keys()].slice(0, options.maxLinkChecks);
-    await mapConcurrent(
-      targets,
-      Math.min(options.concurrency, 4),
-      async (u) => {
-        const res = await probeUrl(u, {
-          ...options.fetch,
-          timeoutMs: Math.min(options.fetch.timeoutMs ?? 15_000, 10_000),
-        });
-
-        checks.set(u, {
-          url: u,
-          status: res.status,
-          finalUrl: res.finalUrl,
-          redirectChain: res.redirectChain,
-          error: res.error,
-        });
-      }
+    externalChecks = await checkExternalTargets(
+      [...externalSources.keys()].slice(0, options.maxLinkChecks),
+      options,
+      refusals
     );
   }
 
-  let probes: ProbeResults = {};
-  let images: ImageCheckResult | undefined;
+  const probeOptions: ProbeOptions = {
+    fetch: options.fetch,
+    concurrency: options.concurrency,
+    delayMs: options.delayMs,
+    allows: fetchable,
+    startUrl,
+    includeSubdomains: options.includeSubdomains,
+    checkExternal: options.checkExternalLinks,
+    refusals,
+  };
 
-  if (siteChecks) {
-    const probeOptions = {
-      fetch: options.fetch,
-      concurrency: options.concurrency,
-      delayMs: options.delayMs,
-      allows,
-      startUrl,
-      includeSubdomains: options.includeSubdomains,
-      checkExternal: options.checkExternalLinks,
-    };
-
-    progress({ phase: "links", message: "Checking images" });
-    images = await checkImages(
-      records,
-      Math.min(MAX_IMAGE_CHECKS, options.maxLinkChecks),
-      probeOptions
-    );
-
-    progress({
-      phase: "probes",
-      message: "Probing soft-404, host redirects and URL variants",
-    });
-    probes = await runProbes(startUrl, options.fetch);
-    probes.urlVariants = await probeUrlVariants(
-      records,
-      startUrl,
-      probeOptions
-    );
-  }
+  const { images, probes, stopped } = await checkSite(
+    records,
+    options,
+    probeOptions,
+    refusals
+  );
 
   const stats: CrawlStats = {
     pagesCrawled: records.length,
@@ -677,5 +832,7 @@ export const crawlSite = async (
     stats,
     imageChecks: images?.imageChecks,
     imageSources: images?.imageSources,
+    refusals,
+    stopped,
   };
 };

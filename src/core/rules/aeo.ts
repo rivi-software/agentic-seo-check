@@ -477,6 +477,25 @@ export const aeoRules = [
   ),
   defineRule(
     {
+      id: "aeo.page-truncated",
+      category: "aeo",
+      severity: "info",
+      description:
+        "The page is larger than the audit reads (5 MB; 2 MB on the hosted server), so only its first part was audited.",
+      recommendation:
+        "Findings about the rest of the page are missing. HTML this large is slow for crawlers too: move inline scripts, data and SVG into files the page loads. On the hosted server, the local server reads up to 5 MB.",
+    },
+    ({ page, response }, make) =>
+      response?.truncated
+        ? make(
+            `The audit read the first ${(page.htmlBytes / 1_000_000).toFixed(1)} MB of the page and stopped there.`,
+            // About the audit, not the page.
+            { fix: [], evidence: { bytesRead: page.htmlBytes } }
+          )
+        : null
+  ),
+  defineRule(
+    {
       id: "aeo.noindex",
       category: "aeo",
       severity: "warning",

@@ -89,6 +89,10 @@ export interface CrawlOptions extends AuditOptions {
   excludePatterns?: string[];
   /** How much per-page detail to keep in the site result. */
   pageDetail?: "full" | "summary";
+  /** Sitemap files to read at most, sitemap indexes included (default 25). */
+  maxSitemaps?: number;
+  /** The most of one sitemap to read, uncompressed (default 15 MB). */
+  maxSitemapBytes?: number;
 }
 
 export interface HtmlAuditInput {
@@ -540,6 +544,7 @@ const buildSiteAudit = (
     unlinkedPages: result.unlinkedPages,
     imageChecks: result.imageChecks,
     imageSources: result.imageSources,
+    crawlStopped: result.stopped?.message,
   });
 
   const hiddenSite: Finding[] = [];
@@ -739,6 +744,8 @@ export const auditSite = async (
     excludePatterns: (options.excludePatterns ?? []).map((p) => new RegExp(p)),
     fetch: fetchOpts,
     onProgress: options.onProgress,
+    maxSitemaps: options.maxSitemaps,
+    maxSitemapBytes: options.maxSitemapBytes,
   };
 
   const result = await crawlSite(startUrl, internal);

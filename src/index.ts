@@ -57,8 +57,26 @@ export {
 
 export { renderPage, RenderUnavailableError } from "./core/render.js";
 
-export { fetchPage, probeUrl, DEFAULT_USER_AGENT } from "./core/fetch.js";
+export {
+  fetchPage,
+  probeUrl,
+  DEFAULT_USER_AGENT,
+  RequestRefusedError,
+} from "./core/fetch.js";
 
-export type { FetchOptions, FetchResult } from "./core/fetch.js";
+export type {
+  FetchOptions,
+  FetchResult,
+  Refusal,
+  RequestGate,
+} from "./core/fetch.js";
 
 export { createMcpServer, startMcpServer } from "./mcp.js";
+
+export type {
+  HostedCall,
+  HostedCallEnd,
+  HostedCallInfo,
+  HostedProfile,
+  McpServerOptions,
+} from "./mcp.js";

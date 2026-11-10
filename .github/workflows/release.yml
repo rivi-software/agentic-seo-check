@@ -21,6 +21,8 @@ jobs:
     permissions:
       contents: read
       id-token: write # npm trusted publishing and provenance
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,6 +61,7 @@ jobs:
           permission-pull-requests: write # the "Version packages" pull request
 
       - name: Open the version pull request or publish
+        id: changesets
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           version-script: pnpm run version-packages
@@ -68,3 +71,13 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           # The default in v2, set so a bump that changes it does not move commits to the git CLI.
           push-with-git-cli: false
+
+  # The hosted MCP server runs the release just published: a job of its own, whose environment
+  # holds the Cloudflare token, so the publish job never sees it.
+  deploy-hosted:
+    name: Deploy the hosted server
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy-hosted.yml

@@ -10,7 +10,12 @@ import {
 } from "../audit.js";
 import type { ProgressEvent } from "../audit.js";
 import { crawlSite } from "../crawl.js";
-import { DEFAULT_USER_AGENT, fetchPage, toResponseInfo } from "../fetch.js";
+import {
+  DEFAULT_USER_AGENT,
+  fetchPage,
+  RequestRefusedError,
+  toResponseInfo,
+} from "../fetch.js";
 import type { FetchOptions } from "../fetch.js";
 import { extractPage } from "../html/extract.js";
 import {
@@ -96,7 +101,25 @@ interface Collected {
   llmsTxt: LlmsTxtInfo | null;
   /** The pages came over HTTP, so the bot probe can request them again. */
   live: boolean;
+  /** Why the crawl stopped requesting the site before it was done (the hosted server's gate). */
+  stopped?: string;
 }
+
+/**
+ * What a request for a site's file gave, or null when the gate refused it (the hosted server's): a
+ * robots.txt or llms.txt that was not requested is unread, not missing.
+ */
+const unlessRefused = async <T>(pending: Promise<T>): Promise<T | null> => {
+  try {
+    return await pending;
+  } catch (error) {
+    if (error instanceof RequestRefusedError) {
+      return null;
+    }
+
+    throw error;
+  }
+};
 
 interface EvaluatedPage {
   record: PageRecord;
@@ -120,11 +143,15 @@ const loadOrigin = async (pageUrl: string, options: AeoOptions) => {
   });
 
   const [robots, llmsTxt] = await Promise.all([
-    loadRobotsTxt(origin, userAgentOf(options), options.fetch),
-    loadLlmsTxt(origin, options.fetch),
+    unlessRefused(loadRobotsTxt(origin, userAgentOf(options), options.fetch)),
+    unlessRefused(loadLlmsTxt(origin, options.fetch)),
   ]);
 
-  return { robots: robots.info, robotsText: robots.text, llmsTxt };
+  return {
+    robots: robots?.info ?? null,
+    robotsText: robots?.text ?? null,
+    llmsTxt,
+  };
 };
 
 const collectUrl = async (
@@ -187,6 +214,8 @@ const collectSite = async (
   });
 
   options.onProgress?.({ phase: "llms-txt", message: "Fetching llms.txt" });
+  const { origin } = new URL(result.startUrl);
+  const request = () => loadLlmsTxt(origin, options.fetch);
 
   return {
     target: url,
@@ -196,8 +225,12 @@ const collectSite = async (
     records: result.records,
     robots: result.robots,
     robotsText: result.robotsText ?? null,
-    llmsTxt: await loadLlmsTxt(new URL(result.startUrl).origin, options.fetch),
+    // Not requested at all once the crawl's own requests to the site were refused.
+    llmsTxt: await (result.refusals
+      ? result.refusals.run(`${origin}/llms.txt`, request)
+      : request()),
     live: true,
+    stopped: result.stopped?.message,
   };
 };
 
@@ -491,6 +524,7 @@ const buildAudit = async (
       pages: listablePages(c.records),
       pageCount: pages.length,
       probeSkipped,
+      crawlStopped: c.stopped,
     }),
     options,
     hiddenSite

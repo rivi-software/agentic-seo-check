@@ -25,6 +25,8 @@
   ·
   <a href="#cli">CLI</a>
   ·
+  <a href="#hosted-server">Hosted server</a>
+  ·
   <a href="#mcp-server">MCP server</a>
   ·
   <a href="#agent-skill">Agent skill</a>
@@ -39,7 +41,7 @@
 agentic-seo-check is one core with two interfaces:
 
 - **CLI** `agentic-seo-check` with JSON (default when piped) or Markdown output and CI-friendly exit codes.
-- **MCP server** exposing six tools for Claude Code, Cursor, Codex and any other MCP client.
+- **MCP server** exposing six tools for Claude Code, Cursor, Codex and any other MCP client. A [hosted server](#hosted-server) serves four of them at `https://mcp.agentic-seo-check.rivi.software/mcp`, free and without an install, for claude.ai, ChatGPT and any client that connects over HTTP.
 
 It audits **URLs** (production, staging, `localhost` dev servers), **static build output** (`dist/`, `out/`, `build/`) and **raw HTML**, and returns findings an agent can act on: a stable rule id, severity, what is wrong, the fix, a CSS selector for where it lives, and evidence with the current values. Each finding carries the exact edits that fix it, quoting the code to replace, and an id, so an agent can re-check only the rules it fixed and see which findings are gone, still open or new.
 
@@ -49,7 +51,7 @@ Two audits share that core: the **SEO audit** (`audit`, `crawl`) for search engi
 
 ### SEO audit
 
-| Area | Examples (163 rules, `agentic-seo-check rules` lists them) |
+| Area | Examples (165 rules, `agentic-seo-check rules` lists them) |
 | --- | --- |
 | On-page basics | title missing/long/short/placeholder ("React App"), meta description, H1 and heading outline, canonical (missing, conflicting, relative, pointing elsewhere), robots meta and `X-Robots-Tag`, `lang`, viewport, charset, doctype |
 | Head and indexing | an element that ends `<head>` early (a pixel `<img>`, an `<iframe>`, stray text) so Google ignores the metadata after it, canonical, description or hreflang in `<body>`, meta refresh redirects, a charset declared past the first 1024 bytes, contradicting (`index` and `noindex`) or misspelled (`no-index`) robots directives, an HTTP `Link` canonical that disagrees with the HTML one |
@@ -59,7 +61,7 @@ Two audits share that core: the **SEO audit** (`audit`, `crawl`) for search engi
 | International | hreflang syntax, absolute URLs, self reference, x-default, return links (crawl) |
 | Structured data | JSON-LD parse errors, `@context`/`@type`, required and recommended properties for Article, Product, Offer, Organization, WebSite, BreadcrumbList, LocalBusiness, Event, Recipe, VideoObject, JobPosting, QAPage, Review, SoftwareApplication and more, ISO 8601 dates; values Google cannot use (a price with a currency symbol or decimal comma, a currency that is not ISO 4217, a rating outside its scale, breadcrumb positions and crumbs without a URL); relative URLs; `@id` references the page does not define; markup for rich results Google retired (FAQPage, HowTo, SpecialAnnouncement, ClaimReview, the sitelinks search box); microdata too |
 | Content | empty or thin content, "lorem ipsum", readability, keyword presence in title/H1/body/description/URL and density |
-| Response | 4xx/5xx, redirects and chains, slow HTML response, non-HTML content type, http instead of https |
+| Response | 4xx/5xx, redirects and chains, slow HTML response, non-HTML content type, http instead of https, a page larger than the audit reads (5 MB) |
 | Loading (no browser needed) | HTML sent without gzip or Brotli, scripts in `<head>` without `async`/`defer`, `loading="lazy"` on the first large image (or with `fetchpriority="high"`), wide images without `srcset`, a home page without an icon link for Google's search results |
 | Site-level (crawl or directory) | robots.txt (missing, blocking, disallowed pages, over 500 KiB, `noindex:` and `crawl-delay` lines Google ignores, CSS and JavaScript kept from Googlebot), sitemap (missing, invalid, noindex/non-canonical/broken/redirecting URLs, pages not in sitemap, orphan pages, over 50,000 URLs or 50 MB, an index inside an index, `lastmod` that is not W3C Datetime or lies in the future, URLs on another host; gzip sitemaps are read), broken internal links and images with their sources, redirected links and chains, duplicate titles/descriptions/H1s/content among canonical pages (language versions that name each other in hreflang may share a title, description or H1, not untranslated text), URLs that answer under a second spelling (`/page` and `/page/`, or another case) or a query string that changes nothing, deep pages, soft 404, http→https and www redirects, hreflang return links; canonicals that point to a broken, redirecting or noindex URL or to a page that names another canonical, hreflang alternates that are broken, redirect, noindex or not canonical, noindex pages the site links to |
 | Rendering (`--render`, Playwright) | title/description/canonical/H1/content/links/structured data that only exist after JavaScript runs; noindex injected or removed by JavaScript; console errors |
@@ -67,7 +69,7 @@ Two audits share that core: the **SEO audit** (`audit`, `crawl`) for search engi
 
 ### AEO audit
 
-| Area | Examples (30 rules, `agentic-seo-check rules --category aeo` lists them) |
+| Area | Examples (32 rules, `agentic-seo-check rules --category aeo` lists them) |
 | --- | --- |
 | AI crawler access | robots.txt checked per bot: search crawlers whose index AI answers draw on (Googlebot, Bingbot, Applebot; blocked is an error), answer bots (OAI-SearchBot, ChatGPT-User, Claude-SearchBot, Claude-User, PerplexityBot, Perplexity-User, Google-Extended, DuckAssistBot, MistralAI-User; a warning) and training bots (GPTBot, ClaudeBot, Applebot-Extended, CCBot, meta-externalagent; info, since opting out of training is a legitimate choice). Also an unreachable robots.txt, `Content-Signal` lines (`ai-input=no`, invalid values), the shared training opt-out `User-Agent: __usage_ai-training`, and `/llms.txt` (missing, no H1 title, no links) |
 | Server blocks (`--ai-bots`) | requests the page with each AI bot's User-Agent and reports 403s, 429s and challenge pages that a CDN or firewall serves while robots.txt allows the bot |
@@ -152,6 +154,43 @@ agentic-seo-check install-browser
 `--rule` runs only the rules named (space- or comma-separated). `--baseline` reads an earlier audit's JSON and adds `baseline` to the result: the findings since fixed, still open and new. Re-check with the same target and options as the first run; a finding counts as fixed only when its rule ran again on its page, and the rest are counted as `notChecked`. A crawl or directory baseline needs `--page-detail full` (the CLI default), so its page findings have ids.
 
 Exit codes: `0` success, `1` findings at or above `--fail-on`, `2` usage or runtime error. Progress goes to stderr, the report to stdout.
+
+## Hosted server
+
+RIVI Software runs the MCP server on Cloudflare, free to use, with no account and no key:
+
+```text
+https://mcp.agentic-seo-check.rivi.software/mcp
+```
+
+It speaks MCP over Streamable HTTP, so it works where a local server cannot run: claude.ai, Cowork and the Claude apps, ChatGPT, and any machine without Node.
+
+| Client | Setup |
+| --- | --- |
+| Claude Code | `claude mcp add --transport http agentic-seo-check https://mcp.agentic-seo-check.rivi.software/mcp` |
+| claude.ai, Cowork, the Claude apps | Settings, Connectors: add a custom connector with the URL above, no sign-in |
+| ChatGPT | a custom app (connector) with the URL above and no authentication, which needs developer mode (Settings, Apps, Advanced settings) |
+| Cursor | `{ "mcpServers": { "agentic-seo-check": { "url": "https://mcp.agentic-seo-check.rivi.software/mcp" } } }` in `.cursor/mcp.json` |
+| VS Code | `{ "servers": { "agentic-seo-check": { "type": "http", "url": "https://mcp.agentic-seo-check.rivi.software/mcp" } } }` in `.vscode/mcp.json` |
+
+It has `seo_audit_page`, `seo_crawl_site`, `seo_aeo_audit` and `seo_list_rules`, with the same names and options as the local server's, less what needs your machine. Its requests come from Cloudflare's network, so it cannot reach `localhost`, private networks or IP addresses, read a build directory (`seo_audit_directory`, `dir`), render JavaScript (`render`) or run Lighthouse (`lighthouse`, `seo_lighthouse`), send your headers or User-Agent to a site behind a login, or probe with AI bots' User-Agents (`aiBots`). Crawls always obey robots.txt. Some sites turn away requests from Cloudflare Workers; the server then says the site refused it rather than reporting the refusal as the page. For all of these, run the [local server](#mcp-server).
+
+It is free for everyone, so it keeps each site and each caller to a fair share:
+
+| What | Limit |
+| --- | --- |
+| Requests to one site, from every caller together | 300 a minute |
+| Tool calls from one IP address (`seo_list_rules` not counted) | 30 a minute, 3 of them crawls |
+| Tool calls from claude.ai or ChatGPT, each platform one caller | 300 a minute, 30 of them crawls |
+| Requests to all sites together | 100,000 a day; past that, audits that request a site wait for 00:00 UTC |
+| A crawl | 25 pages, 3 links deep, 4 requests at a time, 50 link checks, 10 sitemaps of up to 5 MB |
+| A page | its first 2 MB (`response.truncated` says when a page was larger), within 15 seconds; inline `html` up to 2,000,000 characters |
+
+A call past a limit gets an error that names the limit, says when to try again and points to the local server, which has no limits. A crawl that reaches a limit, or that a site starts refusing, stops early with `site.crawl-stopped` (`aeo.crawl-stopped`) and leaves what it did not request unchecked, never broken.
+
+The server keeps no HTML you send, no reports and no headers. It records each tool call: the tool, the outcome, the duration, the number of requests and pages, and the hostname audited (never the path, the query or your address), for three months, so a report about requests to a site can be checked against what the server sent. [The server's page](https://mcp.agentic-seo-check.rivi.software/) has the setup, the limits and the privacy notice; [the page for site owners](https://mcp.agentic-seo-check.rivi.software/crawler), which its User-Agent links to, says how to recognise and block its requests. Report abuse of the hosted server, such as too many requests to one site, through [help.rivi.software/contact](https://help.rivi.software/contact); report a vulnerability as [SECURITY.md](SECURITY.md) says.
+
+The Worker is in [`hosted/`](hosted/) and deploys with each npm release, so it runs the latest version.
 
 ## MCP server
 
@@ -279,7 +318,7 @@ console.log(renderAeoMarkdown(aeo));
 - Crawls are breadth-first, same-site, HTML only, and obey robots.txt by default. `--render`/`--lighthouse` apply to the start page only during a crawl.
 - Scores are indicative. Thresholds (title 30-60 chars, description 70-160, thin content 300 words, slow response 2 s, deep page depth 3) are configurable through the library `thresholds` option.
 - The AEO audit reads what answer engines document: robots.txt tokens, Content-Signal, snippet controls, structured data. Whether an engine cites a page also depends on things no audit can see from outside (its index, its ranking, the question asked), so the AEO score says how ready a site is, not how often it is cited. llms.txt is reported at info level: no major answer engine has said it reads one.
-- Sitemaps are read up to 15 MB each (uncompressed), and at most 25 of them; a larger one is reported, not checked.
+- Sitemaps are read up to 15 MB each (uncompressed), and at most 25 of them; a larger one is reported, not checked. A page is read up to 5 MB. The hosted server reads less: 2 MB of a page, 10 sitemaps of 5 MB.
 - Not included yet: rendering every page in a crawl, field (CrUX) data, rank tracking, backlink data, AI-generated copy suggestions, tracking of citations in AI answers.
 
 ## Contributing
@@ -291,7 +330,7 @@ pnpm install
 pnpm run verify
 ```
 
-`verify` runs what CI runs: format, lint, typecheck, tests, build and a check of the packed package. `pnpm run dev audit https://example.com` runs the CLI from source. [CONTRIBUTING.md](https://github.com/rivi-software/agentic-seo-check/blob/main/CONTRIBUTING.md) covers proposing a change, what a pull request needs and how releases reach npm, and [AGENTS.md](https://github.com/rivi-software/agentic-seo-check/blob/main/AGENTS.md) is the brief for coding agents working on the tool itself. Everyone who takes part follows the [code of conduct](https://github.com/rivi-software/agentic-seo-check/blob/main/CODE_OF_CONDUCT.md). [SECURITY.md](https://github.com/rivi-software/agentic-seo-check/blob/main/SECURITY.md) says how to report a vulnerability privately.
+`verify` runs what CI runs: format, lint, typecheck, tests, build, a check of the packed package, and the hosted server's typecheck, bundle and tests in workerd. `pnpm run dev audit https://example.com` runs the CLI from source. [CONTRIBUTING.md](https://github.com/rivi-software/agentic-seo-check/blob/main/CONTRIBUTING.md) covers proposing a change, what a pull request needs and how releases reach npm, and [AGENTS.md](https://github.com/rivi-software/agentic-seo-check/blob/main/AGENTS.md) is the brief for coding agents working on the tool itself. Everyone who takes part follows the [code of conduct](https://github.com/rivi-software/agentic-seo-check/blob/main/CODE_OF_CONDUCT.md). [SECURITY.md](https://github.com/rivi-software/agentic-seo-check/blob/main/SECURITY.md) says how to report a vulnerability privately.
 
 ## License
 

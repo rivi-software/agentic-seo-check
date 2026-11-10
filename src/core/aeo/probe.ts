@@ -14,6 +14,13 @@ const CHALLENGE_TITLE =
  */
 const TITLE = /<title[^<>]*>(?<title>[^<]{0,200})/iu;
 
+/** The title of the interstitial a CDN or bot protection shows instead of the page, or null. */
+export const challengeTitle = (body: string): string | null => {
+  const title = TITLE.exec(body)?.groups?.title?.trim() ?? "";
+
+  return CHALLENGE_TITLE.test(title) ? title : null;
+};
+
 /** What one bot's request says about access, given that the audit's own request got the page. */
 export const classifyProbe = (res: FetchResult): BotProbe => {
   if (res.error) {
@@ -28,9 +35,9 @@ export const classifyProbe = (res: FetchResult): BotProbe => {
     return { status: res.status, blocked: true, reason: `HTTP ${res.status}` };
   }
 
-  const title = TITLE.exec(res.body ?? "")?.groups?.title?.trim() ?? "";
+  const title = challengeTitle(res.body ?? "");
 
-  if (CHALLENGE_TITLE.test(title)) {
+  if (title !== null) {
     return {
       status: res.status,
       blocked: true,

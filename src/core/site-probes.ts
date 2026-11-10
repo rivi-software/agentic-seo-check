@@ -1,8 +1,9 @@
 import { mapConcurrent, sleep } from "./concurrency.js";
 import { fetchPage, isHtmlResponse, probeUrl } from "./fetch.js";
-import type { FetchOptions } from "./fetch.js";
+import type { FetchOptions, FetchResult } from "./fetch.js";
 import { extractPage } from "./html/extract.js";
 import { jaccard, shingles } from "./html/text.js";
+import type { Refusals } from "./refusals.js";
 import { isLocalHost } from "./rules/canonical.js";
 import { robotsDirectives } from "./rules/indexing.js";
 import type { LinkCheck, PageRecord, UrlVariantProbe } from "./site-rules.js";
@@ -19,7 +20,17 @@ export interface ProbeOptions {
   includeSubdomains: boolean;
   /** Also check images on other hosts, as `checkExternalLinks` does for links. */
   checkExternal: boolean;
+  /** The crawl's refusals: a request the gate refuses is left out, neither checked nor broken. */
+  refusals?: Refusals;
 }
+
+/** Runs one request of the probes, or null when the gate refused it. */
+const request = (
+  options: ProbeOptions,
+  url: string,
+  send: () => Promise<FetchResult>
+): Promise<FetchResult | null> =>
+  options.refusals ? options.refusals.run(url, send) : send();
 
 /** Pages with fewer words in their HTML (an app shell) give no text to compare. */
 export const MIN_COMPARABLE_WORDS = 50;
@@ -89,7 +100,11 @@ export const checkImages = async (
       fetchOptions.headers = headers;
     }
 
-    const res = await probeUrl(url, fetchOptions);
+    const res = await request(options, url, () => probeUrl(url, fetchOptions));
+
+    if (!res) {
+      return;
+    }
 
     imageChecks.set(url, {
       url,
@@ -185,7 +200,13 @@ export const probeUrlVariants = async (
     requests,
     options.concurrency,
     async ({ record, kind, variant }) => {
-      const res = await fetchPage(variant, options.fetch);
+      const res = await request(options, variant, () =>
+        fetchPage(variant, options.fetch)
+      );
+
+      if (!res) {
+        return;
+      }
 
       const answered =
         res.status === 200 &&

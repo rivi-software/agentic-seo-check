@@ -1,0 +1,61 @@
+name: Deploy the hosted server
+
+# The hosted MCP server (hosted/) runs the latest npm release: the release workflow calls this once
+# it has published one. A maintainer can run it by hand too, on a release tag to roll back, or on
+# main to apply a change to hosted/wrangler.jsonc (a limit, MODE) before the next release.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "What to deploy; the release workflow leaves it out, for the commit it published"
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "What to deploy: a release tag such as v0.7.0, or main"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare
+    if: github.repository == 'rivi-software/agentic-seo-check'
+    runs-on: ubuntu-24.04
+    # The Cloudflare API token lives in this environment's secrets, so only this job sees it.
+    environment:
+      name: hosted
+      url: https://mcp.agentic-seo-check.rivi.software/
+    concurrency:
+      group: deploy-hosted
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Called by the release workflow: the commit it published. Run by hand: the ref asked for.
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Check, build and test the Worker
+        run: pnpm run hosted:verify
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm run hosted:deploy

@@ -45,7 +45,7 @@ import {
   splitSitemapFix,
 } from "./site-fixes.js";
 import { MIN_COMPARABLE_WORDS, SAME_TEXT } from "./site-probes.js";
-import { sitemapLayout } from "./sitemap.js";
+import { megabytes, sitemapLayout, sitemapReading } from "./sitemap.js";
 import type {
   ExtractedPage,
   Finding,
@@ -144,7 +144,7 @@ export const SITE_RULES: RuleMeta[] = [
   meta(
     "site.sitemap-too-large",
     "error",
-    "A sitemap holds more than 50,000 URLs or more than 50 MB uncompressed, which search engines do not read (error); or it is larger than the 15 MB this audit reads, so it was not checked (info).",
+    "A sitemap holds more than 50,000 URLs or more than 50 MB uncompressed, which search engines do not read (error); or it is larger than this audit reads (15 MB; 5 MB on the hosted server), so it was not checked (info).",
     "Split the sitemap into files of at most 50,000 URLs and 50 MB each, and list them in a sitemap index.",
     "https://developers.google.com/search/docs/crawling-indexing/sitemaps/large-sitemaps"
   ),
@@ -384,6 +384,12 @@ export const SITE_RULES: RuleMeta[] = [
     "The crawl stopped at the page limit, so site-wide checks (orphans, duplicates, sitemap coverage) are partial.",
     "Re-run with a higher maxPages value for a complete picture."
   ),
+  meta(
+    "site.crawl-stopped",
+    "info",
+    "The hosted server stopped requesting the site before the crawl was done: the site refused its requests (a challenge, HTTP 429), or the server reached its request limit for the site. Site-wide checks (broken links, duplicates, sitemap coverage) are partial.",
+    "Crawl again in a minute, or with the local server or the CLI, which send the requests from your machine: npx -y @rivi-software/agentic-seo-check mcp."
+  ),
 ];
 
 const byId = new Map(SITE_RULES.map((r) => [r.id, r]));
@@ -474,6 +480,12 @@ export interface SiteContext {
   /** Image URLs the pages show that were requested (or looked up as files), keyed by URL. */
   imageChecks?: Map<string, LinkCheck>;
   imageSources?: Map<string, Set<string>>;
+  /**
+   * Why the crawl stopped requesting the site before it was done: a refusal of the hosted
+   * server's gate. As with the page limit, the orphan check, which needs every page's links, is
+   * left out; the other checks report on what the crawl did read.
+   */
+  crawlStopped?: string;
 }
 
 /** Appends `value` to the list under `k`, starting the list when there is none. */
@@ -999,10 +1011,12 @@ const sitemapProtocolFindings = (ctx: SiteContext): Finding[] => {
   }
 
   if (unread.length > 0) {
+    const { maxBytes } = sitemapReading(problems);
+
     out.push(
       finding(
         m("site.sitemap-too-large"),
-        `${unread.length} sitemap(s) are larger than the 15 MB this audit reads, so their URLs were not checked.`,
+        `${unread.length} sitemap(s) are larger than the ${megabytes(maxBytes)} this audit reads, so their URLs were not checked.`,
         {
           severity: "info",
           recommendation:
@@ -1010,7 +1024,7 @@ const sitemapProtocolFindings = (ctx: SiteContext): Finding[] => {
           fix: unread.map((o) =>
             splitSitemapFix(
               o.sitemap,
-              partsFor(o.urls, o.bytes, 10_000_000),
+              partsFor(o.urls, o.bytes, Math.min(10_000_000, maxBytes)),
               "Serve this sitemap index where the large sitemap was, and move its URLs into the files it lists, 10,000 URLs or fewer each, so search engines (and this audit) can read each one quickly."
             )
           ),
@@ -1375,14 +1389,20 @@ const sitemapCoverageFindings = (scope: SiteScope): Finding[] => {
   const home = start ? locationOf(start) : ctx.startUrl;
   const sitemapKeys = new Set(ctx.sitemaps.urls.map(key));
 
-  const notInSitemap = okPages
-    .filter(
-      (p) =>
-        isIndexable(p) &&
-        !sitemapKeys.has(key(p.url)) &&
-        (!p.page.canonical || key(p.page.canonical) === key(p.url))
-    )
-    .map((p) => p.url);
+  // A sitemap the audit was refused may list the pages the others leave out.
+  const allSitemapsRead =
+    sitemapReading(ctx.sitemaps.problems).refused.length === 0;
+
+  const notInSitemap = allSitemapsRead
+    ? okPages
+        .filter(
+          (p) =>
+            isIndexable(p) &&
+            !sitemapKeys.has(key(p.url)) &&
+            (!p.page.canonical || key(p.page.canonical) === key(p.url))
+        )
+        .map((p) => p.url)
+    : [];
 
   if (notInSitemap.length) {
     out.push(
@@ -1403,7 +1423,8 @@ const sitemapCoverageFindings = (scope: SiteScope): Finding[] => {
     );
   }
 
-  if (!ctx.crawl.hitPageLimit) {
+  // A crawl that stopped early has not seen the links to every page.
+  if (!ctx.crawl.hitPageLimit && !ctx.crawlStopped) {
     const linked = new Set<string>();
 
     for (const target of ctx.linkSources.keys()) {
@@ -1452,11 +1473,12 @@ const sitemapFindings = (scope: SiteScope): Finding[] => {
     );
   }
 
-  // A sitemap too large to read was still found.
+  // A sitemap too large to read was still found, and one the audit was refused may well exist.
   if (
     ctx.sitemaps.sources.length === 0 &&
     ctx.sitemaps.errors.length === 0 &&
-    ctx.sitemaps.problems.oversized.length === 0
+    ctx.sitemaps.problems.oversized.length === 0 &&
+    sitemapReading(ctx.sitemaps.problems).refused.length === 0
   ) {
     out.push(
       finding(m("site.sitemap-missing"), "No sitemap was found.", {
@@ -2642,6 +2664,25 @@ const brokenImageFindings = (scope: SiteScope): Finding[] => {
     : [];
 };
 
+/** The finding about a crawl the hosted server's gate stopped early. */
+const stoppedFindings = (ctx: SiteContext): Finding[] =>
+  ctx.crawlStopped
+    ? [
+        finding(
+          m("site.crawl-stopped"),
+          `The crawl stopped after ${ctx.crawl.pagesCrawled} page(s): ${ctx.crawlStopped}`,
+          {
+            // About the audit, not the site: the way out is a crawl from somewhere else.
+            fix: [],
+            evidence: {
+              pagesCrawled: ctx.crawl.pagesCrawled,
+              pagesDiscovered: ctx.crawl.pagesDiscovered,
+            },
+          }
+        ),
+      ]
+    : [];
+
 export const runSiteRules = (ctx: SiteContext): Finding[] => {
   const key = (url: string): string =>
     ctx.pathOnly ? pathKey(url) : (normalizeUrl(url) ?? url);
@@ -2689,5 +2730,6 @@ export const runSiteRules = (ctx: SiteContext): Finding[] => {
     ...noindexLinkFindings(scope),
     ...hreflangTargetFindings(scope),
     ...hreflangFindings(scope),
+    ...stoppedFindings(ctx),
   ];
 };
