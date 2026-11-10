@@ -59,6 +59,7 @@
     "hosted:deploy": "node hosted/scripts/wrangler.ts deploy",
     "hosted:secret": "cd hosted && wrangler secret put",
     "hosted:key": "node hosted/scripts/web-bot-auth-key.ts",
+    "hosted:og": "tsx hosted/scripts/og-image.ts",
     "changeset": "changeset",
     "version-packages": "changeset version && pnpm install --lockfile-only",
     "release": "changeset publish",
