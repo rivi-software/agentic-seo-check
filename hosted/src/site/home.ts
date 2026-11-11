@@ -125,7 +125,7 @@ const PREVIEW = `<div class="wrap">
 <div class="stage rise" style="--d:320ms">
 <div class="stage-window">
 <div class="window preview" role="img" aria-label="An example report: the SEO and AEO scores of a page, its findings, and the edit that adds its missing canonical link" data-nosnippet>
-<div class="window-bar"><span class="window-address">${icon("globe")}example.com/pricing</span><span class="window-actions"><span class="chip">${icon("download")}JSON</span><span class="chip">${icon("copy")}Markdown</span></span></div>
+<div class="window-bar"><span class="window-address">${icon("globe")}example.com/pricing</span><span class="window-actions"><span class="chip">${icon("download")}JSON</span><span class="chip">${icon("copy")}Markdown</span><span class="chip">${icon("file")}PDF</span></span></div>
 <div class="preview-body">
 <div class="preview-side">
 <div class="mini-score">${scoreRing(82, "ring-sm")}<div><p class="score-name">SEO</p><p>3 warnings, 3 info</p></div></div>

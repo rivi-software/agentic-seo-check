@@ -435,16 +435,21 @@ const runCall = async (
     return fail(error);
   }
 
-  const { result, end, audit } = await settle(() =>
-    work(
-      hostedFetch({
-        userAgent: profile.userAgent,
-        sign: profile.sign,
-        limits: call.gate,
-        crawl: info.crawl,
-      })
-    )
-  );
+  const fetch = hostedFetch({
+    userAgent: profile.userAgent,
+    sign: profile.sign,
+    limits: call.gate,
+    crawl: info.crawl,
+  });
+
+  // A crawl that a refusal stops partway still answers with the pages it read, so `settle` never
+  // sees that refusal: the crawl tells the gate, and the call's event gets its reason.
+  const gate: RequestGate | undefined = fetch.gate && {
+    ...fetch.gate,
+    crawlStopped: (refusal) => noteCall({ reason: refusal.reason }),
+  };
+
+  const { result, end, audit } = await settle(() => work({ ...fetch, gate }));
 
   if (audit) {
     noteCall(auditProperties(audit, info.fetches ? "url" : "html"));

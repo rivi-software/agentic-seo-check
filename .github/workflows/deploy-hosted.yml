@@ -1,17 +1,31 @@
 name: Deploy the hosted server
 
-# The hosted MCP server (hosted/) runs the latest npm release: the release workflow calls this once
-# it has published one. A maintainer can run it by hand too, on a release tag to roll back, or on
-# main to apply a change to hosted/wrangler.jsonc (a limit, MODE) before the next release. The
-# website, a Worker of its own, deploys with each change to main (deploy-site.yml), and again right
-# after the MCP server here, since this deploy may have brought the Durable Object it shares up to
-# date (a website deploy waits for that).
+# The hosted MCP server (hosted/wrangler.jsonc) and the website (hosted/wrangler.site.jsonc) go live
+# with each change to main that reaches their bundles, in this one job: the MCP server first, then
+# the website. The website binds the MCP server's Durable Object (hosted/src/state.ts), which runs
+# the code the MCP server last deployed, so deploying the MCP server first keeps the website's code
+# from running ahead of the object's. A release is such a change too: the version commit changes
+# package.json, whose version both bundles carry. A maintainer can run this by hand on main to
+# deploy again, or on a release tag from v0.13.0 on to roll both back.
 #
 # A run deploys the commit it runs on, and nothing else: the environment's rule for main and v*
 # checks the ref a run is for, so an input naming other code would take the Cloudflare token
 # past it. The first step checks that ref as well, in case the rule is missing.
 on:
-  workflow_call:
+  push:
+    branches:
+      - main
+    # What the two bundles are built from. A change elsewhere (tests, docs) leaves them as they are.
+    paths:
+      - "src/**"
+      - "hosted/**"
+      - "!hosted/test/**"
+      - "!hosted/**/*.md"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".node-version"
+      - ".github/workflows/deploy-hosted.yml"
   workflow_dispatch:
 
 permissions:
@@ -26,6 +40,8 @@ jobs:
     environment:
       name: hosted
       url: https://mcp.agentic-seo.rivi.software/
+    # A push while a deploy runs waits for it. Of the pushes waiting, only the newest deploys: it
+    # carries the others' changes.
     concurrency:
       group: deploy-hosted
       cancel-in-progress: false
@@ -35,14 +51,14 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           if [[ "$REF" != refs/heads/main && "$REF" != refs/tags/v[0-9]* ]]; then
-            echo "::error::The hosted server deploys from main or a release tag (v0.7.0), not from $REF."
+            echo "::error::The hosted server deploys from main or a release tag (v0.13.0), not from $REF."
             exit 1
           fi
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The commit the run is for: the one the release workflow published, or main's or the tag's.
+          # The commit the run is for: the push's, or main's or the tag's.
           ref: ${{ github.sha }}
           persist-credentials: false
 
@@ -57,19 +73,18 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Check, build and test the Worker
+      - name: Check, build and test the Workers
         run: pnpm run hosted:verify
 
-      - name: Deploy
+      - name: Deploy the MCP server
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm run hosted:deploy
 
-      # The website binds the MCP server's Durable Object, now this commit's, so a website deploy
-      # that waited for it goes now. In this job, straight after the MCP server's: hosted:verify
-      # has built and tested both, and while the website's hostname still belongs to the MCP
-      # server's Worker (before its first deploy of its own), the deploy above has just dropped it.
+      # Straight after the MCP server's, whose Durable Object the website binds: a website deploy
+      # never goes out when the MCP server's failed. Until it is done, the website's previous code
+      # calls the new object, which is why the object's methods stay additive.
       - name: Deploy the website
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -41,9 +41,8 @@ export interface StateEnv<T> {
  * The one HostedState, "global", in the EU jurisdiction (issue #78): Cloudflare runs it and keeps
  * its data in the EU, and a Worker anywhere may still call it. While a day's key exists, the codes
  * of that day's sites are pseudonymous personal data, and RIVI's privacy policy keeps data in the
- * EU where it can. Both Workers ask for the object here, in this file, so that the website, which
- * deploys from main, waits for the MCP server's deploy (deploy-site.yml) and never counts in
- * another object than the MCP server.
+ * EU where it can. Both Workers ask for the object here, and deploy together from the same commit
+ * (deploy-hosted.yml), so the website never counts in another object than the MCP server.
  */
 export const globalState = <T>(env: StateEnv<T>): T =>
   (env.STATE_JURISDICTION === "none"
@@ -59,8 +58,9 @@ export const globalState = <T>(env: StateEnv<T>): T =>
  * them.
  *
  * The website's Worker binds this class too (wrangler.site.jsonc), so its form counts in the same
- * day, but the object runs the code the MCP server last deployed. The website deploys from main,
- * so its deploy waits while this file differs from the last release's (deploy-site.yml).
+ * day, but the object runs the code the MCP server last deployed. deploy-hosted.yml deploys the MCP
+ * server first and the website seconds later, so in between the website's previous code calls this
+ * one: keep the methods additive.
  */
 export class HostedState extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
