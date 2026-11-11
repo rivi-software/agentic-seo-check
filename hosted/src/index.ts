@@ -93,10 +93,13 @@ const handleMcp = async (
   );
 
   const server = createMcpServer({
-    hosted: hostedProfile(env, ctx, caller, {
-      observe: tracking?.observe,
-      report,
-    }),
+    hosted: {
+      ...hostedProfile(env, ctx, caller, {
+        observe: tracking?.observe,
+        report,
+      }),
+      connection: tracking?.connection,
+    },
   });
 
   const transport = new WebStandardStreamableHTTPServerTransport({
