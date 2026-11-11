@@ -106,6 +106,11 @@ const site = new Map<string, Route>(
 /** What the Worker requested, with the User-Agent it sent. */
 const requests: { url: string; userAgent: string | null }[] = [];
 
+/** How often the Workers fetched OpenAI's list of ChatGPT connector ranges. */
+const openAiFetches = () =>
+  requests.filter((r) => r.url === "https://openai.com/chatgpt-connectors.json")
+    .length;
+
 const PostHogBatch = z.object({
   api_key: z.string(),
   batch: z.array(
@@ -702,13 +707,22 @@ describe("the hosted Worker in workerd", () => {
       expect(res.status).toBe(404);
     });
 
+    it("fetch OpenAI's ChatGPT connector ranges once for a new Durable Object, before the schedule", async () => {
+      // The tests before this one called /mcp many times; the object started empty.
+      await vi.waitFor(() => {
+        expect(openAiFetches()).toBe(1);
+      });
+      await client.listTools();
+
+      expect(openAiFetches()).toBe(1);
+    });
+
     it("fetch OpenAI's ChatGPT connector ranges on the daily schedule", async () => {
+      const before = openAiFetches();
       const res = await fetch(new URL("/__scheduled?cron=17+3+*+*+*", base));
 
       expect(res.status).toBe(200);
-      expect(requests.map((r) => r.url)).toContain(
-        "https://openai.com/chatgpt-connectors.json"
-      );
+      expect(openAiFetches()).toBe(before + 1);
     });
   });
 

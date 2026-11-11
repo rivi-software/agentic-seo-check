@@ -8,6 +8,16 @@ export default defineConfig({
   // The rate limits Wrangler builds in, for the tests that import the Worker's modules in Node
   // (where src/version.ts reads the version from package.json itself).
   define: { HOSTED_RATE_LIMITS: defines().HOSTED_RATE_LIMITS },
+  // limits.ts and callers.ts ask for the Durable Object through state.ts, which imports
+  // `cloudflare:workers`, a module only workerd has.
+  resolve: {
+    alias: {
+      "cloudflare:workers": new URL(
+        "test/stubs/cloudflare-workers.ts",
+        import.meta.url
+      ).pathname,
+    },
+  },
   test: {
     include: ["test/**/*.test.ts"],
     testTimeout: 60_000,
