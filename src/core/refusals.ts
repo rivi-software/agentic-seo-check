@@ -66,7 +66,11 @@ export const trackRefusals = (): Refusals => {
             const known = all ?? hosts.get(url.hostname);
 
             return known
-              ? { scope: known.scope, message: known.message }
+              ? {
+                  scope: known.scope,
+                  message: known.message,
+                  reason: known.reason,
+                }
               : gate.beforeRequest(url);
           },
         },

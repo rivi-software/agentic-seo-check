@@ -3,6 +3,8 @@
  * less what cannot work on Cloudflare's network (files on disk, rendering, Lighthouse, a caller's
  * headers or User-Agent, AI bot probes), with every input capped and every request through the
  * hosted gate, which obeys robots.txt (issue #41). Once published, these schemas are a contract of their own.
+ * Each call tells its analytics event what it found and why it stopped, in counts and fixed lists
+ * (issue #84).
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -11,6 +13,7 @@ import { z } from "zod";
 import { auditAeoHtml, auditAeoSite, auditAeoUrl } from "./core/aeo/audit.js";
 import type { AeoOptions } from "./core/aeo/audit.js";
 import { auditHtml, auditSite, auditUrl } from "./core/audit.js";
+import { ExpectedError } from "./core/errors.js";
 import { RequestRefusedError } from "./core/fetch.js";
 import type { FetchOptions, RequestGate } from "./core/fetch.js";
 import {
@@ -33,6 +36,9 @@ import {
   respondAeo,
   toOptions,
 } from "./mcp-shared.js";
+import { noteCall } from "./telemetry/mcp.js";
+import type { CallProperties } from "./telemetry/mcp.js";
+import { runReport } from "./telemetry/report.js";
 
 /** One tool call, as the hosted server's `startCall` is told it. */
 export interface HostedCallInfo {
@@ -77,6 +83,36 @@ export interface HostedProfile {
   startCall: (call: HostedCallInfo) => Promise<HostedCall>;
 }
 
+/**
+ * Which limit kept a call out, from a fixed list, for its analytics event (issue #84): the server
+ * paused or not crawling, a caller's or a platform's calls or crawls a minute, the day's requests,
+ * or the different sites a caller or a platform may audit in a day.
+ */
+export type LimitReason =
+  | "paused"
+  | "no_crawls"
+  | "caller_calls"
+  | "caller_crawls"
+  | "platform_calls"
+  | "platform_crawls"
+  | "daily_requests"
+  | "caller_sites"
+  | "platform_sites";
+
+/**
+ * What `HostedProfile.startCall` throws to keep a call out: its message is the caller's answer,
+ * and its reason the analytics'.
+ */
+export class CallLimitError extends ExpectedError {
+  override name = "CallLimitError";
+  readonly reason: LimitReason;
+
+  constructor(message: string, reason: LimitReason) {
+    super(message);
+    this.reason = reason;
+  }
+}
+
 const LIMITS = HOSTED_LIMITS;
 
 /** What every hosted tool says it cannot do, and where to go instead. */
@@ -119,6 +155,18 @@ const hostedOptions = {
   detail,
 };
 
+/**
+ * What the agent says the call is for, for the analytics alone (issue #84): no tool reads it, and
+ * its event carries it cleaned of URLs, hostnames and emails (`intentOf` in telemetry/mcp.ts).
+ */
+const context = z
+  .string()
+  .max(LIMITS.maxContextChars)
+  .optional()
+  .describe(
+    'Optional: a few words on what you are trying to do with this call, such as "re-check the title fixes" or "first audit before a redesign". Recorded, without URLs, hostnames or emails, in the hosted server\'s anonymous usage analytics. Describe people and businesses by role, never by name. The audit is the same with or without it.'
+  );
+
 const url = z.string().url().max(2048);
 
 const html = z
@@ -157,6 +205,119 @@ const crawlLimits = {
     .describe(`Parallel requests (at most ${LIMITS.concurrency}).`),
 };
 
+/** The arguments of seo_audit_page. */
+const AUDIT_PAGE_INPUT = {
+  url: url.optional().describe("Absolute http(s) URL to fetch and audit."),
+  html,
+  baseUrl: z
+    .string()
+    .url()
+    .optional()
+    .describe(
+      "With `html`: the URL the HTML would be served at (used to resolve links and classify them as internal/external)."
+    ),
+  ...hostedOptions,
+  context,
+};
+
+/** The arguments of seo_crawl_site. */
+const CRAWL_SITE_INPUT = {
+  url: url.describe("Start URL (usually the homepage)."),
+  maxPages: z
+    .number()
+    .int()
+    .min(1)
+    .max(LIMITS.maxPages)
+    .default(LIMITS.maxPages)
+    .describe(`Maximum pages to fetch (at most ${LIMITS.maxPages}).`),
+  ...crawlLimits,
+  delayMs: z
+    .number()
+    .int()
+    .min(0)
+    .max(5000)
+    .default(0)
+    .describe("Delay between requests per worker (politeness)."),
+  includeSubdomains: z
+    .boolean()
+    .default(false)
+    .describe("Treat subdomains of the start host as internal."),
+  checkExternalLinks: z
+    .boolean()
+    .default(false)
+    .describe(
+      `Also probe external link targets for 4xx/5xx (at most ${LIMITS.maxLinkChecks}; slower).`
+    ),
+  includePatterns: patterns(
+    "Only crawl URLs matching one of these regular expressions"
+  ),
+  excludePatterns: patterns(
+    "Skip URLs matching any of these regular expressions"
+  ),
+  pageDetail: z
+    .enum(["summary", "full"])
+    .default("summary")
+    .describe(
+      "summary: per-page scores/counts only (findings are rolled up in `issues`); full: every finding on every page."
+    ),
+  ...hostedOptions,
+  context,
+};
+
+/** The arguments of seo_aeo_audit. */
+const AEO_AUDIT_INPUT = {
+  url: url
+    .optional()
+    .describe("Absolute http(s) URL to audit (the start URL with `crawl`)."),
+  html: z
+    .string()
+    .max(LIMITS.maxHtmlChars)
+    .optional()
+    .describe(
+      `Raw HTML to audit instead of fetching a URL, up to ${LIMITS.maxHtmlChars.toLocaleString("en")} characters. Page checks only: there is no site to read robots.txt or llms.txt from.`
+    ),
+  baseUrl: z
+    .string()
+    .url()
+    .optional()
+    .describe(
+      "With `html`: the origin the HTML is served from (default http://localhost/)."
+    ),
+  crawl: z
+    .boolean()
+    .default(false)
+    .describe("With `url`: crawl internal links and audit every page."),
+  maxPages: z
+    .number()
+    .int()
+    .min(1)
+    .max(LIMITS.maxPages)
+    .default(LIMITS.maxPages)
+    .describe(`Crawl: maximum pages to audit (at most ${LIMITS.maxPages}).`),
+  ...crawlLimits,
+  includeSubdomains: z
+    .boolean()
+    .default(false)
+    .describe("Crawl: treat subdomains of the start host as internal."),
+  pageDetail: z
+    .enum(["summary", "full"])
+    .default("summary")
+    .describe(
+      "Crawl: summary keeps page findings rolled up in `issues`; full lists every page finding in `findings`."
+    ),
+  includeInfo: hostedOptions.includeInfo,
+  disableRules: hostedOptions.disableRules,
+  rules: hostedOptions.rules,
+  baseline: hostedOptions.baseline,
+  timeoutMs: hostedOptions.timeoutMs,
+  format,
+  detail,
+  context,
+};
+
+/** The arguments of seo_list_rules: the local server's, and `context`. */
+const LIST_RULES_INPUT = { ...LIST_RULES.inputSchema, context };
+
 /** The page count of an answer, for the record of the call. */
 const pagesOf = (audit: Audit | AeoAudit): number =>
   audit.kind === "page" ? 1 : (audit.pages?.length ?? 1);
@@ -167,27 +328,77 @@ const allowedHost = (target: string): string => {
   const problem = hostedUrlProblem(parsed);
 
   if (problem) {
+    noteCall({ reason: "address" });
     throw new InputError(problem);
   }
 
   return parsed.hostname;
 };
 
-/** What a tool's work gives back: its answer, and the pages it audited for the record of the call. */
+/** The options a call runs with, for its event: choices from fixed lists, never a value typed in. */
+const noteOptions = (
+  input: {
+    format: "json" | "markdown";
+    detail: "full" | "compact";
+    baseline?: string[];
+  },
+  pageDetail?: "summary" | "full"
+): void => {
+  noteCall({
+    format: input.format,
+    detail: input.detail,
+    page_detail: pageDetail,
+    recheck: input.baseline !== undefined,
+  });
+};
+
+/** What an audit found, for its call's event: the score, the counts, the rules, and a re-check's. */
+const auditProperties = (
+  audit: Audit | AeoAudit,
+  target: "url" | "html"
+): CallProperties => {
+  const { counts, rules } = runReport(audit);
+
+  return {
+    target,
+    score: audit.score,
+    errors: counts.error,
+    warnings: counts.warning,
+    infos: counts.info,
+    rules,
+    baseline_fixed: audit.baseline?.fixed.length,
+    baseline_open: audit.baseline?.open.length,
+    baseline_new: audit.baseline?.new.length,
+  };
+};
+
+/**
+ * What a tool's work gives back: its answer, the pages it audited for the record of the call, and
+ * the audit, for the call's event.
+ */
 interface Answer {
   result: CallToolResult;
   pages: number;
+  audit?: Audit | AeoAudit;
 }
 
 /** The answer of a tool's work, or its error as a tool error, and how the call ended. */
 const settle = async (
   work: () => Promise<Answer> | Answer
-): Promise<{ result: CallToolResult; end: HostedCallEnd }> => {
+): Promise<{
+  result: CallToolResult;
+  end: HostedCallEnd;
+  audit?: Audit | AeoAudit;
+}> => {
   try {
-    const { result, pages } = await work();
+    const { result, pages, audit } = await work();
 
-    return { result, end: { outcome: "ok", pages } };
+    return { result, end: { outcome: "ok", pages }, audit };
   } catch (error) {
+    if (error instanceof RequestRefusedError) {
+      noteCall({ reason: error.reason });
+    }
+
     return {
       result: fail(error),
       end: {
@@ -213,10 +424,14 @@ const runCall = async (
     call = await profile.startCall(info);
   } catch (error) {
     // A limit, or the server paused: the server's refusal, not the site's.
+    noteCall({
+      reason: error instanceof CallLimitError ? error.reason : undefined,
+    });
+
     return fail(error, "rate_limited");
   }
 
-  const { result, end } = await settle(() =>
+  const { result, end, audit } = await settle(() =>
     work(
       hostedFetch({
         userAgent: profile.userAgent,
@@ -226,6 +441,10 @@ const runCall = async (
       })
     )
   );
+
+  if (audit) {
+    noteCall(auditProperties(audit, info.fetches ? "url" : "html"));
+  }
 
   try {
     call.end?.(end);
@@ -259,20 +478,7 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
         }Typical workflow: audit, apply the \`fix\` of each error and warning in the source code, then re-check with \`rules\` (the rules you fixed) and \`baseline\` (the finding ids) to confirm they are fixed and nothing new appeared. ${docsNote(
           "hosted"
         )}`,
-      inputSchema: {
-        url: url
-          .optional()
-          .describe("Absolute http(s) URL to fetch and audit."),
-        html,
-        baseUrl: z
-          .string()
-          .url()
-          .optional()
-          .describe(
-            "With `html`: the URL the HTML would be served at (used to resolve links and classify them as internal/external)."
-          ),
-        ...hostedOptions,
-      },
+      inputSchema: AUDIT_PAGE_INPUT,
       annotations: {
         title: "Audit one page for SEO",
         readOnlyHint: true,
@@ -281,6 +487,8 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
       },
     },
     (input) => {
+      noteOptions(input);
+
       const { html: source, url: target } = input;
       // `html` wins over `url`; an empty `html` counts only when a `url` came with it.
       const inline = source !== undefined && Boolean(source || target);
@@ -318,6 +526,7 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
           return {
             result: respond(audit, input.format, input.detail),
             pages: 1,
+            audit,
           };
         }
       );
@@ -336,47 +545,7 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
         `The crawl checks at most ${LIMITS.maxLinkChecks} link targets and reads at most ${LIMITS.maxSitemaps} sitemaps. ${
           HOSTED_NOTE
         }${docsNote("hosted")}`,
-      inputSchema: {
-        url: url.describe("Start URL (usually the homepage)."),
-        maxPages: z
-          .number()
-          .int()
-          .min(1)
-          .max(LIMITS.maxPages)
-          .default(LIMITS.maxPages)
-          .describe(`Maximum pages to fetch (at most ${LIMITS.maxPages}).`),
-        ...crawlLimits,
-        delayMs: z
-          .number()
-          .int()
-          .min(0)
-          .max(5000)
-          .default(0)
-          .describe("Delay between requests per worker (politeness)."),
-        includeSubdomains: z
-          .boolean()
-          .default(false)
-          .describe("Treat subdomains of the start host as internal."),
-        checkExternalLinks: z
-          .boolean()
-          .default(false)
-          .describe(
-            `Also probe external link targets for 4xx/5xx (at most ${LIMITS.maxLinkChecks}; slower).`
-          ),
-        includePatterns: patterns(
-          "Only crawl URLs matching one of these regular expressions"
-        ),
-        excludePatterns: patterns(
-          "Skip URLs matching any of these regular expressions"
-        ),
-        pageDetail: z
-          .enum(["summary", "full"])
-          .default("summary")
-          .describe(
-            "summary: per-page scores/counts only (findings are rolled up in `issues`); full: every finding on every page."
-          ),
-        ...hostedOptions,
-      },
+      inputSchema: CRAWL_SITE_INPUT,
       annotations: {
         title: "Crawl a site and audit every page",
         readOnlyHint: true,
@@ -384,6 +553,8 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
       },
     },
     (input) => {
+      noteOptions(input, input.pageDetail);
+
       let host: string;
 
       try {
@@ -416,6 +587,7 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
           return {
             result: respond(audit, input.format, input.detail),
             pages: pagesOf(audit),
+            audit,
           };
         }
       );
@@ -437,58 +609,7 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
         }The local server can also request the page with each AI bot's User-Agent (\`aiBots\`). ${docsNote(
           "hosted"
         )}`,
-      inputSchema: {
-        url: url
-          .optional()
-          .describe(
-            "Absolute http(s) URL to audit (the start URL with `crawl`)."
-          ),
-        html: z
-          .string()
-          .max(LIMITS.maxHtmlChars)
-          .optional()
-          .describe(
-            `Raw HTML to audit instead of fetching a URL, up to ${LIMITS.maxHtmlChars.toLocaleString("en")} characters. Page checks only: there is no site to read robots.txt or llms.txt from.`
-          ),
-        baseUrl: z
-          .string()
-          .url()
-          .optional()
-          .describe(
-            "With `html`: the origin the HTML is served from (default http://localhost/)."
-          ),
-        crawl: z
-          .boolean()
-          .default(false)
-          .describe("With `url`: crawl internal links and audit every page."),
-        maxPages: z
-          .number()
-          .int()
-          .min(1)
-          .max(LIMITS.maxPages)
-          .default(LIMITS.maxPages)
-          .describe(
-            `Crawl: maximum pages to audit (at most ${LIMITS.maxPages}).`
-          ),
-        ...crawlLimits,
-        includeSubdomains: z
-          .boolean()
-          .default(false)
-          .describe("Crawl: treat subdomains of the start host as internal."),
-        pageDetail: z
-          .enum(["summary", "full"])
-          .default("summary")
-          .describe(
-            "Crawl: summary keeps page findings rolled up in `issues`; full lists every page finding in `findings`."
-          ),
-        includeInfo: hostedOptions.includeInfo,
-        disableRules: hostedOptions.disableRules,
-        rules: hostedOptions.rules,
-        baseline: hostedOptions.baseline,
-        timeoutMs: hostedOptions.timeoutMs,
-        format,
-        detail,
-      },
+      inputSchema: AEO_AUDIT_INPUT,
       annotations: {
         title: "Audit a page or site for answer engines (AEO)",
         readOnlyHint: true,
@@ -496,6 +617,11 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
       },
     },
     (input) => {
+      noteOptions(
+        input,
+        input.url !== undefined && input.crawl ? input.pageDetail : undefined
+      );
+
       if ((input.url === undefined) === (input.html === undefined)) {
         return fail(new InputError("Provide exactly one of `url` or `html`."));
       }
@@ -542,6 +668,7 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
           return {
             result: respondAeo(audit, input.format, input.detail),
             pages: pagesOf(audit),
+            audit,
           };
         }
       );
@@ -549,15 +676,20 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
   );
 };
 
-/** The hosted server's tools: as the local server's, less what needs the user's machine. */
-/** The hosted server's tools, for its analytics: a call to any other name is left out. */
-export const HOSTED_TOOLS: ReadonlySet<string> = new Set([
-  "seo_audit_page",
-  "seo_crawl_site",
-  "seo_aeo_audit",
-  "seo_list_rules",
-]);
+/**
+ * The hosted server's tools and the names of their arguments, for its analytics: a call to any
+ * other tool is left out, and an event lists only the arguments its tool has (issue #84).
+ */
+export const HOSTED_TOOLS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  Object.entries({
+    seo_audit_page: AUDIT_PAGE_INPUT,
+    seo_crawl_site: CRAWL_SITE_INPUT,
+    seo_aeo_audit: AEO_AUDIT_INPUT,
+    seo_list_rules: LIST_RULES_INPUT,
+  }).map(([tool, input]) => [tool, new Set(Object.keys(input))])
+);
 
+/** The hosted server's tools: as the local server's, less what needs the user's machine. */
 export const registerHostedTools = (
   server: McpServer,
   profile: HostedProfile
@@ -566,11 +698,14 @@ export const registerHostedTools = (
   registerCrawlSite(server, profile);
   registerAeoAudit(server, profile);
 
-  server.registerTool("seo_list_rules", LIST_RULES, (input) =>
-    runCall(
-      profile,
-      { tool: "seo_list_rules", fetches: false, crawl: false, host: null },
-      () => ({ result: listRules(input), pages: 0 })
-    )
+  server.registerTool(
+    "seo_list_rules",
+    { ...LIST_RULES, inputSchema: LIST_RULES_INPUT },
+    (input) =>
+      runCall(
+        profile,
+        { tool: "seo_list_rules", fetches: false, crawl: false, host: null },
+        () => ({ result: listRules(input), pages: 0 })
+      )
   );
 };

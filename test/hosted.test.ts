@@ -23,7 +23,7 @@ import {
   hostedUrlProblem,
   siteRefusal,
 } from "../src/core/hosted.js";
-import { HOSTED_TOOLS } from "../src/mcp-hosted.js";
+import { CallLimitError, HOSTED_TOOLS } from "../src/mcp-hosted.js";
 import { createMcpServer } from "../src/mcp.js";
 import type {
   HostedCallEnd,
@@ -183,6 +183,12 @@ const SiteFindings = z.object({
   ),
 });
 
+/** Each tool's argument names, sorted, by tool. */
+const namedArguments = (entries: [string, Iterable<string>][]) =>
+  Object.fromEntries(
+    entries.map(([tool, names]) => [tool, [...names].toSorted()])
+  );
+
 const rulesOf = (findings: { rule: string }[]) => findings.map((f) => f.rule);
 
 describe("the hosted server", () => {
@@ -332,13 +338,164 @@ describe("the hosted server", () => {
       expect(pageTool?.description).not.toContain("localhost dev server");
     });
 
-    it("counts every tool it lists in its analytics (issue #57)", async () => {
+    it("counts every tool it lists in its analytics, with its arguments (issues #57, #84)", async () => {
       const client = await connect(profileWith().profile);
       const { tools } = await client.listTools();
 
-      expect([...HOSTED_TOOLS].toSorted()).toStrictEqual(
-        tools.map((t) => t.name).toSorted()
+      expect(namedArguments([...HOSTED_TOOLS])).toStrictEqual(
+        namedArguments(
+          tools.map((t) => [
+            t.name,
+            Object.keys(t.inputSchema.properties ?? {}),
+          ])
+        )
       );
+
+      for (const tool of tools) {
+        expect(tool.inputSchema.properties).toHaveProperty("context", {
+          type: "string",
+          maxLength: HOSTED_LIMITS.maxContextChars,
+          description: expect.stringContaining("never by name"),
+        });
+      }
+    });
+
+    it("tells its analytics what an audit found and the options it ran with, never a value (issue #84)", async () => {
+      serve({
+        "https://shop.example.com/": {
+          body: page("Shop home page for the fixture", ""),
+        },
+      });
+
+      const { client, calls } = await connectWatched(profileWith().profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: {
+          url: "https://shop.example.com/",
+          keyword: "blue widgets",
+          format: "markdown",
+          context:
+            'Check https://shop.example.com/ and café.fr for the "Acme" launch, fix meta-description.missing on bäckerei-müller.de, then mail jo@example.org',
+          unknownOption: "https://shop.example.com/secret",
+        },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(calls).toMatchObject([
+        {
+          tool: "seo_audit_page",
+          isError: false,
+          arguments: ["context", "format", "keyword", "url"],
+          intent:
+            "Check <url> and <host> for the <text> launch, fix meta-description.missing on <host>, then mail <email>",
+          properties: {
+            target: "url",
+            score: expect.any(Number),
+            errors: expect.any(Number),
+            warnings: expect.any(Number),
+            infos: expect.any(Number),
+            rules: expect.arrayContaining(["meta-description.missing"]),
+            format: "markdown",
+            detail: "compact",
+            recheck: false,
+          },
+        },
+      ]);
+      expect(calls[0]?.properties?.page_detail).toBeUndefined();
+
+      const sent = JSON.stringify(calls);
+
+      for (const value of [
+        "shop.example.com",
+        "café",
+        "bäckerei",
+        "müller",
+        "blue widgets",
+        "jo@example.org",
+        "unknownOption",
+      ]) {
+        expect(sent).not.toContain(value);
+      }
+    });
+
+    it("tells its analytics what a re-check found (issue #84)", async () => {
+      const html = page("Shop home page for the fixture", '<img src="a.png">');
+      const { client, calls } = await connectWatched(profileWith().profile);
+      const Ids = z.object({ findings: z.array(z.object({ id: z.string() })) });
+
+      const first = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { html, baseUrl: "https://a.example.com/" },
+      });
+
+      const ids = Ids.parse(first.structuredContent).findings.map((f) => f.id);
+
+      await client.callTool({
+        name: "seo_audit_page",
+        arguments: { html, baseUrl: "https://a.example.com/", baseline: ids },
+      });
+
+      expect(ids).not.toHaveLength(0);
+      expect(calls.map((c) => c.properties)).toMatchObject([
+        { target: "html", recheck: false },
+        {
+          target: "html",
+          recheck: true,
+          baseline_fixed: 0,
+          baseline_open: ids.length,
+          baseline_new: 0,
+        },
+      ]);
+      expect(calls[0]?.properties?.baseline_open).toBeUndefined();
+    });
+
+    it("tells its analytics why a call stopped: a limit, robots.txt, an address (issue #84)", async () => {
+      serve({
+        "https://shop.example.com/robots.txt": {
+          body: "User-agent: *\nDisallow: /\n",
+          headers: { "content-type": "text/plain" },
+        },
+        "*": { body: page("Shop home page for the fixture", "") },
+      });
+
+      const limited = await connectWatched({
+        userAgent: USER_AGENT,
+        // oxlint-disable-next-line eslint/require-await -- the Worker's startCall awaits its limits
+        startCall: async () => {
+          throw new CallLimitError(
+            "This address has audited 10 different sites on the hosted server today.",
+            "caller_sites"
+          );
+        },
+      });
+
+      const open = await connectWatched(profileWith().profile);
+
+      await limited.client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/" },
+      });
+      await open.client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/" },
+      });
+      await open.client.callTool({
+        name: "seo_crawl_site",
+        arguments: { url: "http://localhost:3000/" },
+      });
+
+      expect(
+        [...limited.calls, ...open.calls].map((c) => [
+          c.tool,
+          c.errorType,
+          c.properties?.reason,
+        ])
+      ).toStrictEqual([
+        ["seo_audit_page", "rate_limited", "caller_sites"],
+        ["seo_audit_page", "permission", "robots_txt"],
+        ["seo_crawl_site", "validation", "address"],
+      ]);
     });
 
     it("names every tool in its annotations and links each audit to its docs", async () => {

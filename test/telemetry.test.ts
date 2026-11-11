@@ -15,14 +15,17 @@ import {
   NOTICE_VERSION,
   offByEnv,
   prepareTelemetry,
-  runReport,
   settingsPath,
   startCliRun,
   targetKind,
   telemetryCommand,
   telemetryStatus,
 } from "../src/telemetry/local.js";
-import { clientToken, instrumentTransport } from "../src/telemetry/mcp.js";
+import {
+  clientToken,
+  instrumentTransport,
+  intentOf,
+} from "../src/telemetry/mcp.js";
 import type {
   McpAnalytics,
   McpCaller,
@@ -30,6 +33,7 @@ import type {
 } from "../src/telemetry/mcp.js";
 import { sendEvents, uuidv7 } from "../src/telemetry/posthog.js";
 import type { PostHogEvent } from "../src/telemetry/posthog.js";
+import { runReport } from "../src/telemetry/report.js";
 import { siteRoutes, startFixtureServer } from "./helpers/fixture-server.js";
 import type { FixtureServer } from "./helpers/fixture-server.js";
 
@@ -342,7 +346,7 @@ describe("telemetry", () => {
 
       await client.callTool({
         name: "seo_list_rules",
-        arguments: { rule: "title.missing" },
+        arguments: { rule: "title.missing", context: "look up a rule" },
       });
       await client.callTool({ name: "no_such_tool", arguments: {} });
       await client.close();
@@ -364,6 +368,10 @@ describe("telemetry", () => {
           durationMs: expect.any(Number),
         }),
       ]);
+      // The local server's events name no arguments and no intent (issue #84 is the hosted one's).
+      expect(calls[0]?.arguments).toBeUndefined();
+      expect(calls[0]?.intent).toBeUndefined();
+      expect(calls[0]?.properties).toStrictEqual({});
     });
 
     it("tells the kinds of failure apart", async () => {
@@ -394,6 +402,22 @@ describe("telemetry", () => {
         undefined,
         undefined,
       ]);
+    });
+
+    it("keeps the tool's rule ids in an intent, and nothing that names a site (issue #84)", () => {
+      expect(
+        intentOf(
+          "  fixed title.missing and img.alt-missing on shop.example.com, not title.missing.com  "
+        )
+      ).toBe("fixed title.missing and img.alt-missing on <host>, not <host>");
+      // The text cannot write the mark a kept rule id waits behind.
+      expect(intentOf("\uE0000\uE001 on shop.example.com")).toBe("0 on <host>");
+      expect(intentOf("   ")).toBeUndefined();
+
+      const long = intentOf("title.missing ".repeat(100));
+
+      expect(long).toHaveLength(300);
+      expect(long).not.toMatch(/[\uE000\uE001]/u);
     });
 
     it("keeps only the product token of a client's header", () => {
