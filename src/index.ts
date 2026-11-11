@@ -51,6 +51,14 @@ export type { Baseline, BaselineEntry } from "./core/recheck.js";
 export { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 
 export {
+  renderAeoText,
+  renderRulesText,
+  renderText,
+} from "./core/report/text.js";
+
+export type { TextOptions } from "./core/report/text.js";
+
+export {
   runLighthouse,
   LighthouseUnavailableError,
 } from "./core/lighthouse.js";

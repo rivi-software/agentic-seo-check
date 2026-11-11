@@ -13,6 +13,12 @@ import { baselineFromAudit } from "./core/recheck.js";
 import type { BaselineEntry } from "./core/recheck.js";
 import { installBrowser } from "./core/render.js";
 import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
+import {
+  renderAeoText,
+  renderRulesText,
+  renderText,
+} from "./core/report/text.js";
+import type { TextOptions } from "./core/report/text.js";
 import { ALL_RULES } from "./core/rules/index.js";
 import { SEVERITY_RANK } from "./core/types.js";
 import type { AeoAudit, Audit, Severity } from "./core/types.js";
@@ -29,15 +35,59 @@ import {
   telemetryCommand,
 } from "./telemetry/local.js";
 import type { CliRun } from "./telemetry/local.js";
+import { formatFor, statusLine, textOptionsFor } from "./terminal.js";
+import type { OutputFormat } from "./terminal.js";
 import { VERSION } from "./version.js";
 
 const program = new Command();
+
+/** A command's examples, as its help ends with them. */
+const examples = (lines: readonly string[]): string =>
+  `\nExamples:\n${lines.map((line) => `  $ agentic-seo-check ${line}`).join("\n")}`;
+
+const OVERVIEW_EXAMPLES = [
+  "audit https://www.example.com/pricing",
+  "crawl https://www.example.com",
+  "aeo https://www.example.com",
+  "audit ./dist --base-url https://www.example.com",
+  "audit https://www.example.com -o report.md",
+];
+
+const AUDIT_EXAMPLES = [
+  "audit https://www.example.com/pricing",
+  "audit http://localhost:3000 --crawl --ignore-robots",
+  "audit ./dist --base-url https://www.example.com",
+  "audit https://www.example.com -o report.md",
+  "audit https://www.example.com --format json > audit.json",
+];
+
+const CRAWL_EXAMPLES = [
+  "crawl https://www.example.com",
+  "crawl https://www.example.com --max-pages 100 --max-depth 4",
+  "crawl https://staging.example.com --fail-on error --no-info",
+];
+
+const AEO_EXAMPLES = [
+  "aeo https://www.example.com/guide",
+  "aeo https://www.example.com --crawl --max-pages 50",
+  "aeo https://www.example.com --ai-bots",
+  "aeo ./dist --base-url https://www.example.com",
+];
+
+const RULES_EXAMPLES = [
+  "rules",
+  "rules --category structured-data",
+  "rules --rule canonical.multiple",
+];
 
 /** The commands that send a `cli_command` event (issue #57); `mcp` reports its tool calls instead. */
 const TRACKED = new Set(["audit", "crawl", "aeo", "rules"]);
 
 /** This run, while telemetry is on and the command is one of TRACKED. */
 let run: CliRun | null = null;
+
+/** The progress line on stderr, cleared before anything else is written there or to stdout. */
+const status = statusLine(process.stderr);
 
 /** The names of the flags the user typed, such as `--crawl`; never their values. */
 const flagsGiven = (command: Command): string[] =>
@@ -83,6 +133,7 @@ program
     `${PRODUCT_NAME}: SEO and AEO analysis for coding agents. Audits URLs, static build output or raw HTML for search engines (audit, crawl) and AI answer engines (aeo), and prints machine-readable findings.`
   )
   .version(VERSION)
+  .addHelpText("after", examples(OVERVIEW_EXAMPLES))
   .addHelpText(
     "afterAll",
     `\nMade by ${MAKER} (${MAKER_URL}). Docs and issues: ${REPOSITORY_URL}`
@@ -175,8 +226,8 @@ const addAuditOptions = (cmd: Command, mode: Mode): Command => {
     .addOption(
       new Option(
         "-f, --format <format>",
-        "Output format (default: json when piped, md on a terminal)"
-      ).choices(["json", "md"])
+        "Output format: text for people, md, or json for scripts and agents (default: text on a terminal, json when piped; with -o, by the file's extension)"
+      ).choices(["text", "md", "json"])
     )
     .option("-o, --out <file>", "Write the report to a file instead of stdout")
     .addOption(
@@ -232,7 +283,7 @@ interface CliOptions {
   checkExternal?: boolean;
   include?: string[];
   exclude?: string[];
-  format?: "json" | "md";
+  format?: OutputFormat;
   out?: string;
   failOn: Severity | "none";
   info: boolean;
@@ -247,18 +298,9 @@ interface CliOptions {
   quiet?: boolean;
 }
 
-/** The report format: as asked, else by the output file's extension, else Markdown on a terminal. */
-const formatOf = (opts: CliOptions): "json" | "md" => {
-  if (opts.format !== undefined) {
-    return opts.format;
-  }
-
-  if (opts.out) {
-    return opts.out.endsWith(".md") ? "md" : "json";
-  }
-
-  return process.stdout.isTTY ? "md" : "json";
-};
+/** The text report's options: the terminal's, or plain text for a file. */
+const textOptions = (opts: CliOptions): TextOptions =>
+  opts.out ? { nextSteps: true } : textOptionsFor(process.stdout);
 
 /** Rule ids from `--rule a b` and `--rule a,b`. */
 const ruleIds = (values: string[] | undefined): string[] | undefined =>
@@ -303,6 +345,7 @@ const parseHeaders = (values: string[] = []) => {
   return headers;
 };
 
+/** Progress on one line of a terminal's stderr, which each step rewrites; none elsewhere. */
 const progressPrinter = (opts: CliOptions) => {
   const showProgress = !opts.quiet && process.stderr.isTTY;
 
@@ -312,11 +355,9 @@ const progressPrinter = (opts: CliOptions) => {
     }
 
     const counter =
-      e.crawled === undefined ? "" : ` [${e.crawled}/${e.discovered}]`;
+      e.crawled === undefined ? "" : ` ${e.crawled}/${e.discovered}`;
 
-    process.stderr.write(
-      `\u001B[2m${e.phase}${counter}: ${e.message}\u001B[0m\n`
-    );
+    status.show(`${e.phase}${counter} · ${e.message}`);
   };
 };
 
@@ -357,7 +398,11 @@ const auditFor = async (
     onProgress: progressPrinter(opts),
   };
 
-  const format = formatOf(opts);
+  const format = formatFor(opts.format, opts.out, process.stdout.isTTY);
+
+  if (run) {
+    run.format = format;
+  }
 
   if (mode === "aeo") {
     let aeo: AeoAudit = await auditAeoTarget(target, {
@@ -369,11 +414,13 @@ const auditFor = async (
       aeo = compactAeoAudit(aeo);
     }
 
-    return {
-      report: aeo,
-      output:
-        format === "md" ? renderAeoMarkdown(aeo) : JSON.stringify(aeo, null, 2),
+    const render = {
+      text: () => renderAeoText(aeo, textOptions(opts)).trimEnd(),
+      md: () => renderAeoMarkdown(aeo),
+      json: () => JSON.stringify(aeo, null, 2),
     };
+
+    return { report: aeo, output: render[format]() };
   }
 
   let audit: Audit = await auditTarget(target, options);
@@ -382,11 +429,13 @@ const auditFor = async (
     audit = compactAudit(audit);
   }
 
-  return {
-    report: audit,
-    output:
-      format === "md" ? renderMarkdown(audit) : JSON.stringify(audit, null, 2),
+  const render = {
+    text: () => renderText(audit, textOptions(opts)).trimEnd(),
+    md: () => renderMarkdown(audit),
+    json: () => JSON.stringify(audit, null, 2),
   };
+
+  return { report: audit, output: render[format]() };
 };
 
 const runAudit = async (
@@ -396,6 +445,8 @@ const runAudit = async (
 ): Promise<void> => {
   const { report, output } = await auditFor(target, opts, mode);
   const { counts } = report;
+
+  status.clear();
 
   if (run) {
     run.target = await targetKind(target);
@@ -440,7 +491,8 @@ addAuditOptions(
     )
     .description(
       "Audit a page, a site (--crawl), a build directory or raw HTML"
-    ),
+    )
+    .addHelpText("after", examples(AUDIT_EXAMPLES)),
   "audit"
 ).action(async (target: string, opts: CliOptions) => {
   await runAudit(target, opts, "audit");
@@ -450,7 +502,8 @@ addAuditOptions(
   program
     .command("crawl")
     .argument("<url>", "Start URL")
-    .description('Crawl a site and audit every page (same as "audit --crawl")'),
+    .description('Crawl a site and audit every page (same as "audit --crawl")')
+    .addHelpText("after", examples(CRAWL_EXAMPLES)),
   "crawl"
 ).action(async (url: string, opts: CliOptions) => {
   await runAudit(url, opts, "crawl");
@@ -465,7 +518,8 @@ addAuditOptions(
     )
     .description(
       "Answer engine optimization audit: AI crawler access (robots.txt, llms.txt), snippet and AI opt-outs, answer-ready content, entities and freshness, with its own score"
-    ),
+    )
+    .addHelpText("after", examples(AEO_EXAMPLES)),
   "aeo"
 ).action(async (target: string, opts: CliOptions) => {
   await runAudit(target, opts, "aeo");
@@ -477,21 +531,37 @@ program
   .option("--category <category>", "Filter by category")
   .option("--rule <id>", "Show one rule")
   .addOption(
-    new Option("-f, --format <format>", "Output format")
-      .choices(["json", "md"])
-      .default(process.stdout.isTTY ? "md" : "json")
+    new Option(
+      "-f, --format <format>",
+      "Output format (default: text on a terminal, json when piped)"
+    ).choices(["text", "md", "json"])
   )
+  .addHelpText("after", examples(RULES_EXAMPLES))
   .action(
-    (opts: { category?: string; rule?: string; format: "json" | "md" }) => {
+    (opts: { category?: string; rule?: string; format?: OutputFormat }) => {
       const rules = ALL_RULES.filter(
         (r) =>
           (!opts.category || r.category === opts.category) &&
           (!opts.rule || r.id === opts.rule)
       );
 
-      if (opts.format === "json") {
+      const format = formatFor(opts.format, undefined, process.stdout.isTTY);
+
+      if (run) {
+        run.format = format;
+      }
+
+      if (format === "json") {
         process.stdout.write(
           `${JSON.stringify({ count: rules.length, rules }, null, 2)}\n`
+        );
+
+        return;
+      }
+
+      if (format === "text") {
+        process.stdout.write(
+          renderRulesText(rules, textOptionsFor(process.stdout))
         );
 
         return;
@@ -559,6 +629,7 @@ try {
   await program.parseAsync(process.argv);
   await finishRun(Number(process.exitCode ?? 0));
 } catch (error) {
+  status.clear();
   process.stderr.write(
     `agentic-seo-check: ${error instanceof Error ? error.message : String(error)}\n`
   );

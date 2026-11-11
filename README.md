@@ -42,7 +42,7 @@
 
 Agentic SEO Check is one core with two interfaces:
 
-- **CLI** `agentic-seo-check` with JSON (default when piped) or Markdown output and CI-friendly exit codes.
+- **CLI** `agentic-seo-check` with a report for people on a terminal, JSON when piped, Markdown on request, and CI-friendly exit codes.
 - **MCP server** exposing six tools for Claude Code, Cursor, Codex and any other MCP client. A [hosted server](#hosted-server) serves four of them at `https://mcp.agentic-seo.rivi.software/mcp`, free and without an install, for claude.ai, ChatGPT and any client that connects over HTTP. It is listed in the [Claude Directory](https://claude.ai/directory/agentic-seo-check).
 
 It audits **URLs** (production, staging, `localhost` dev servers), **static build output** (`dist/`, `out/`, `build/`) and **raw HTML**, and returns findings an agent can act on: a stable rule id, severity, what is wrong, the fix, a CSS selector for where it lives, and evidence with the current values. Each finding carries the exact edits that fix it, quoting the code to replace, and an id, so an agent can re-check only the rules it fixed and see which findings are gone, still open or new.
@@ -111,7 +111,7 @@ From source: `pnpm install && pnpm build && node dist/cli.js --help`.
 ## CLI
 
 ```bash
-# one page (Markdown on a terminal, JSON when piped or with --format json)
+# one page (a text report on a terminal, JSON when piped or with --format json)
 agentic-seo-check audit https://www.example.com/pricing
 
 # whole site
@@ -154,6 +154,8 @@ agentic-seo-check install-browser
 agentic-seo-check telemetry
 agentic-seo-check telemetry disable
 ```
+
+On a terminal the CLI prints a text report for people: the score and its band, the page's facts, the errors and warnings with each fix as `-` and `+` lines, the info findings one line each, and what to run next. A crawl lists the page findings by rule and the 10 pages that score lowest. Colour follows the terminal (`NO_COLOR`, `FORCE_COLOR`), rule ids link to their documentation in terminals that show OSC 8 links, and a crawl's progress takes one line of stderr. Piped, it prints JSON. `--format` (`text`, `md` or `json`) chooses, and with `-o` the extension does (`.md` Markdown, `.txt` text, anything else JSON). The layout of `text` may change in any release: scripts and agents read `json`, which is the contract.
 
 `aeo` takes the same targets and output, crawl and request options as `audit`, plus `--ai-bots`; it has no `--keyword`, `--render`, `--lighthouse` or `--check-external`. With `--ai-bots`, the requests come from your machine with each bot's User-Agent, not from the bots' own IP ranges: a CDN that verifies bots may treat the real crawler differently, and the findings say so. Search crawlers and robots.txt-only tokens (Google-Extended, Applebot-Extended, YandexAdditional) are never impersonated.
 
@@ -242,7 +244,7 @@ All tools are read-only. Results are returned both as text (JSON or Markdown) an
 
 The CLI and the local MCP server send anonymous usage data to RIVI Software, in PostHog's EU cloud, so we can see which commands, flags and rules are used and where calls fail ([issue #57](https://github.com/rivi-software/agentic-seo-check/issues/57)). The first run says so on stderr.
 
-- **The CLI** sends one `cli_command` event for each run of `audit`, `crawl`, `aeo` and `rules`: the command, the names of the flags you gave (never their values), the kind of target (`url`, `localhost`, `directory`, `file` or `stdin`), the exit code, the duration, the number of pages, the findings per severity, the ids of the rules that fired, the version, Node's major version and the OS. It waits a second at most for the event to go, after the report is written.
+- **The CLI** sends one `cli_command` event for each run of `audit`, `crawl`, `aeo` and `rules`: the command, the names of the flags you gave (never their values), the kind of target (`url`, `localhost`, `directory`, `file` or `stdin`), the report's format (`text`, `md` or `json`), the exit code, the duration, the number of pages, the findings per severity, the ids of the rules that fired, the version, Node's major version and the OS. It waits a second at most for the event to go, after the report is written.
 - **The local MCP server** sends one `$mcp_tool_call` event per tool call (the tool, whether it failed and the kind of failure, the duration, the MCP client and its version) and one `$mcp_initialize` per connection, in the shape [PostHog's MCP Analytics](https://posthog.com/docs/mcp-analytics) reads.
 - **Errors** ([issue #60](https://github.com/rivi-software/agentic-seo-check/issues/60)): both send one `$exception` event, in the shape [PostHog's error tracking](https://posthog.com/docs/error-tracking) reads, for each error that may be a bug: one that ends a run or fails a tool call, one in `--render`'s or `--lighthouse`'s own code, and one nothing caught. The event has the error's type (`TypeError`), its message with every URL, path, quoted text, hostname, email and IP address replaced (`fetch failed for <url>`), and its stack, with each file named by its place in the package (`dist/core/audit.js`) or in `node_modules`, never the directories above it. It shares the run's or the session's id. A failure the tool expects and explains is not sent: a refused request, a missing browser or Lighthouse, an argument it cannot use, a timeout.
 - **Never sent:** a URL, a hostname, a path, a header, the HTML, the arguments of a tool call, anything from a page or a report but the counts, an error's message as it was, or an id that lasts. Each CLI run gets a new id, and the server's lasts one session. No event asks PostHog for a location or a person profile, and the project discards IP addresses.
@@ -334,7 +336,7 @@ A crawl or directory adds `pages` (each page's score and summary) and `issues`. 
 ## Library
 
 ```ts
-import { auditUrl, auditSite, auditAeoUrl, renderMarkdown, renderAeoMarkdown } from '@rivi-software/agentic-seo-check';
+import { auditUrl, auditSite, auditAeoUrl, renderMarkdown, renderAeoMarkdown, renderText } from '@rivi-software/agentic-seo-check';
 
 const page = await auditUrl('https://www.example.com/', { keyword: 'example', render: true });
 const site = await auditSite('https://www.example.com/', { maxPages: 100 });
@@ -342,6 +344,9 @@ console.log(renderMarkdown(site));
 
 const aeo = await auditAeoUrl('https://www.example.com/guide', { aiBots: true });
 console.log(renderAeoMarkdown(aeo));
+
+// The CLI's text report: colour, OSC 8 links and the width are yours to choose.
+console.log(renderText(page, { color: process.stdout.hasColors?.() ?? false, width: 100 }));
 ```
 
 ## Scope of this first version

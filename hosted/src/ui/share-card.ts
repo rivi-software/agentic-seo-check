@@ -13,6 +13,7 @@ import { Resvg } from "@resvg/resvg-wasm";
 import type { ResvgRenderOptions } from "@resvg/resvg-wasm";
 
 import { PRODUCT_NAME } from "../../../src/brand.js";
+import { band } from "../../../src/core/report/labels.js";
 import type { SeverityCounts } from "../../../src/core/types.js";
 import { esc } from "../site/html.js";
 import { dayText } from "../site/share.js";
@@ -153,14 +154,6 @@ const heading = (fonts: Uint8Array[], hostname: string): Text => {
   }
 
   return at(`…${hostname.slice(-low)}`, HEADING_MIN);
-};
-
-const band = (score: number): keyof typeof BANDS => {
-  if (score >= 90) {
-    return "good";
-  }
-
-  return score >= 50 ? "fair" : "poor";
 };
 
 /** A score's ring, filled to the score and coloured by its band, with the number inside. */

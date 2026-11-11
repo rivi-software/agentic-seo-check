@@ -8,6 +8,7 @@
 import type { SiteAudits } from "../../../src/core/aeo/audit.js";
 import type { ProgressEvent } from "../../../src/core/audit.js";
 import { HOSTED_LIMITS } from "../../../src/core/hosted.js";
+import { band, plural } from "../../../src/core/report/labels.js";
 import { AEO_PAGE_RULES } from "../../../src/core/rules/index.js";
 import type {
   AeoAudit,
@@ -20,12 +21,10 @@ import type { FailureKind } from "./home.js";
 import { esc } from "./html.js";
 import {
   aeoFacts,
-  band,
   code,
   crawlersHtml,
   facts,
   findingsHtml,
-  plural,
   reportData,
   reportFrame,
   scoreCard,

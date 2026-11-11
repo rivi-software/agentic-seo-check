@@ -14,6 +14,7 @@ import { PRODUCT_NAME, REPOSITORY_URL } from "../brand.js";
 import { resolveTarget } from "../core/audit.js";
 import { onCaughtError } from "../core/errors.js";
 import type { AeoAudit, Audit, SeverityCounts } from "../core/types.js";
+import type { OutputFormat } from "../terminal.js";
 import { exceptionEvent } from "./exceptions.js";
 import { currentTool, initializeEvent, toolCallEvent } from "./mcp.js";
 import type { McpAnalytics, McpEventContext, McpToolCall } from "./mcp.js";
@@ -304,6 +305,8 @@ export interface CliRun {
   startedAt: Date;
   started: number;
   target?: TargetKind;
+  /** The report's format: whether a person (`text`) or a program (`json`) reads the run. */
+  format?: OutputFormat;
   report?: RunReport;
   errors: RunError[];
 }
@@ -341,6 +344,7 @@ export const cliEvent = (run: CliRun, exitCode: number): PostHogEvent => ({
     command: run.command,
     flags: run.flags,
     target: run.target,
+    format: run.format,
     exit_code: exitCode,
     duration_ms: Math.round(performance.now() - run.started),
     pages: run.report?.pages,
