@@ -26,6 +26,7 @@ import {
   docsNote,
   fail,
   format,
+  InputError,
   LIST_RULES,
   listRules,
   respond,
@@ -166,7 +167,7 @@ const allowedHost = (target: string): string => {
   const problem = hostedUrlProblem(parsed);
 
   if (problem) {
-    throw new Error(problem);
+    throw new InputError(problem);
   }
 
   return parsed.hostname;
@@ -211,7 +212,8 @@ const runCall = async (
   try {
     call = await profile.startCall(info);
   } catch (error) {
-    return fail(error);
+    // A limit, or the server paused: the server's refusal, not the site's.
+    return fail(error, "rate_limited");
   }
 
   const { result, end } = await settle(() =>
@@ -284,7 +286,7 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
       const inline = source !== undefined && Boolean(source || target);
 
       if (!inline && !target) {
-        return fail(new Error("Provide `url` or `html`."));
+        return fail(new InputError("Provide `url` or `html`."));
       }
 
       let host: string | null = null;
@@ -495,7 +497,7 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
     },
     (input) => {
       if ((input.url === undefined) === (input.html === undefined)) {
-        return fail(new Error("Provide exactly one of `url` or `html`."));
+        return fail(new InputError("Provide exactly one of `url` or `html`."));
       }
 
       let host: string | null = null;
@@ -548,6 +550,14 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
 };
 
 /** The hosted server's tools: as the local server's, less what needs the user's machine. */
+/** The hosted server's tools, for its analytics: a call to any other name is left out. */
+export const HOSTED_TOOLS: ReadonlySet<string> = new Set([
+  "seo_audit_page",
+  "seo_crawl_site",
+  "seo_aeo_audit",
+  "seo_list_rules",
+]);
+
 export const registerHostedTools = (
   server: McpServer,
   profile: HostedProfile

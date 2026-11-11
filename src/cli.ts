@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { promises as fs } from "node:fs";
 
-import { Command, InvalidArgumentError, Option } from "commander";
+import { Argument, Command, InvalidArgumentError, Option } from "commander";
 
 import { MAKER, MAKER_URL, PRODUCT_NAME, REPOSITORY_URL } from "./brand.js";
 import { auditAeoTarget, compactAeoAudit } from "./core/aeo/audit.js";
@@ -16,9 +16,43 @@ import { ALL_RULES } from "./core/rules/index.js";
 import { SEVERITY_RANK } from "./core/types.js";
 import type { AeoAudit, Audit, Severity } from "./core/types.js";
 import { startMcpServer } from "./mcp.js";
+import {
+  localMcpAnalytics,
+  prepareTelemetry,
+  runReport,
+  sendCliRun,
+  startCliRun,
+  targetKind,
+  telemetryCommand,
+} from "./telemetry/local.js";
+import type { CliRun } from "./telemetry/local.js";
 import { VERSION } from "./version.js";
 
 const program = new Command();
+
+/** The commands that send a `cli_command` event (issue #57); `mcp` reports its tool calls instead. */
+const TRACKED = new Set(["audit", "crawl", "aeo", "rules"]);
+
+/** This run, while telemetry is on and the command is one of TRACKED. */
+let run: CliRun | null = null;
+
+/** The names of the flags the user typed, such as `--crawl`; never their values. */
+const flagsGiven = (command: Command): string[] =>
+  command.options
+    .filter(
+      (option) => command.getOptionValueSource(option.attributeName()) === "cli"
+    )
+    .map((option) => option.long ?? option.short ?? option.flags);
+
+/** Sends this run's event, once its output is written; it waits a second at most. */
+const finishRun = async (exitCode: number): Promise<void> => {
+  const done = run;
+  run = null;
+
+  if (done) {
+    await sendCliRun(done, exitCode);
+  }
+};
 
 program
   .name("agentic-seo-check")
@@ -30,7 +64,12 @@ program
     "afterAll",
     `\nMade by ${MAKER} (${MAKER_URL}). Docs and issues: ${REPOSITORY_URL}`
   )
-  .showHelpAfterError();
+  .showHelpAfterError()
+  .hook("preAction", async (_program, action) => {
+    if (TRACKED.has(action.name()) && (await prepareTelemetry())) {
+      run = startCliRun(action.name(), flagsGiven(action));
+    }
+  });
 
 const intArg = (value: string): number => {
   // oxlint-disable-next-line unicorn/prefer-number-coercion -- parseInt reads the leading digits ("10.5" is 10), where Number would refuse what users have always passed
@@ -258,7 +297,7 @@ const auditFor = async (
   target: string,
   opts: CliOptions,
   mode: Mode
-): Promise<{ counts: Audit["counts"]; output: string }> => {
+): Promise<{ report: Audit | AeoAudit; output: string }> => {
   const headers = parseHeaders(opts.header);
 
   const options: CrawlOptions & { crawl?: boolean } = {
@@ -303,7 +342,7 @@ const auditFor = async (
     }
 
     return {
-      counts: aeo.counts,
+      report: aeo,
       output:
         format === "md" ? renderAeoMarkdown(aeo) : JSON.stringify(aeo, null, 2),
     };
@@ -316,7 +355,7 @@ const auditFor = async (
   }
 
   return {
-    counts: audit.counts,
+    report: audit,
     output:
       format === "md" ? renderMarkdown(audit) : JSON.stringify(audit, null, 2),
   };
@@ -327,7 +366,13 @@ const runAudit = async (
   opts: CliOptions,
   mode: Mode
 ): Promise<void> => {
-  const { counts, output } = await auditFor(target, opts, mode);
+  const { report, output } = await auditFor(target, opts, mode);
+  const { counts } = report;
+
+  if (run) {
+    run.target = await targetKind(target);
+    run.report = runReport(report);
+  }
 
   if (opts.out) {
     await fs.writeFile(opts.out, `${output}\n`, "utf-8");
@@ -458,14 +503,32 @@ program
     "Start the MCP server on stdio (for Claude Code, Cursor, Codex, etc.)"
   )
   .action(async () => {
-    await startMcpServer();
+    await startMcpServer({
+      analytics: (await prepareTelemetry()) ? localMcpAnalytics() : undefined,
+    });
+  });
+
+program
+  .command("telemetry")
+  .description(
+    "Show, turn off or turn on the anonymous usage data the CLI and the local MCP server send"
+  )
+  .addArgument(
+    new Argument("[action]", "What to do")
+      .choices(["status", "enable", "disable"])
+      .default("status")
+  )
+  .action(async (action: "status" | "enable" | "disable") => {
+    process.stdout.write(await telemetryCommand(action));
   });
 
 try {
   await program.parseAsync(process.argv);
+  await finishRun(Number(process.exitCode ?? 0));
 } catch (error) {
   process.stderr.write(
     `agentic-seo-check: ${error instanceof Error ? error.message : String(error)}\n`
   );
+  await finishRun(2);
   process.exit(2);
 }

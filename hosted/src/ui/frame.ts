@@ -20,6 +20,9 @@ import { FONT_PATHS, STYLE } from "./style.js";
 
 export const ABUSE_URL = "https://help.rivi.software/contact";
 
+/** RIVI Software's privacy policy, which covers the website, the hosted server and the CLI. */
+export const PRIVACY_URL = "https://help.rivi.software/help/privacy-policy";
+
 export const NPM_URL =
   "https://www.npmjs.com/package/@rivi-software/agentic-seo-check";
 
@@ -138,10 +141,21 @@ ${FOOTER.map(
 </div>
 <div class="footer-bottom">
 <p>${PRODUCT_NAME} is open source (MIT) and made by <a href="${MAKER_URL}">${MAKER}</a>. If this site or the hosted server has requested your site, <a href="${linkFrom(host.origin, `${MCP_ORIGIN}/crawler`)}">the page for site owners</a> says what the requests are and how to stop them. Report abuse through <a href="${ABUSE_URL}">help.rivi.software/contact</a>.</p>
-<a href="${MAKER_URL}">rivi.software</a>
+<div class="footer-links"><a href="${PRIVACY_URL}">Privacy policy</a><button class="footer-consent" type="button" data-consent-settings hidden>Cookie settings</button><a href="${MAKER_URL}">rivi.software</a></div>
 </div>
 </div>
 </footer>`;
+
+/**
+ * The cookie banner (issue #57). It stays hidden until site.js has loaded PostHog and the visitor
+ * has made no choice, so a page without the script, or with the analytics off, shows none. Until a
+ * choice, and after "Decline", PostHog counts the visit without a cookie.
+ */
+const CONSENT_BANNER = `<section class="consent" id="consent" aria-labelledby="consent-title" hidden>
+<p class="consent-title" id="consent-title">One cookie, if you allow it</p>
+<p>This site counts visits with PostHog (EU), without cookies. May it set a cookie that recognises your browser when you come back? <a href="${PRIVACY_URL}">Privacy policy</a></p>
+<div class="consent-actions"><button class="btn btn-secondary btn-sm" type="button" data-consent="decline">Decline</button><button class="btn btn-primary btn-sm" type="button" data-consent="accept">Accept</button></div>
+</section>`;
 
 /** The whole document of `page`, on the hostname of `host`. */
 export const frame = (host: Host, page: FramePage): string => {
@@ -217,6 +231,7 @@ export const frame = (host: Host, page: FramePage): string => {
 ${page.body}
 </main>
 ${footer(host)}
+${CONSENT_BANNER}
 </body>
 </html>
 `;

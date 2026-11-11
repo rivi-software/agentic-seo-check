@@ -5,10 +5,13 @@ import { PRODUCT_NAME, REPOSITORY_URL, WEBSITE_URL } from "./brand.js";
 import { compactAeoAudit } from "./core/aeo/audit.js";
 import { compactAudit } from "./core/audit.js";
 import type { CrawlOptions } from "./core/audit.js";
+import { RequestRefusedError } from "./core/fetch.js";
 import { baselineFromIds } from "./core/recheck.js";
 import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 import { ALL_RULES } from "./core/rules/index.js";
 import type { AeoAudit, Audit } from "./core/types.js";
+import { withErrorType } from "./telemetry/mcp.js";
+import type { McpErrorType } from "./telemetry/mcp.js";
 
 export const format = z
   .enum(["json", "markdown"])
@@ -177,14 +180,38 @@ export const listRules = (input: { category?: string; rule?: string }) => {
   };
 };
 
+/** A tool call whose arguments cannot work: its message tells the caller what to send instead. */
+export class InputError extends Error {
+  override name = "InputError";
+}
+
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
-export const fail = (error: unknown) => {
+const errorTypeOf = (error: unknown): McpErrorType => {
+  if (error instanceof InputError) {
+    return "validation";
+  }
+
+  return error instanceof RequestRefusedError ? "permission" : "internal";
+};
+
+/**
+ * A tool error with `error`'s message. Its event (telemetry/mcp.ts) gets `type`, the kind of
+ * failure, and never the message, which can name the audited URL.
+ */
+export const fail = (
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
+  error: unknown,
+  type: McpErrorType = errorTypeOf(error)
+) => {
   const message = error instanceof Error ? error.message : String(error);
 
-  return {
-    isError: true,
-    content: [
-      { type: "text" as const, text: `${PRODUCT_NAME} error: ${message}` },
-    ],
-  };
+  return withErrorType(
+    {
+      isError: true,
+      content: [
+        { type: "text" as const, text: `${PRODUCT_NAME} error: ${message}` },
+      ],
+    },
+    type
+  );
 };

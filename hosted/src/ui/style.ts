@@ -258,6 +258,7 @@ const HOME = `
 .route-featured .card-icon{color:var(--signal)}
 .card .corner{position:absolute;top:24px;right:24px}
 .keeps{grid-template-columns:repeat(2,minmax(0,1fr))}
+.keeps .card:last-child:nth-child(odd){grid-column:1/-1}
 .keeps .card{gap:10px;padding:20px}
 .keeps h3{font-size:1rem}
 .keep-icon{display:grid;place-items:center;width:36px;height:36px;border-radius:9px;background:var(--signal-soft);color:var(--signal)}
@@ -510,6 +511,19 @@ const FOOTER = `
 .footer-bottom{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px 32px;padding:20px 0 56px;border-top:1px solid var(--line);color:var(--text-faint);font-size:.8125rem}
 .footer-bottom p{max-width:52rem}
 .footer-bottom a{color:var(--text-muted)}
+.footer-links{display:flex;flex-wrap:wrap;gap:8px 20px}
+.footer-consent{padding:0;border:0;background:none;color:var(--text-muted);font:inherit;text-decoration:underline;text-decoration-color:var(--line-strong);text-decoration-thickness:1px;text-underline-offset:4px;cursor:pointer}
+.footer-consent:hover{color:var(--text)}
+.footer-consent[hidden]{display:none}
+`;
+
+/** The cookie banner (issue #57): a card in a corner that covers nothing it has to. */
+const CONSENT = `
+.consent{position:fixed;right:16px;bottom:16px;left:16px;z-index:60;display:grid;gap:12px;max-width:420px;margin-left:auto;padding:18px 20px;border:1px solid var(--line-strong);border-radius:var(--radius-card);background:var(--bg-raised);box-shadow:var(--shadow-panel);font-size:.875rem}
+.consent[hidden]{display:none}
+.consent p{margin:0}
+.consent-title{color:var(--text);font-weight:500}
+.consent-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
 `;
 
 const RESPONSIVE = `
@@ -556,6 +570,7 @@ export const STYLE = [
   RULES,
   SERVER,
   FOOTER,
+  CONSENT,
   RESPONSIVE,
   MOTION,
 ]

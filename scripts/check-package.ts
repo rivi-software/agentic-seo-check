@@ -19,6 +19,9 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+// The commands it runs send no telemetry (issue #57): every child inherits this.
+process.env.AGENTIC_SEO_CHECK_TELEMETRY = "0";
+
 const root = path.join(import.meta.dirname, "..");
 const work = mkdtempSync(path.join(tmpdir(), "check-package-"));
 

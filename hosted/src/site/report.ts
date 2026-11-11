@@ -120,7 +120,7 @@ const editHtml = (edit: FixEdit, index: number): string => {
     : "";
 
   const next = edit.code
-    ? `<div class="diff diff-add"><span class="diff-label">${edit.action === "add" ? "Add" : "Write"}</span><pre data-copy><code>${esc(edit.code)}</code></pre></div>`
+    ? `<div class="diff diff-add"><span class="diff-label">${edit.action === "add" ? "Add" : "Write"}</span><pre data-copy="fix_edit"><code>${esc(edit.code)}</code></pre></div>`
     : "";
 
   const write = edit.write
@@ -343,7 +343,8 @@ ${findingsHtml(findings)}
 
 /**
  * The report's data for its buttons: the two audits as the MCP tools return them, and the same as
- * Markdown. The page's script reads it; nothing is stored on the server.
+ * Markdown. The page's script reads it; nothing is stored on the server. `summary` is what the
+ * page's `audit_shown` event says (issue #57): the kind of audit, the scores and the page count.
  */
 export const reportData = (
   seo: PageAudit | SiteAudit,
@@ -355,6 +356,12 @@ export const reportData = (
       json: { seo: compactAudit(seo), aeo: compactAeoAudit(aeo) },
       markdown: `${renderMarkdown(seo)}\n\n${renderAeoMarkdown(aeo)}`,
       name: host,
+      summary: {
+        mode: seo.kind,
+        seo_score: seo.score,
+        aeo_score: aeo.score,
+        pages: seo.kind === "site" ? seo.pages.length : 1,
+      },
     })
   );
 

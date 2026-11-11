@@ -24,10 +24,11 @@ import type {
   SiteAudit,
 } from "../../../src/core/types.js";
 import type { HostedCall } from "../../../src/mcp.js";
+import type { AnalyticsEnv } from "../analytics.js";
 import { callerOf } from "../callers.js";
 import { hostedProfile } from "../limits.js";
 import type { LimitsEnv } from "../limits.js";
-import type { HomeState } from "./home.js";
+import type { FailureKind, HomeState } from "./home.js";
 import { renderReport } from "./report.js";
 import { shareMenu } from "./share-page.js";
 import { shareResult, signShare } from "./share.js";
@@ -40,7 +41,7 @@ import {
 } from "./site-report.js";
 
 /** The Worker's bindings and variables the audit form uses, beside the limits' and sharing's. */
-export interface SiteEnv extends LimitsEnv, ShareEnv {
+export interface SiteEnv extends LimitsEnv, ShareEnv, AnalyticsEnv {
   /** Turnstile's public site key (wrangler.jsonc); empty until the widget exists. */
   TURNSTILE_SITE_KEY: string;
   /** Turnstile's secret key, a Worker secret (`wrangler secret put TURNSTILE_SECRET_KEY`). */
@@ -121,7 +122,7 @@ const personSent = async (
 /** What the form's answer shows, and the HTTP status it comes with. */
 export interface AuditAnswer {
   status: number;
-  state: Pick<HomeState, "url" | "error" | "report" | "crawling">;
+  state: Pick<HomeState, "url" | "error" | "failure" | "report" | "crawling">;
   /**
    * The rest of a crawl's answer, which comes in place of the report: `write` gets the progress so
    * far and each line as it comes, then the report or why there is none. Settles once all is
@@ -130,9 +131,23 @@ export interface AuditAnswer {
   rest?: (write: (html: string) => void) => Promise<void>;
 }
 
-const refuse = (status: number, error: string, url?: string): AuditAnswer => ({
+/** The kind of each refusal by its status, for the page's `audit_failed` event. */
+const FAILURES = new Map<number, FailureKind>([
+  [400, "address"],
+  [403, "check"],
+  [429, "limit"],
+  [502, "fetch"],
+  [503, "paused"],
+]);
+
+const refuse = (
+  status: number,
+  error: string,
+  url?: string,
+  failure: FailureKind = FAILURES.get(status) ?? "fetch"
+): AuditAnswer => ({
   status,
-  state: { url, error },
+  state: { url, error, failure },
 });
 
 /** The address as typed, with https:// before a bare hostname, or null when it is not a URL. */
@@ -185,8 +200,15 @@ const failure = (what: string, target: URL, error: unknown): string =>
     ? error.message
     : `The ${what} of ${target.hostname} failed: ${error instanceof Error ? error.message : String(error)}`;
 
+/** The kind of a run that failed: the site refused a request it needed, or anything else. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
+const failureKind = (error: unknown): FailureKind =>
+  error instanceof RequestRefusedError ? "refused" : "fetch";
+
 /** How the form's crawl ended: both audits, or why there are none. */
-type CrawlOutcome = { audits: SiteAudits } | { error: string };
+type CrawlOutcome =
+  | { audits: SiteAudits }
+  | { error: string; kind: FailureKind };
 
 /**
  * The crawl's progress as lines of HTML. Lines wait in `kept` until the answer pipes them to its
@@ -258,7 +280,10 @@ const runCrawl = async (
         pages: 0,
       });
 
-      return { error: failure("crawl", target, error) };
+      return {
+        error: failure("crawl", target, error),
+        kind: failureKind(error),
+      };
     }
   };
 
@@ -266,7 +291,7 @@ const runCrawl = async (
   const first = await Promise.race([feed.firstPage, outcome]);
 
   if (first && "error" in first) {
-    return refuse(502, first.error, typed);
+    return refuse(502, first.error, typed, first.kind);
   }
 
   // The crawl was done before it had a page to show: nothing to stream.
@@ -286,7 +311,9 @@ const runCrawl = async (
       const done = await outcome;
 
       // The status is sent: a crawl that fails now says why in the page.
-      write(progressClose("error" in done ? done.error : undefined));
+      write(
+        "error" in done ? progressClose(done.error, done.kind) : progressClose()
+      );
 
       if ("audits" in done) {
         write(await siteReport(done.audits, env));
@@ -433,6 +460,11 @@ export const answerAudit = async (
       pages: 0,
     });
 
-    return refuse(502, failure("audit", target, error), typed);
+    return refuse(
+      502,
+      failure("audit", target, error),
+      typed,
+      failureKind(error)
+    );
   }
 };

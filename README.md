@@ -149,6 +149,10 @@ agentic-seo-check rules --rule canonical.multiple
 
 # the Chromium for --render and --lighthouse, where there is no Google Chrome
 agentic-seo-check install-browser
+
+# anonymous usage data: whether it is on, and turning it off
+agentic-seo-check telemetry
+agentic-seo-check telemetry disable
 ```
 
 `aeo` takes the same targets and output, crawl and request options as `audit`, plus `--ai-bots`; it has no `--keyword`, `--render`, `--lighthouse` or `--check-external`. With `--ai-bots`, the requests come from your machine with each bot's User-Agent, not from the bots' own IP ranges: a CDN that verifies bots may treat the real crawler differently, and the findings say so. Search crawlers and robots.txt-only tokens (Google-Extended, Applebot-Extended) are never impersonated.
@@ -196,7 +200,7 @@ It is free for everyone, so it keeps each site and each caller to a fair share:
 
 A call past a limit gets an error that names the limit, says when to try again and points to the local server, which has no limits. A crawl that reaches a limit, that a site starts refusing, or whose `Crawl-delay` adds up to more than 30 seconds stops early with `site.crawl-stopped` (`aeo.crawl-stopped`) and leaves what it did not request unchecked, never broken.
 
-The server keeps no HTML you send, no reports and no headers. It records each tool call: the tool, the outcome, the duration, the number of requests and pages, and the hostname audited (never the path, the query or your address), for three months, so a report about requests to a site can be checked against what the server sent. [The server's page](https://mcp.agentic-seo.rivi.software/) has the setup, the limits and the privacy notice; [the page for site owners](https://mcp.agentic-seo.rivi.software/crawler), which its User-Agent links to, says how to recognise and block its requests. Report abuse of the hosted server, such as too many requests to one site, through [help.rivi.software/contact](https://help.rivi.software/contact); report a vulnerability as [SECURITY.md](SECURITY.md) says.
+The server keeps no HTML you send, no reports and no headers. It records each tool call: the tool, the outcome, the duration, the number of requests and pages, and the hostname audited (never the path, the query or your address), for three months, so a report about requests to a site can be checked against what the server sent. For usage analytics, each tool call also goes to PostHog, in the EU, as one event: the tool, whether it failed and how, the duration, the number of requests and pages, the MCP client, and whether the call came from claude.ai's or ChatGPT's addresses; never the hostname, the arguments, the answer or your address. The website counts visits and a short list of actions with PostHog too, without a cookie unless you accept one in its banner. [The server's page](https://mcp.agentic-seo.rivi.software/) has the setup, the limits and the privacy notice; [the page for site owners](https://mcp.agentic-seo.rivi.software/crawler), which its User-Agent links to, says how to recognise and block its requests. Report abuse of the hosted server, such as too many requests to one site, through [help.rivi.software/contact](https://help.rivi.software/contact); report a vulnerability as [SECURITY.md](SECURITY.md) says.
 
 The Worker is in [`hosted/`](hosted/) and deploys with each npm release, so it runs the latest version.
 
@@ -233,6 +237,24 @@ All tools are read-only. Results are returned both as text (JSON or Markdown) an
 ## Agent skill
 
 `skills/seo-audit/SKILL.md` teaches an agent the loop of audit, apply each finding's `fix`, then re-check the rules it fixed against the first run, how to map rule ids to framework code (Next.js, Astro, Nuxt, SvelteKit, Remix, TanStack Start), and the caveats (preview-host noindex, localhost limits). It also has the agent put the title, description or canonical the audit found next to the fixed one in its pull request, so a reviewer sees each mistake without opening the site. Copy it to `.claude/skills/seo-audit/` in a project or `~/.claude/skills/` to make it available; this repo links it under `.claude/skills/`.
+
+## Telemetry
+
+The CLI and the local MCP server send anonymous usage data to RIVI Software, in PostHog's EU cloud, so we can see which commands, flags and rules are used and where calls fail ([issue #57](https://github.com/rivi-software/agentic-seo-check/issues/57)). The first run says so on stderr.
+
+- **The CLI** sends one `cli_command` event for each run of `audit`, `crawl`, `aeo` and `rules`: the command, the names of the flags you gave (never their values), the kind of target (`url`, `localhost`, `directory`, `file` or `stdin`), the exit code, the duration, the number of pages, the findings per severity, the ids of the rules that fired, the version, Node's major version and the OS. It waits a second at most for the event to go, after the report is written.
+- **The local MCP server** sends one `$mcp_tool_call` event per tool call (the tool, whether it failed and the kind of failure, the duration, the MCP client and its version) and one `$mcp_initialize` per connection, in the shape [PostHog's MCP Analytics](https://posthog.com/docs/mcp-analytics) reads.
+- **Never sent:** a URL, a hostname, a path, a header, the HTML, the arguments of a tool call, anything from a page or a report but the counts, or an id that lasts. Each CLI run gets a new id, and the server's lasts one session. No event asks PostHog for a location or a person profile, and the project discards IP addresses.
+
+Turn it off with any of these:
+
+```bash
+agentic-seo-check telemetry disable   # kept in ~/.config/agentic-seo-check/telemetry.json (%APPDATA% on Windows)
+DO_NOT_TRACK=1                        # for one run, or in your shell's profile
+AGENTIC_SEO_CHECK_TELEMETRY=0
+```
+
+It is off wherever `CI` is set. `agentic-seo-check telemetry` says whether it is on and why, and `telemetry enable` turns it back on. The library sends nothing. The hosted server and the website have analytics of their own, described under [Hosted server](#hosted-server).
 
 ## Output shape
 

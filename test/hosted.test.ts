@@ -23,6 +23,7 @@ import {
   hostedUrlProblem,
   siteRefusal,
 } from "../src/core/hosted.js";
+import { HOSTED_TOOLS } from "../src/mcp-hosted.js";
 import { createMcpServer } from "../src/mcp.js";
 import type {
   HostedCallEnd,
@@ -302,6 +303,15 @@ describe("the hosted server", () => {
         "npx -y @rivi-software/agentic-seo-check mcp"
       );
       expect(pageTool?.description).not.toContain("localhost dev server");
+    });
+
+    it("counts every tool it lists in its analytics (issue #57)", async () => {
+      const client = await connect(profileWith().profile);
+      const { tools } = await client.listTools();
+
+      expect([...HOSTED_TOOLS].toSorted()).toStrictEqual(
+        tools.map((t) => t.name).toSorted()
+      );
     });
 
     it("names every tool in its annotations and links each audit to its docs", async () => {
