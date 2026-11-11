@@ -40,12 +40,17 @@ export const HOSTED_LIMITS = {
    * are up to 6 MB in UTF-8, and JSON escaping adds to that.
    */
   maxRequestBytes: 8_000_000,
-  maxPages: 25,
-  maxDepth: 3,
+  /**
+   * Pages a crawl audits (issue #73). A crawl keeps what it extracted from each page, not its DOM,
+   * so its memory grows with `concurrency` rather than with this: 100 pages of 113 KB, both audits,
+   * stay under a 128 MB heap.
+   */
+  maxPages: 100,
+  maxDepth: 5,
   /** Requests at a time; a Worker has at most 6 connections waiting for headers. */
   concurrency: 4,
   /** Internal links, sitemap URLs and images a crawl checks, and as many external links. */
-  maxLinkChecks: 50,
+  maxLinkChecks: 100,
   timeoutMs: 15_000,
   maxSitemaps: 10,
   maxSitemapBytes: 5_000_000,

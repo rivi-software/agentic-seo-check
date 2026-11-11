@@ -202,7 +202,7 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
 
   switch (pathname) {
     case "/": {
-      return page(request, landingPage(env.DAILY_REQUESTS), HTML);
+      return page(request, landingPage(env), HTML);
     }
 
     case "/crawler": {

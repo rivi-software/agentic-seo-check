@@ -346,7 +346,7 @@ const KEEPS: [iconName: IconName, title: string, text: string][] = [
   [
     "clock",
     "The hostname, for three months",
-    "Each run's outcome, duration, requests and hostname. Never the path, the query or your IP address.",
+    "Each run's outcome, duration, requests and hostname. Never the path, the query or your IP address: only a hash of it, until 00:00 UTC, to count the sites you audit that day.",
   ],
   [
     "shield",

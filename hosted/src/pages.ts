@@ -9,6 +9,7 @@ import { MAKER, PRODUCT_NAME, REPOSITORY_URL } from "../../src/brand.js";
 import { LOCAL_PRODUCT_TOKEN } from "../../src/core/fetch.js";
 import { HOSTED_LIMITS, LOCAL_SERVER } from "../../src/core/hosted.js";
 import { ORIGIN, rateLimit, SITE_ORIGIN, USER_AGENT } from "./limits.js";
+import type { DailyLimits } from "./limits.js";
 import { DIRECTORY_PATH } from "./signing.js";
 import { esc } from "./site/html.js";
 import { scoreRing, severityChip } from "./site/report.js";
@@ -179,8 +180,8 @@ const mark = (yes: boolean): string =>
     ? `<span class="yes">${icon("check")}<span class="sr-only">Yes</span></span>`
     : `<span class="no">${icon("x")}<span class="sr-only">No</span></span>`;
 
-/** The landing page at /, with the limits of `dailyRequests` and wrangler.jsonc. */
-export const landingPage = (dailyRequests: number): string =>
+/** The landing page at /, with the `daily` limits and the rate limits of wrangler.jsonc. */
+export const landingPage = (daily: DailyLimits): string =>
   layout({
     path: "/",
     title: `${PRODUCT_NAME} hosted MCP server | ${MAKER}`,
@@ -237,7 +238,7 @@ ${CHAT}
 <p class="kicker">Fair use</p>
 <h2 id="limits-title">Limits.</h2>
 <p>Free for everyone, so each site and each caller gets a fair share. A call past a limit names the limit and when to try again.</p>
-<p>Counted per Cloudflare location, so approximate. <code>seo_list_rules</code> is not counted.</p>
+<p>The limits a minute are counted per Cloudflare location, so approximate. <code>seo_list_rules</code> is not counted, and inline HTML counts for no site. A page that redirects to another hostname, a subdomain included, counts that hostname as a site too.</p>
 </div>
 <div class="spec"><table>
 <thead><tr><th scope="col">What</th><th scope="col">Limit</th></tr></thead>
@@ -245,7 +246,9 @@ ${CHAT}
 ${limitRow("Requests to one site, from every caller together", perPeriod("SITE_REQUESTS", "requests"))}
 ${limitRow("Tool calls from one IP address", `${perPeriod("CALLER_CALLS", "calls")}, ${perPeriod("CALLER_CRAWLS", "crawls")} among them`)}
 ${limitRow("Tool calls from claude.ai or ChatGPT, each counted as one caller", `${perPeriod("PLATFORM_CALLS", "calls")}, ${perPeriod("PLATFORM_CRAWLS", "crawls")} among them`)}
-${limitRow("Requests to all sites together", `${dailyRequests.toLocaleString("en")} a day; then audits of inline HTML still work until 00:00 UTC`)}
+${limitRow("Different sites from one IP address", `${daily.CALLER_SITES} a day; a site audited today can be audited again until 00:00 UTC`)}
+${limitRow("Different sites from claude.ai or ChatGPT, each counted as one caller", `${daily.PLATFORM_SITES} a day`)}
+${limitRow("Requests to all sites together", `${daily.DAILY_REQUESTS.toLocaleString("en")} a day; then audits of inline HTML still work until 00:00 UTC`)}
 ${limitRow("A crawl", `${HOSTED_LIMITS.maxPages} pages, ${HOSTED_LIMITS.maxDepth} links deep, ${HOSTED_LIMITS.maxLinkChecks} link checks, ${HOSTED_LIMITS.maxSitemaps} sitemaps of up to ${MB(HOSTED_LIMITS.maxSitemapBytes)}`)}
 ${limitRow("A page", `the first ${MB(HOSTED_LIMITS.maxBodyBytes)} of its HTML, within ${HOSTED_LIMITS.timeoutMs / 1000} seconds`)}
 </tbody>
@@ -274,7 +277,7 @@ ${limitRow("A page", `the first ${MB(HOSTED_LIMITS.maxBodyBytes)} of its HTML, w
 </div>
 <div class="rows">
 <div class="row" id="robots"><h3>robots.txt</h3><div class="row-body"><p>The server obeys robots.txt for every request it sends, an audit of one page included: the group for <code>agentic-seo-check</code>, or <code>*</code> when there is none. A crawl waits between requests to a site as its <code>Crawl-delay</code> asks, for at most ${CRAWL_DELAY_BUDGET} in all. When robots.txt keeps it out, or a site turns it away, the server says so and requests nothing more there.</p></div></div>
-<div class="row" id="privacy"><h3>Privacy</h3><div class="row-body"><p>The server keeps no HTML you send, no reports and no headers. For each call it records the tool, the outcome, the duration, the requests and pages, and the hostname audited, for three months, so a report of too many requests to a site can be checked. Never the path, the query or your IP address.</p><p>PostHog (EU) gets one event per call, and one per bug of ours: the tool, the outcome, the duration, the counts and the MCP client. Never the hostname, the arguments, the answer or your IP address. These pages count visits with it too, without a cookie unless you accept one. The <a href="${PRIVACY_URL}">privacy policy</a> has the details.</p></div></div>
+<div class="row" id="privacy"><h3>Privacy</h3><div class="row-body"><p>The server keeps no HTML you send, no reports and no headers. For each call it records the tool, the outcome, the duration, the requests and pages, and the hostname audited, for three months, so a report of too many requests to a site can be checked. Never the path, the query or your IP address. To count the different sites an address audits in a day, it keeps a hash of the address and of each hostname, keyed with a random key made for the day, and deletes them with the key at 00:00 UTC.</p><p>PostHog (EU) gets one event per call, and one per bug of ours: the tool, the outcome, the duration, the counts and the MCP client. Never the hostname, the arguments, the answer or your IP address. These pages count visits with it too, without a cookie unless you accept one. The <a href="${PRIVACY_URL}">privacy policy</a> has the details.</p></div></div>
 <div class="row" id="requests"><h3>Requests to your site</h3><div class="row-body"><p><a href="/crawler">The page for site owners</a> says what the requests are and how to stop them. Report abuse through <a href="${ABUSE_URL}">help.rivi.software/contact</a>.</p></div></div>
 </div>
 </div>
@@ -329,7 +332,7 @@ export const crawlerPage = (): string =>
 <section class="section section-tight" aria-label="The requests in detail">
 <div class="wrap">
 <div class="rows">
-<div class="row" id="requests"><h2>What the requests are</h2><div class="row-body"><p>Every audit reads robots.txt first and obeys it: the group for <code>agentic-seo-check</code>, or <code>*</code> when there is none. An audit of one page is then one request, plus any redirects; the website's form audits one page for search engines and for answer engines, which also reads llms.txt, and crawls the site when it is given the homepage. A crawl requests up to ${HOSTED_LIMITS.maxPages} pages, up to ${HOSTED_LIMITS.maxSitemaps} sitemaps and up to ${HOSTED_LIMITS.maxLinkChecks} link and image targets: about 150 requests. It waits between requests as <code>Crawl-delay</code> asks, and stops once those waits add up to more than ${CRAWL_DELAY_BUDGET}, every site's together. The server sends at most ${perPeriod("SITE_REQUESTS", "requests")} to one hostname, from all its callers together. A 429 or a challenge page ends its requests to the site, and a 403 those to the page: it does not retry, and sends no other User-Agent.</p></div></div>
+<div class="row" id="requests"><h2>What the requests are</h2><div class="row-body"><p>Every audit reads robots.txt first and obeys it: the group for <code>agentic-seo-check</code>, or <code>*</code> when there is none. An audit of one page is then one request, plus any redirects; the website's form audits one page for search engines and for answer engines, which also reads llms.txt, and crawls the site when it is given the homepage. A crawl requests up to ${HOSTED_LIMITS.maxPages} pages, up to ${HOSTED_LIMITS.maxSitemaps} sitemaps and up to ${HOSTED_LIMITS.maxLinkChecks} link and image targets: about 300 requests. It waits between requests as <code>Crawl-delay</code> asks, and stops once those waits add up to more than ${CRAWL_DELAY_BUDGET}, every site's together. The server sends at most ${perPeriod("SITE_REQUESTS", "requests")} to one hostname, from all its callers together. A 429 or a challenge page ends its requests to the site, and a 403 those to the page: it does not retry, and sends no other User-Agent.</p></div></div>
 <div class="row" id="recognise"><h2>How to recognise them</h2><div class="row-body">
 <p>The requests carry this User-Agent:</p>
 ${snippet(USER_AGENT, "user_agent")}

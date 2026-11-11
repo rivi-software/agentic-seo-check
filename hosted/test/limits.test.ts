@@ -25,6 +25,8 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
   const points: AnalyticsEngineDataPoint[] = [];
   const waiting: Promise<unknown>[] = [];
   let stored = { day: "", count: 0 };
+  /** The sites each caller audited, by day and caller, as HostedState counts them. */
+  const sites = new Map<string, Set<string>>();
 
   const counter = {
     // oxlint-disable-next-line eslint/require-await -- the Durable Object answers with a promise
@@ -38,12 +40,36 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
 
       return stored.count;
     },
+    // oxlint-disable-next-line eslint/require-await -- the Durable Object answers with a promise
+    admitSite: async (
+      day: string,
+      caller: string,
+      site: string,
+      limit: number
+    ) => {
+      const known = sites.get(`${day} ${caller}`) ?? new Set<string>();
+      sites.set(`${day} ${caller}`, known);
+
+      if (known.has(site)) {
+        return true;
+      }
+
+      if (known.size >= limit) {
+        return false;
+      }
+
+      known.add(site);
+
+      return true;
+    },
   };
 
   const env: LimitsEnv = {
     MODE: "open",
     DAILY_REQUESTS: 100_000,
-    SITE_REQUESTS: limiter(300),
+    CALLER_SITES: 10,
+    PLATFORM_SITES: 100,
+    SITE_REQUESTS: limiter(600),
     CALLER_CALLS: limiter(30),
     CALLER_CRAWLS: limiter(3),
     PLATFORM_CALLS: limiter(300),
@@ -78,6 +104,7 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
     points,
     settled: () => Promise.all(waiting),
     stored: () => stored,
+    sites,
   };
 };
 
@@ -182,14 +209,14 @@ describe("the hosted server's limits", () => {
     );
   });
 
-  it("send a site 300 requests a minute from all callers together, and count what they send", async () => {
+  it("send a site 600 requests a minute from all callers together, and count what they send", async () => {
     const { env, ctx, settled, stored } = fakeEnv();
     const first = await hostedProfile(env, ctx, PERSON).startCall(PAGE);
     const second = await hostedProfile(env, ctx, CLAUDE).startCall(PAGE);
     const url = new URL("https://www.example.com/page");
 
     const answers = await Promise.all(
-      Array.from({ length: 301 }, (_, i) =>
+      Array.from({ length: 601 }, (_, i) =>
         (i % 2 ? first : second).gate?.beforeRequest(url)
       )
     );
@@ -198,13 +225,13 @@ describe("the hosted server's limits", () => {
     second.end?.({ outcome: "refused", pages: 0 });
     await settled();
 
-    expect(answers.filter((a) => a === undefined)).toHaveLength(300);
+    expect(answers.filter((a) => a === undefined)).toHaveLength(600);
     expect(answers.at(-1)).toStrictEqual({
       scope: "host",
       message:
-        "The hosted server has sent www.example.com 300 requests in the last minute, its limit per site for all its callers together. Try again in a minute. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp",
+        "The hosted server has sent www.example.com 600 requests in the last minute, its limit per site for all its callers together. Try again in a minute. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp",
     });
-    expect(stored().count).toBe(300);
+    expect(stored().count).toBe(600);
   });
 
   it("count a call's requests as they go, so one cut off midway still counts", async () => {
@@ -239,6 +266,100 @@ describe("the hosted server's limits", () => {
     await expect(refusalOf(profile.startCall(INLINE))).resolves.toBe(
       "admitted"
     );
+  });
+
+  it("let a caller audit 10 different sites a day, and those as often as it likes", async () => {
+    const { env, ctx } = fakeEnv();
+    const profile = hostedProfile(env, ctx, PERSON);
+
+    const on = (host: string, call = PAGE) =>
+      refusalOf(profile.startCall({ ...call, host }));
+
+    const ten = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => on(`site${i}.example.com`))
+    );
+
+    expect(ten.every((answer) => answer === "admitted")).toBeTruthy();
+    await expect(on("site10.example.com")).resolves.toBe(
+      "This address has audited 10 different sites on the hosted server today, its daily limit per caller. Sites it audited today still work; others wait until 00:00 UTC. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp"
+    );
+    // A site of the day, crawled now, with www. and a trailing dot; and inline HTML, which is none.
+    await expect(on("site3.example.com", CRAWL)).resolves.toBe("admitted");
+    await expect(on("www.site5.example.com.")).resolves.toBe("admitted");
+    await expect(refusalOf(profile.startCall(INLINE))).resolves.toBe(
+      "admitted"
+    );
+  });
+
+  it("count a site only once the other limits let its call through", async () => {
+    const { env, ctx, sites } = fakeEnv({
+      CALLER_CRAWLS: limiter(0),
+      CALLER_SITES: 1,
+    });
+
+    const profile = hostedProfile(env, ctx, PERSON);
+
+    await expect(refusalOf(profile.startCall(CRAWL))).resolves.toContain(
+      "started 3 crawls"
+    );
+    await expect(
+      refusalOf(profile.startCall({ ...PAGE, host: "shop.example.com" }))
+    ).resolves.toBe("admitted");
+    await expect(refusalOf(profile.startCall(PAGE))).resolves.toContain(
+      "This address has audited 1 different site on the hosted server today"
+    );
+    expect([...sites.values()].map((s) => [...s])).toStrictEqual([
+      ["shop.example.com"],
+    ]);
+  });
+
+  it("count another site a page audit's redirect leads to, but not a crawl's link checks", async () => {
+    const { env, ctx, sites } = fakeEnv({ CALLER_SITES: 2 });
+    const profile = hostedProfile(env, ctx, PERSON);
+    const page = await profile.startCall(PAGE);
+    const crawl = await profile.startCall(CRAWL);
+
+    const go = (call: typeof page, url: string) =>
+      call.gate?.beforeRequest(new URL(url));
+
+    // Its own site, with or without www., and a redirect to a second site, which counts.
+    await expect(go(page, "https://example.com/")).resolves.toBeUndefined();
+    await expect(
+      go(page, "https://second.example.org/robots.txt")
+    ).resolves.toBeUndefined();
+    await expect(go(page, "https://third.example.net/")).resolves.toStrictEqual(
+      {
+        scope: "host",
+        message:
+          "The page led to third.example.net, another site than the one audited. This address has audited 2 different sites on the hosted server today, its daily limit per caller. Sites it audited today still work; others wait until 00:00 UTC. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp",
+      }
+    );
+    // A crawl checks links to any site, and counts none of them.
+    await expect(
+      go(crawl, "https://third.example.net/")
+    ).resolves.toBeUndefined();
+    expect([...sites.values()].map((s) => [...s])).toStrictEqual([
+      ["example.com", "second.example.org"],
+    ]);
+  });
+
+  it("share a platform's 100 sites a day among its users, apart from other callers", async () => {
+    const { env, ctx } = fakeEnv();
+    const claude = hostedProfile(env, ctx, CLAUDE);
+
+    const answers = await Promise.all(
+      Array.from({ length: 101 }, (_, i) =>
+        refusalOf(claude.startCall({ ...PAGE, host: `site${i}.example.com` }))
+      )
+    );
+
+    expect(answers.filter((a) => a === "admitted")).toHaveLength(100);
+    expect(answers.find((a) => a !== "admitted")).toBe(
+      "The users of claude.ai, Cowork and the Claude apps have together audited 100 different sites on the hosted server today, its daily limit for the platform. Sites they audited today still work; others wait until 00:00 UTC. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp"
+    );
+    await expect(
+      refusalOf(hostedProfile(env, ctx, PERSON).startCall(PAGE))
+    ).resolves.toBe("admitted");
   });
 
   it("turn crawls, or every call, off with MODE", async () => {
