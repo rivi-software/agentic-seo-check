@@ -498,6 +498,54 @@ describe("the hosted server", () => {
       ]);
     });
 
+    it("tells its analytics why a crawl stopped partway, though the call answered (issue #94)", async () => {
+      serve({
+        "https://shop.example.com/": {
+          body: page(
+            "Shop home page for the fixture",
+            '<a href="/a">A</a> <a href="/b">B</a>'
+          ),
+        },
+        "https://shop.example.com/a": { status: 429, body: "slow down" },
+        "https://shop.example.com/b": {
+          body: page("Page B of the fixture", '<a href="/">Home</a>'),
+        },
+      });
+
+      const { profile, ends } = profileWith();
+      const { client, calls } = await connectWatched(profile);
+      const site = { url: "https://shop.example.com/", concurrency: 1 };
+
+      await client.callTool({ name: "seo_crawl_site", arguments: site });
+      await client.callTool({
+        name: "seo_aeo_audit",
+        arguments: { ...site, crawl: true },
+      });
+
+      serve({
+        "*": { body: page("Shop home page for the fixture", "") },
+      });
+
+      await client.callTool({ name: "seo_crawl_site", arguments: site });
+
+      expect(
+        calls.map((c) => [
+          c.tool,
+          c.isError,
+          c.properties?.reason,
+          z
+            .array(z.string())
+            .parse(c.properties?.rules)
+            .filter((rule) => rule.endsWith("crawl-stopped")),
+        ])
+      ).toStrictEqual([
+        ["seo_crawl_site", false, "http_429", ["site.crawl-stopped"]],
+        ["seo_aeo_audit", false, "http_429", ["aeo.crawl-stopped"]],
+        ["seo_crawl_site", false, undefined, []],
+      ]);
+      expect(ends.map((e) => e.outcome)).toStrictEqual(["ok", "ok", "ok"]);
+    });
+
     it("names every tool in its annotations and links each audit to its docs", async () => {
       const client = await connect(profileWith().profile);
       const { tools } = await client.listTools();

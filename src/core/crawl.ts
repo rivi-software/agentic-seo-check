@@ -402,8 +402,19 @@ const checkSite = async (
   const isSite = (host: string) =>
     isSameSite(`https://${host}/`, startHost, options.includeSubdomains);
 
+  // The crawl still answers, so the gate hears from it which refusal stopped it (issue #94).
+  const stoppedEarly = (): RequestRefusedError | undefined => {
+    const refusal = refusals.stopped(isSite);
+
+    if (refusal) {
+      options.fetch.gate?.crawlStopped?.(refusal);
+    }
+
+    return refusal;
+  };
+
   if (!(crawl.siteChecks ?? true)) {
-    return { probes: {}, stopped: refusals.stopped(isSite) };
+    return { probes: {}, stopped: stoppedEarly() };
   }
 
   crawl.onProgress?.({ phase: "links", message: "Checking images" });
@@ -414,7 +425,7 @@ const checkSite = async (
     options
   );
 
-  const stopped = refusals.stopped(isSite);
+  const stopped = stoppedEarly();
 
   crawl.onProgress?.({
     phase: "probes",

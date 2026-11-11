@@ -102,6 +102,12 @@ export interface RequestGate {
    * request. It throws what the request threw, a refusal included.
    */
   robotsTxt?: (origin: string) => Promise<FetchResult>;
+  /**
+   * Told once when a refusal ended a crawl's requests to the site before it was done. The crawl
+   * still answers, with the pages it read and `site.crawl-stopped` (`aeo.crawl-stopped`), so no
+   * caller sees the refusal thrown: the hosted server notes its reason here (issue #94).
+   */
+  crawlStopped?: (refusal: RequestRefusedError) => void;
 }
 
 export interface FetchOptions {
