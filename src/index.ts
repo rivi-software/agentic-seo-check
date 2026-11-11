@@ -83,6 +83,14 @@ export type {
 
 export { createMcpServer, startMcpServer } from "./mcp.js";
 
+/**
+ * What a hosted profile's `startCall` throws to refuse a call as a limit (issue #93): any other
+ * error is the server's own failure.
+ */
+export { CallLimitError } from "./mcp-hosted.js";
+
+export type { LimitReason } from "./mcp-hosted.js";
+
 export type {
   HostedCall,
   HostedCallEnd,
