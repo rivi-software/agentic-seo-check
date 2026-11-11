@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
-  // The website (issue #39), a Worker of its own so that it deploys with each change to main, while
-  // the MCP server (wrangler.jsonc) deploys with each npm release. Run Wrangler through
+  // The website (issue #39), a Worker of its own beside the MCP server's (wrangler.jsonc). Both deploy
+  // with each change to main, the MCP server first (deploy-hosted.yml). Run Wrangler through
   // `pnpm run site:dev|site:build|site:deploy`, which build in the package's version and the limits
   // below (scripts/defines.ts). What both Workers share is held equal by hosted/test/configs.test.ts.
   "name": "agentic-seo-check-site",
@@ -44,7 +44,7 @@
     { "name": "PLATFORM_CRAWLS", "namespace_id": "35005", "simple": { "limit": 30, "period": 60 } }
   ],
   // The MCP server's Durable Object, so the form's requests count in the same day. It runs the code
-  // the MCP server last deployed: see deploy-site.yml before changing src/state.ts.
+  // the MCP server last deployed, which deploys first: keep its methods additive (src/state.ts).
   "durable_objects": {
     "bindings": [
       { "name": "STATE", "class_name": "HostedState", "script_name": "agentic-seo-check-mcp" }
