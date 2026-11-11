@@ -1,8 +1,9 @@
 /**
- * The share image of a shared result (issue #54), as the Worker serves it: resvg's WebAssembly and
- * the card's fonts, which Wrangler bundles (the CompiledWasm and Data rules in wrangler.jsonc), and
- * the card itself (share-card.ts). Only the routes import this module: Node runs the pages' tests
- * and cannot import a .wasm or a font file.
+ * The share image of a shared result (issue #54), as the website's Worker serves it: resvg's
+ * WebAssembly and the card's fonts, which Wrangler bundles (the CompiledWasm and Data rules in
+ * wrangler.site.jsonc), and the card itself (share-card.ts). Only the website's routes import this
+ * module: Node runs the pages' tests and cannot import a .wasm or a font file, and the MCP server's
+ * Worker has no share links.
  */
 import { initWasm } from "@resvg/resvg-wasm";
 import resvg from "@resvg/resvg-wasm/index_bg.wasm";

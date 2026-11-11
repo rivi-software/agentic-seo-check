@@ -1,8 +1,8 @@
 /**
  * The files both hostnames serve beside their pages: the fonts, Geist and Geist Mono as Latin
  * subsets (SIL OFL 1.1, assets/geist-OFL.txt), which rivi.software sets its pages in, and each
- * hostname's share image (ui/og.ts). Wrangler bundles their bytes (the Data rule in
- * wrangler.jsonc). Only the routes import this module: Node runs the pages' tests and cannot
+ * hostname's share image (ui/og.ts). Wrangler bundles their bytes (the Data rule in each
+ * Worker's configuration). Only the routes import this module: Node runs the pages' tests and cannot
  * import a font or an image.
  */
 import geist from "../../assets/geist-latin.woff2";

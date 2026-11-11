@@ -72,8 +72,8 @@ jobs:
           # The default in v2, set so a bump that changes it does not move commits to the git CLI.
           push-with-git-cli: false
 
-  # The hosted MCP server runs the release just published: a job of its own, whose environment
-  # holds the Cloudflare token, so the publish job never sees it.
+  # The hosted MCP server runs the release just published, and the website deploys again with it:
+  # a job of its own, whose environment holds the Cloudflare token, so the publish job never sees it.
   deploy-hosted:
     name: Deploy the hosted server
     needs: release

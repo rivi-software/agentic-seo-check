@@ -11,8 +11,6 @@ export { SITE_ORIGIN } from "../limits.js";
 
 export { NPM_URL, publisher } from "../ui/frame.js";
 
-export const SITE_HOST = new URL(SITE_ORIGIN).hostname;
-
 /** The hosted MCP server's own page, which says how to add it to an assistant. */
 export const HOSTED_PAGE = `${MCP_ORIGIN}/`;
 

@@ -1,8 +1,8 @@
 /**
  * The hosted MCP server of Agentic SEO Check (issue #35): a stateless Worker that answers MCP over
  * Streamable HTTP at /mcp with the hosted tools of `createMcpServer`, and serves the pages that say
- * how to use it and what its requests are. On its second hostname it serves the project's website,
- * with a page audit to run in the browser (issue #39, src/site/).
+ * how to use it and what its requests are. The project's website is a Worker of its own
+ * (src/site/worker.ts), so it deploys apart from the server.
  */
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
@@ -23,7 +23,6 @@ import {
 } from "./pages.js";
 import { DIRECTORY_PATH, directoryResponse, signingKeys } from "./signing.js";
 import { SITE_JS } from "./site/files.js";
-import { isSiteHost, siteRoute } from "./site/routes.js";
 import { fontResponse, shareImageResponse } from "./ui/assets.js";
 import { OG_IMAGE } from "./ui/og.js";
 import { posthogResponse } from "./ui/posthog-script.js";
@@ -172,11 +171,6 @@ const keyDirectory = async (request: Request, env: Env): Promise<Response> => {
 const route = (request: Request, env: Env, ctx: ExecutionContext) => {
   const { hostname, pathname, search } = new URL(request.url);
 
-  // The website has a hostname of its own; this one keeps /mcp and the server's pages.
-  if (isSiteHost(hostname)) {
-    return siteRoute(request, env, ctx);
-  }
-
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: PREFLIGHT });
   }
@@ -256,29 +250,19 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
 const KNOWN_PATHS = new Set([
   "/",
   "/mcp",
-  "/audit",
-  "/rules",
   "/crawler",
   "/robots.txt",
-  "/sitemap.xml",
-  "/llms.txt",
   "/site.js",
   "/ph.js",
   "/favicon.svg",
   DIRECTORY_PATH,
 ]);
 
-/** Where a request went, as an error's event names it: never its address, nor a share link's result. */
+/** Where a request went, as an error's event names it: never its address. */
 const errorRoute = (request: Request): ErrorRoute => {
-  const { hostname, pathname } = new URL(request.url);
+  const { pathname } = new URL(request.url);
 
-  let path = KNOWN_PATHS.has(pathname) ? pathname : "other";
-
-  if (pathname.startsWith("/share/")) {
-    path = "/share/:result";
-  }
-
-  return `${isSiteHost(hostname) ? "website" : "server"}:${path}`;
+  return `server:${KNOWN_PATHS.has(pathname) ? pathname : "other"}`;
 };
 
 export default {
