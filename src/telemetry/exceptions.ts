@@ -52,9 +52,13 @@ const IDENTIFIER = /^[A-Za-z_$][\w$]{0,63}$/u;
 /**
  * A message without what could be a user's or a page's: our own messages name the audited target,
  * and V8's JSON.parse quotes its input, which can be a page. Every pattern reads a bounded stretch
- * from each place it starts, so a long message cannot make it backtrack.
+ * from each place it starts, so a long message cannot make it backtrack. What is left is cut to
+ * `maxLength`: an agent's feedback (issue #101) may run longer than an error's message.
  */
-export const cleanMessage = (message: string): string => {
+export const cleanMessage = (
+  message: string,
+  maxLength = MAX_MESSAGE
+): string => {
   const text = message
     .slice(0, MAX_READ)
     // A URL, whose host and path are the audited site's, up to a space or a quote.
@@ -86,9 +90,7 @@ export const cleanMessage = (message: string): string => {
       "<host>"
     );
 
-  return text.length > MAX_MESSAGE
-    ? `${text.slice(0, MAX_MESSAGE - 1)}…`
-    : text;
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 };
 
 /** Where npm and pnpm put the package, inside a node_modules directory. */

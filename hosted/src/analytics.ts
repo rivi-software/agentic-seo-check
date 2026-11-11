@@ -9,18 +9,27 @@
  * with every request, and the token holds the session's id and the client's name, version and
  * protocol revision. Nothing is kept on the server, and nothing ties one connection to another or
  * to a person, such as the caller's address. A client that sends no token back gets a session per
- * call. What an event says of the caller is the MCP client and the platform the call comes from:
+ * call. A conversation joins its calls across connections too (issue #101): each answer ends with
+ * the id of its conversation, which the agent sends back in `conversation_id`, and a call's session
+ * is named after it. What an event says of the caller is the MCP client and the platform the call comes from:
  * claude.ai's or ChatGPT's addresses, or neither. The hostname a call audited stays in Analytics
  * Engine, for abuse reports, and out of PostHog.
  *
  * What a call did comes from the tools (issue #84, src/mcp-hosted.ts): the score, the counts and
  * the rules of its audit, a re-check's result, the options it ran with, why it stopped, the names
- * of the arguments it gave, and the agent's `context`, cleaned, as `$mcp_intent`.
+ * of the arguments it gave, and the agent's `context`, cleaned, as `$mcp_intent`. The transport adds
+ * the model the agent runs as and the tool's description; an agent's feedback is a `$mcp_feedback`
+ * event, and a call to a tool the server lacks a `$mcp_unknown_tool` one (issue #101).
  */
 import { z } from "zod";
 
 import { exceptionEvent } from "../../src/telemetry/exceptions.js";
-import { initializeEvent, toolCallEvent } from "../../src/telemetry/mcp.js";
+import {
+  feedbackEvent,
+  initializeEvent,
+  toolCallEvent,
+  unknownToolEvent,
+} from "../../src/telemetry/mcp.js";
 import type {
   McpAnalytics,
   McpCaller,
@@ -53,6 +62,11 @@ export interface HostedAnalytics {
    * started, or undefined when it had none.
    */
   sessionToken: () => string | undefined;
+  /**
+   * The session the request's token names, as a UUIDv7: the conversation of a call that sends back
+   * none (`HostedProfile.connection`, issue #101).
+   */
+  connection?: string;
 }
 
 /** How long an event may take to reach PostHog; the answer has gone by then. */
@@ -220,6 +234,15 @@ export const hostedAnalytics = (
     );
   };
 
+  /**
+   * The session of a call: its conversation's, which spans connections; else the one its token
+   * names; else its own.
+   */
+  const sessionOf = (conversationId: string | undefined): string =>
+    conversationId === undefined
+      ? (session?.session ?? `ses_${uuidv7()}`)
+      : `ses_${conversationId}`;
+
   const context = (
     sessionId: string,
     record?: CallRecord
@@ -227,6 +250,7 @@ export const hostedAnalytics = (
     sessionId,
     surface: "hosted",
     properties: {
+      $mcp_interface: "mcp",
       platform: caller.platform ?? "none",
       outcome: record?.outcome,
       requests: record?.requests,
@@ -239,6 +263,7 @@ export const hostedAnalytics = (
       records.set(record.tool, record);
     },
     sessionToken: () => started,
+    connection: session?.session.slice("ses_".length),
     analytics: {
       initialize: (client) => {
         const sessionId = `ses_${uuidv7()}`;
@@ -256,7 +281,7 @@ export const hostedAnalytics = (
         const record = records.get(call.tool);
         records.delete(call.tool);
 
-        const where = context(session?.session ?? `ses_${uuidv7()}`, record);
+        const where = context(sessionOf(call.conversationId), record);
         send(toolCallEvent(withSession(call, session), where));
 
         // The error behind an internal failure, in the call's session.
@@ -272,6 +297,25 @@ export const hostedAnalytics = (
         if (event) {
           send(event);
         }
+      },
+      feedback: (feedback) => {
+        const record = records.get(feedback.tool);
+        records.delete(feedback.tool);
+
+        send(
+          feedbackEvent(
+            withSession(feedback, session),
+            context(sessionOf(feedback.conversationId), record)
+          )
+        );
+      },
+      unknownTool: (call) => {
+        send(
+          unknownToolEvent(
+            withSession(call, session),
+            context(sessionOf(call.conversationId))
+          )
+        );
       },
     },
   };
