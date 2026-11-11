@@ -201,6 +201,21 @@ describe("error tracking", () => {
       expect(PACKAGE_PATH).toBe(`${manifest.name}/`);
     });
 
+    it("reads no frame out of a message changed after V8 wrote the stack", () => {
+      const changed = new Error(
+        "Bad page\n    at Alice Smith lives here (shop.example.com:1:2)"
+      );
+
+      // V8 writes the stack when it is first read; a library then rewrites the message.
+      void changed.stack;
+      changed.message = "Bad page";
+
+      const [first] = exceptionList(changed, true);
+      const json = JSON.stringify(first);
+
+      expect(json).not.toMatch(/Alice|shop\.example/u);
+    });
+
     it("reads no frame out of the message", () => {
       const sneaky = new Error(
         "Bad page\n    at secret (https://shop.example.com/x.js:1:2)"

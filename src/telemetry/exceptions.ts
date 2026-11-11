@@ -156,19 +156,27 @@ const placeOf = (
     return { filename: name.slice(name.lastIndexOf("/") + 1), in_app: false };
   }
 
-  // A Worker's bundle (`index.js`), and V8's `native` and `<anonymous>`; nothing else, such as a
-  // URL, is a file of this code.
-  return /^[\w.-]+(?:\/[\w.-]+)*$/u.test(name)
-    ? { filename: name, in_app: name !== "native" }
-    : {
-        filename: name.startsWith("<") ? name.slice(0, 64) : "<unknown>",
-        in_app: false,
-      };
+  // A Worker's bundle (`index.js`) is a JavaScript or TypeScript file by a relative name. Nothing
+  // else is, such as a hostname or a URL that text from a page made look like a frame.
+  if (/^[\w.-]+(?:\/[\w.-]+)*\.[cm]?[jt]s$/u.test(name)) {
+    return { filename: name, in_app: true };
+  }
+
+  // V8's own: `native`, `<anonymous>`.
+  return {
+    filename: name === "native" || /^<\w+>$/u.test(name) ? name : "<unknown>",
+    in_app: false,
+  };
 };
 
-/** A function's name, unless it reads as a path or a URL. */
+/**
+ * A function's name as V8 writes one (`run`, `new Promise`, `Object.<anonymous>`,
+ * `fn [as alias]`), or `?` for anything else, such as words or a URL.
+ */
 const functionName = (name: string): string =>
-  name && !/[/\\]/u.test(name) ? name.slice(0, 256) : "?";
+  /^(?:new )?[\w$.<>]{1,200}(?: \[as [\w$.<>]{1,50}\])?$/u.test(name)
+    ? name
+    : "?";
 
 /** One line of a V8 stack, such as `    at async run (file:///…/dist/cli.js:12:5)`. */
 const parseFrame = (
@@ -231,12 +239,15 @@ const framesOf = (
   // A library may set `stack` to anything; String() reads what V8 wrote.
   const written = String(error.stack ?? "");
 
-  // The stack starts with the message, which may hold anything: frames come after it.
-  const header = `${String(error.name)}: ${String(error.message)}`;
+  // The stack starts with the message, which may hold anything: frames come after it. V8 writes the
+  // stack when it is first read, so a message changed after that no longer matches: then as many
+  // lines as the message has are skipped, and a frame's names must still read as code.
+  const message = String(error.message);
+  const header = `${String(error.name)}: ${message}`;
 
   const stack = written.startsWith(header)
     ? written.slice(header.length)
-    : written;
+    : written.split("\n").slice(message.split("\n").length).join("\n");
 
   const frames: ExceptionFrame[] = [];
 
