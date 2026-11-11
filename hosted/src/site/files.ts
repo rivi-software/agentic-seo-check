@@ -13,8 +13,15 @@ import { SITE_ORIGIN } from "./layout.js";
  * /audit answers a form, and its answer is a report nobody else should find. /share/ stays open:
  * X, LinkedIn and Bluesky fetch a shared result's page and image to draw its card, and the page
  * keeps itself out of search with noindex.
+ *
+ * Cloudflare's Bot Preference Sync puts a section before this file that disallows Google-Extended,
+ * with the other AI training crawlers, on every host of rivi.software. The group for Google-Extended
+ * here lets Gemini's app answers cite the site (and Gemini train on it), on this host only: a
+ * crawler's groups combine, and an Allow wins over a Disallow as long (RFC 9309, sections 2.2.1 and
+ * 2.2.2), as Google reads them too. It repeats Disallow: /audit, since a crawler with a group of its
+ * own ignores the `*` group.
  */
-export const SITE_ROBOTS_TXT = `User-agent: *\nDisallow: /audit\n\nSitemap: ${SITE_ORIGIN}/sitemap.xml\n`;
+export const SITE_ROBOTS_TXT = `User-agent: *\nDisallow: /audit\n\n# Gemini may cite this site: this group combines with the Disallow for Google-Extended above, and Allow wins (RFC 9309).\nUser-agent: Google-Extended\nAllow: /\nDisallow: /audit\n\nSitemap: ${SITE_ORIGIN}/sitemap.xml\n`;
 
 export const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
