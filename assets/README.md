@@ -4,7 +4,7 @@ The RIVI Software identity the README shows, each file for light grounds and `-o
 
 | File | What | Shown in |
 | --- | --- | --- |
-| `rivi-agentic-seo-check.svg`, `rivi-agentic-seo-check-on-dark.svg` | The RIVI agentic-seo-check lockup: the mark beside the name | The README's header |
+| `rivi-agentic-seo-check.svg`, `rivi-agentic-seo-check-on-dark.svg` | The RIVI Agentic SEO Check lockup: the mark beside the name | The README's header |
 | `rivi-mark.svg`, `rivi-mark-on-dark.svg` | The RIVI Software mark: an ink tile with five level bars, the middle one lit in the signal green | The sign-off at the end of the README |
 | `icon.svg` | The project's icon: a copy of `rivi-mark.svg` | Directories, registries and tools that look for an icon at `assets/icon.svg` |
 

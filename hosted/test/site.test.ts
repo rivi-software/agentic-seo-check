@@ -171,7 +171,7 @@ describe("the website's pages", () => {
     expect(SITEMAP_XML).toContain(`<loc>${SITE_ORIGIN}/rules</loc>`);
     expect(SITE_ROBOTS_TXT).toContain(`Sitemap: ${SITE_ORIGIN}/sitemap.xml`);
     expect(SITE_ROBOTS_TXT).toContain("Disallow: /audit");
-    expect(LLMS_TXT.startsWith("# agentic-seo-check\n\n> ")).toBeTruthy();
+    expect(LLMS_TXT.startsWith("# Agentic SEO Check\n\n> ")).toBeTruthy();
     expect(notFoundPage()).toContain("Not found");
   });
 });

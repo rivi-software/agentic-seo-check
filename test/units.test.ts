@@ -137,7 +137,7 @@ describe("scoring and reports", () => {
     expect(md).toContain("`title.missing`");
     expect(md).toContain("Fix:");
     expect(md.trimEnd().split("\n").at(-1)).toBe(
-      `_Audited with [agentic-seo-check](https://github.com/rivi-software/agentic-seo-check) ${VERSION}, made by [RIVI Software](https://rivi.software)._`
+      `_Audited with [Agentic SEO Check](https://github.com/rivi-software/agentic-seo-check) ${VERSION}, made by [RIVI Software](https://rivi.software)._`
     );
   });
 });

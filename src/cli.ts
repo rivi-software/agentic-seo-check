@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 
 import { Command, InvalidArgumentError, Option } from "commander";
 
-import { MAKER, MAKER_URL, REPOSITORY_URL } from "./brand.js";
+import { MAKER, MAKER_URL, PRODUCT_NAME, REPOSITORY_URL } from "./brand.js";
 import { auditAeoTarget, compactAeoAudit } from "./core/aeo/audit.js";
 import { auditTarget, compactAudit } from "./core/audit.js";
 import type { CrawlOptions, ProgressEvent } from "./core/audit.js";
@@ -23,7 +23,7 @@ const program = new Command();
 program
   .name("agentic-seo-check")
   .description(
-    "SEO and AEO analysis for coding agents. Audits URLs, static build output or raw HTML for search engines (audit, crawl) and AI answer engines (aeo), and prints machine-readable findings."
+    `${PRODUCT_NAME}: SEO and AEO analysis for coding agents. Audits URLs, static build output or raw HTML for search engines (audit, crawl) and AI answer engines (aeo), and prints machine-readable findings.`
   )
   .version(VERSION)
   .addHelpText(

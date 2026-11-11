@@ -2,6 +2,7 @@
  * The page at /rules: every rule the audits report, by category, as `agentic-seo-check rules` and
  * `seo_list_rules` list them, for a person, a search engine or an agent to read.
  */
+import { MAKER, PRODUCT_NAME } from "../../../src/brand.js";
 import { ALL_RULES } from "../../../src/core/rules/index.js";
 import type {
   Category,
@@ -57,15 +58,15 @@ const byCategory = (): Map<Category, RuleMeta[]> => {
 export const rulesPage = (): string => {
   const groups = [...byCategory()];
 
-  const description = `The ${ALL_RULES.length} rules agentic-seo-check reports for search engines and AI answer engines: what each one finds, its severity and what it recommends.`;
+  const description = `The ${ALL_RULES.length} rules ${PRODUCT_NAME} reports for search engines and AI answer engines: what each one finds, its severity and what it recommends.`;
 
   return layout({
     path: "/rules",
-    title: "The rules of agentic-seo-check | RIVI Software",
+    title: `The rules of ${PRODUCT_NAME} | ${MAKER}`,
     description,
     data: {
       "@type": "WebPage",
-      name: "The rules of agentic-seo-check",
+      name: `The rules of ${PRODUCT_NAME}`,
       url: `${SITE_ORIGIN}/rules`,
       description,
       publisher,
@@ -74,7 +75,7 @@ export const rulesPage = (): string => {
 <div class="wrap">
 <div class="hero-copy">
 <p class="pill rise"><span class="dot" aria-hidden="true"></span>${ALL_RULES.length} rules in ${groups.length} categories</p>
-<h1 class="hero-title rise" id="rules-title" style="--d:60ms">The rules of agentic-seo-check.</h1>
+<h1 class="hero-title rise" id="rules-title" style="--d:60ms">The rules of ${PRODUCT_NAME}.</h1>
 </div>
 <p class="lede rise" style="--d:120ms">The audits report ${ALL_RULES.length} rules in ${groups.length} categories. Each rule has an id, a usual severity, what it finds on a page or site and what it recommends. A finding adds the exact edits for the page it is about.</p>
 </div>

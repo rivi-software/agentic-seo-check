@@ -1,4 +1,4 @@
-import { MAKER, MAKER_URL, REPOSITORY_URL } from "../../brand.js";
+import { MAKER, MAKER_URL, PRODUCT_NAME, REPOSITORY_URL } from "../../brand.js";
 import { VERSION } from "../../version.js";
 import type {
   AeoAudit,
@@ -351,7 +351,7 @@ const siteMarkdown = (audit: SiteAudit): string => {
 };
 
 /** One line under every report: which tool and version wrote it, and who makes it. */
-const footer = `_Audited with [agentic-seo-check](${REPOSITORY_URL}) ${VERSION}, made by [${MAKER}](${MAKER_URL})._`;
+const footer = `_Audited with [${PRODUCT_NAME}](${REPOSITORY_URL}) ${VERSION}, made by [${MAKER}](${MAKER_URL})._`;
 
 const robotsCell = (bot: AiBotAccess, pages: number): string => {
   if (!bot.allowed) {
