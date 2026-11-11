@@ -12,12 +12,8 @@ import {
 } from "../../../src/core/report/labels.js";
 import { AEO_RULES, SEO_RULES } from "../../../src/core/rules/index.js";
 import type { Severity } from "../../../src/core/types.js";
-import { ORIGIN as MCP_ORIGIN, rateLimit } from "../limits.js";
-import {
-  CLAUDE_DIRECTORY_URL,
-  directoryBadge,
-  PRIVACY_URL,
-} from "../ui/frame.js";
+import { ORIGIN as MCP_ORIGIN } from "../limits.js";
+import { directoryBadge, PRIVACY_URL } from "../ui/frame.js";
 import { GITHUB_MARK, icon } from "../ui/icons.js";
 import type { IconName } from "../ui/icons.js";
 import { esc } from "./html.js";
@@ -65,25 +61,20 @@ export interface HomeState {
 const AUDIT_COMMAND =
   "npx @rivi-software/agentic-seo-check audit https://example.com";
 
-/** What the form does, under it. */
+/**
+ * What the form does, under it, in three short lines. The rate limits are left to the answer that
+ * refuses a run past them, which names the limit.
+ */
 const formFacts = (crawls: boolean): string[] => {
-  const calls = rateLimit("CALLER_CALLS");
-  const crawlLimit = rateLimit("CALLER_CRAWLS");
   const mb = HOSTED_LIMITS.maxBodyBytes / 1_000_000;
 
-  return crawls
-    ? [
-        "A public page, or a whole site from its homepage",
-        `Up to ${HOSTED_LIMITS.maxPages} pages a site, ${mb} MB of HTML each`,
-        `${calls.limit} runs a ${calls.period} per address, ${crawlLimit.limit} of them sites`,
-        "Reads the HTML the server sends, without running its JavaScript",
-      ]
-    : [
-        "One public page per run",
-        `The first ${mb} MB of its HTML`,
-        `${calls.limit} runs a ${calls.period} per address`,
-        "Reads the HTML the server sends, without running its JavaScript",
-      ];
+  return [
+    crawls ? "A page, or a whole site from its homepage" : "One public page",
+    crawls
+      ? `Up to ${HOSTED_LIMITS.maxPages} pages, ${mb} MB of HTML each`
+      : `The first ${mb} MB of its HTML`,
+    "The HTML as served, without running its JavaScript",
+  ];
 };
 
 /** The form's button: busy, and off, while a crawl's answer streams in. */
@@ -164,17 +155,17 @@ const STEPS: [figure: string, title: string, text: string][] = [
   [
     `<div class="fig-input">${icon("globe")}<span>example.com/pricing</span><b>Audit</b></div>`,
     "Audit",
-    "Enter a page above, or a homepage to crawl its site, or let your agent run the tool on a URL, a crawl of a site or a build directory such as <code>dist/</code>.",
+    "Enter a page, or a homepage to crawl the site. An agent can also audit a build directory.",
   ],
   [
     `<div class="fig-diff"><span class="del">− ${esc("<title>React App</title>")}</span><span class="add">+ ${esc("<title>")}<em>{{…}}</em>${esc(" | Example</title>")}</span></div>`,
     "Fix",
-    "Every finding carries its edits: the tag as the page has it, and what to write instead. Words only an author can write are left in <code>{{…}}</code> slots.",
+    "Each finding carries its edits. Words only you can write are left in <code>{{…}}</code>.",
   ],
   [
     `<div class="fig-again">${scoreRing(64, "ring-sm")}${icon("arrow")}${scoreRing(96, "ring-sm")}</div>`,
     "Check again",
-    "Run the audit again to see what is left. Each finding has an id, and an audit given a <code>baseline</code> says what is fixed, what is still open and what is new.",
+    "Run it again to see what is fixed, what is still open and what is new.",
   ],
 ];
 
@@ -307,19 +298,6 @@ const jsonToken = (token: string): string => {
 const highlightJson = (json: string): string =>
   json.replaceAll(JSON_TOKEN, jsonToken);
 
-const FINDING_PARTS: [name: string, text: string][] = [
-  [
-    "rule and severity",
-    "an id an agent can look up in the rules, and how much it matters",
-  ],
-  ["selector", "the element the finding is about"],
-  [
-    "fix",
-    "the exact edits: in the HTML, the HTTP response, robots.txt, the sitemap or llms.txt",
-  ],
-  ["evidence", "what the audit saw on the page, capped"],
-];
-
 /** What each route's command is called in the page's `snippet_copied` event (issue #57). */
 const ROUTE_SNIPPETS = ["audit_command", "local_server", "mcp_url"];
 
@@ -333,51 +311,52 @@ const ROUTES: [
   [
     "terminal",
     "The command",
-    "Audits a URL, a crawl of a site, or a directory of built HTML such as <code>dist/</code>. It needs Node 22.19 or later.",
+    "A URL, a site or a build directory such as <code>dist/</code>. Needs Node 22.19 or later.",
     `<span class="prompt">$</span><code>${AUDIT_COMMAND}</code>`,
     [NPM_URL, "The package on npm"],
   ],
   [
     "server",
     "The local MCP server",
-    "Reaches <code>localhost</code> and build directories, renders JavaScript and runs Lighthouse.",
+    "Adds <code>localhost</code>, build directories, JavaScript rendering and Lighthouse.",
     `<span class="prompt">$</span><code>${LOCAL_SERVER}</code>`,
     [`${REPOSITORY_URL}#mcp-server`, "Set it up from the README"],
   ],
   [
     "cloud",
     "The hosted MCP server",
-    `For Claude, ChatGPT, Cursor and VS Code, with no install, no account and no key. In claude.ai, connect it from <a href="${CLAUDE_DIRECTORY_URL}">the Claude Directory</a>.`,
+    "For Claude, ChatGPT, Cursor and VS Code. No install, no account, no key.",
     `<code>${MCP_ORIGIN}/mcp</code>`,
     [HOSTED_PAGE, "How to add it"],
   ],
 ];
 
+/** What the site keeps, in short; the privacy policy has the rest. */
 const KEEPS: [iconName: IconName, title: string, text: string][] = [
   [
     "cpu",
     "No AI model",
-    "The audit runs on Cloudflare's network with rules only: the same page gets the same findings every time.",
+    "Rules only: the same page gets the same findings every time.",
   ],
   [
     "fileX",
-    "No report, no page",
-    "The site stores neither: the report is only in the answer your browser gets, and a share link holds only the address and the scores.",
+    "No report kept",
+    "The report is only in your browser. A share link holds the address and the scores.",
   ],
   [
     "clock",
     "The hostname, for three months",
-    "Each run records its outcome, duration, requests and the hostname audited. Never the path, the query or your IP address.",
+    "Each run's outcome, duration, requests and hostname. Never the path, the query or your IP address.",
   ],
   [
     "shield",
     "Bots kept out",
-    "Cloudflare Turnstile checks that a person sent the form, and the hosted limits keep each site to a fair share.",
+    "Cloudflare Turnstile checks that a person sent the form.",
   ],
   [
     "chart",
     "Visits, counted",
-    "PostHog (EU) counts visits and actions such as running an audit, never the address you audited. A cookie only if you accept one.",
+    "PostHog (EU) counts visits, actions and our own errors, never the address you audited. A cookie only if you accept one.",
   ],
 ];
 
@@ -406,19 +385,18 @@ export const homePage = (state: HomeState): string =>
 <div class="hero-copy">
 <p class="pill rise"><span class="dot" aria-hidden="true"></span>Free and open source, by ${MAKER}</p>
 <h1 class="hero-title rise" id="hero-title" style="--d:60ms">SEO and AEO audits <span class="hero-accent">with the fix for every finding.</span></h1>
-<p class="lede rise" style="--d:120ms">${PRODUCT_NAME} audits a page for search engines and for AI answer engines such as ChatGPT search, Claude, Perplexity and Google AI Overviews. Every finding names the rule, the place in the HTML and the exact edit that fixes it, so you or your coding agent can act on it.</p>
+<p class="lede rise" style="--d:120ms">Check a page or a whole site for search engines and AI answer engines such as ChatGPT, Claude and Perplexity. Every finding comes with the exact edit that fixes it.</p>
 </div>
 ${auditForm(state)}
 </div>
 ${state.report ? "" : PREVIEW}
 </section>
 ${state.report ?? ""}
-<section class="section" aria-labelledby="loop-title">
+<section class="section" id="how" aria-labelledby="loop-title">
 <div class="wrap">
 <div class="section-head">
 <p class="kicker">How it works</p>
 <h2 id="loop-title">Audit, fix, check again.</h2>
-<p>The same loop for a person at this form and for an agent with the tool, until nothing is left to fix.</p>
 </div>
 <ol class="steps">${STEPS.map(
       ([figure, title, text], index) =>
@@ -426,20 +404,20 @@ ${state.report ?? ""}
     ).join("")}</ol>
 </div>
 </section>
-<section class="section" aria-labelledby="checks-title">
+<section class="section" id="checks" aria-labelledby="checks-title">
 <div class="wrap">
 <div class="section-head">
 <p class="kicker">What it checks</p>
 <h2 id="checks-title">Two audits, each with its own score.</h2>
-<p>The SEO audit has ${SEO_RULES.length} rules and the AEO audit ${AEO_RULES.length}. The form above runs the rules for one page; given a homepage, it crawls the site and adds the site-wide ones. <a href="/rules">Every rule, with what it reports and what it recommends</a>.</p>
+<p><a href="/rules">Browse all ${SEO_RULES.length + AEO_RULES.length} rules</a>, or pick a category below.</p>
 </div>
 <div class="audits">
 <article class="audit-panel">
-<div class="panel-head"><span class="panel-icon">${icon("search")}</span><div><h3>SEO: search engines</h3><p>Titles, canonicals, structured data, links, the response and more, for Google, Bing and every index an answer engine draws on.</p></div><p class="panel-count">${SEO_RULES.length}<small>rules</small></p></div>
+<div class="panel-head"><span class="panel-icon">${icon("search")}</span><div><h3>SEO: search engines</h3><p>Titles, canonicals, structured data, links and the response.</p></div><p class="panel-count">${SEO_RULES.length}<small>rules</small></p></div>
 ${seoLevels()}
 </article>
 <article class="audit-panel">
-<div class="panel-head"><span class="panel-icon">${icon("bot")}</span><div><h3>AEO: AI answer engines</h3><p>Whether AI crawlers may fetch a page, whether answer engines may quote it, and whether its content is easy to lift into an answer.</p></div><p class="panel-count">${AEO_RULES.length}<small>rules</small></p></div>
+<div class="panel-head"><span class="panel-icon">${icon("bot")}</span><div><h3>AEO: AI answer engines</h3><p>Whether AI crawlers may fetch a page, and answer engines quote it.</p></div><p class="panel-count">${AEO_RULES.length}<small>rules</small></p></div>
 <div class="panel-body">
 ${aeoLevels()}
 ${botChips()}
@@ -448,13 +426,12 @@ ${botChips()}
 </div>
 </div>
 </section>
-<section class="section" aria-labelledby="fix-title">
+<section class="section" id="output" aria-labelledby="fix-title">
 <div class="wrap split">
 <div class="split-copy">
 <p class="kicker">The output</p>
 <h2 id="fix-title">A finding names its fix.</h2>
-<p>A finding is a fact about the page, not advice in general. It quotes the tag as the server sent it, says what to write instead, and marks the words only an author can write with <code>{{…}}</code>. An agent applies the edits and runs the audit again to see what is left.</p>
-<ul class="ticks">${FINDING_PARTS.map(([name, text]) => `<li>${icon("check")}<span><code>${name.replace(" and ", "</code> and <code>")}</code>: ${text}</span></li>`).join("")}</ul>
+<p>It quotes the tag as the server sent it and says what to write instead, in the HTML, the response, robots.txt, the sitemap or llms.txt.</p>
 </div>
 <div class="window">
 <div class="window-bar"><span class="window-title">canonical.missing</span><span class="window-actions sev-warning">${severityChip("warning")}</span></div>
@@ -462,27 +439,25 @@ ${botChips()}
 </div>
 </div>
 </section>
-<section class="section" aria-labelledby="agent-title">
+<section class="section" id="agents" aria-labelledby="agent-title">
 <div class="wrap">
 <div class="section-head">
 <p class="kicker">For coding agents</p>
 <h2 id="agent-title">Give it to your coding agent.</h2>
-<p>The form on this page is the audit for a person. The same audit runs as a command, as an MCP server on your machine and as a hosted MCP server, so an agent can audit, fix and check again by itself.</p>
+<p>So it can audit, fix and check again by itself.</p>
 </div>
 <ul class="cards routes">${ROUTES.map(
       ([iconName, title, text, command, [href, label]], index) =>
         `<li class="card${index === 2 ? " route-featured" : ""}"><span class="card-icon">${icon(iconName)}</span>${index === 2 ? '<span class="chip corner"><span class="dot" aria-hidden="true"></span>No install</span>' : ""}<h3>${title}</h3><p>${text}</p><div class="install" data-copy="${ROUTE_SNIPPETS[index] ?? "route"}">${command}</div><a class="link-arrow" href="${href}">${label}${icon("arrow", "arrow")}</a></li>`
     ).join("")}</ul>
-<p class="section-foot">The README on <a href="${REPOSITORY_URL}">GitHub</a> covers every flag, tool and option, and the skill that teaches an agent to use them.</p>
 </div>
 </section>
-<section class="section" aria-labelledby="keeps-title">
-<div class="wrap split">
+<section class="section" id="privacy" aria-labelledby="keeps-title">
+<div class="wrap split split-top">
 <div class="split-copy">
 <p class="kicker">Privacy</p>
 <h2 id="keeps-title">What this site keeps.</h2>
-<p>The audit runs on Cloudflare's network, with no AI model: the same rules give the same findings every time. The site stores no report and no page. A report's share link holds the address and the two scores, and nothing else: whoever you give it to sees them, and the site keeps no copy. For each run it records the outcome, the duration, the number of requests and the hostname audited, for three months, so that a report about too many requests to a site can be checked. It never records the path, the query or your IP address. The check that keeps bots out of the form is Cloudflare Turnstile.</p>
-<p>PostHog, in the EU, counts the visits to this site and a short list of actions: running an audit, with its kind and its scores, downloading or sharing a report, copying a command, following a link to GitHub, npm or the hosted server. Never the address you audited or anything you type. When an audit fails on a bug of ours, it gets the kind of error and where in the code it happened, without the addresses or text in its message. It counts a visit without a cookie, and sets one only when you accept it in the banner; <span class="nowrap">Cookie settings</span>, at the foot of each page, changes your choice. The <a href="${PRIVACY_URL}">privacy policy</a> has the details.</p>
+<p>The short version; the <a href="${PRIVACY_URL}">privacy policy</a> has the details. <span class="nowrap">Cookie settings</span>, at the foot of each page, changes your choice.</p>
 </div>
 <ul class="cards keeps">${KEEPS.map(([iconName, title, text]) => `<li class="card"><span class="keep-icon">${icon(iconName)}</span><h3>${title}</h3><p>${text}</p></li>`).join("")}</ul>
 </div>
@@ -492,7 +467,7 @@ ${botChips()}
 <div class="cta-card">
 <p class="pill"><span class="dot" aria-hidden="true"></span>Hosted MCP server</p>
 <h2 id="cta-title">Audit, fix and check again <span class="hero-accent">from your assistant.</span></h2>
-<p>Add the hosted server to Claude, ChatGPT, Cursor or VS Code with one address: <code>${MCP_ORIGIN}/mcp</code></p>
+<p>One address for Claude, ChatGPT, Cursor and VS Code: <code>${MCP_ORIGIN}/mcp</code></p>
 <div class="cta-actions"><a class="btn btn-primary" href="${HOSTED_PAGE}#add">Add it to your assistant${icon("arrow", "arrow")}</a><a class="btn btn-secondary" href="${REPOSITORY_URL}">${GITHUB_MARK}Read the code</a></div>
 ${directoryBadge()}
 </div>

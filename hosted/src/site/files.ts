@@ -47,12 +47,12 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
  * The pages' script, served at /site.js on both hostnames so that the Content-Security-Policy
  * needs no inline script. It gives every command and snippet marked data-copy a button that copies
  * it, waits for Turnstile's token before the audit form is sent, shows that an audit or a crawl is
- * running, gives the report as a JSON file or as Markdown on the clipboard, and adds the system's
- * share sheet to the report's Share menu. On the production hostnames it also loads PostHog from
- * /ph.js for the usage analytics (issue #57), with the cookie banner, and sends the closed list of
- * events below: never an address the visitor audited, nothing they typed and nothing from a
- * report but its scores. Without it every page still reads and works, but the form. It runs once
- * the page is read to its end, so after a crawl's streamed answer.
+ * running, gives the report as a JSON file or as Markdown on the clipboard, adds the system's
+ * share sheet to the report's Share menu, and filters the rules page. On the production hostnames
+ * it also loads PostHog from /ph.js for the usage analytics (issue #57), with the cookie banner,
+ * and sends the closed list of events below: never an address the visitor audited, nothing they
+ * typed and nothing from a report but its scores. Without it every page still reads and works, but
+ * the form. It runs once the page is read to its end, so after a crawl's streamed answer.
  */
 export const SITE_JS = `(() => {
   const COPY = ${JSON.stringify(`${icon("copy")}<span class="sr-only">Copy</span>`)};
@@ -183,6 +183,112 @@ export const SITE_JS = `(() => {
       button.classList.remove("is-busy");
       label.textContent = text;
     });
+  }
+
+  // The rules page: a filter over the rules, a link to a rule opens it, and the list of categories
+  // marks the one in view. Without the script every rule is still there, closed.
+  const filter = document.querySelector(".rules-filter");
+
+  if (filter) {
+    const input = filter.querySelector("input");
+    const count = filter.querySelector(".rules-count");
+    const strip = document.querySelector(".rules-toc ul");
+    const groups = [...document.querySelectorAll(".rule-group")];
+    const rules = [...document.querySelectorAll(".rule")];
+
+    // What a filter matches: a rule's id and all of its text, what to change included.
+    const text = new Map(
+      rules.map((rule) => [rule, (rule.id + " " + rule.textContent).toLowerCase()])
+    );
+
+    const links = new Map(
+      [...document.querySelectorAll(".rules-toc a[data-group]")].map((link) => [
+        link.dataset.group,
+        link,
+      ])
+    );
+
+    filter.hidden = false;
+
+    input.addEventListener("input", () => {
+      const words = input.value.toLowerCase().split(/\\s+/).filter(Boolean);
+      let shown = 0;
+
+      for (const rule of rules) {
+        const match = words.every((word) => text.get(rule).includes(word));
+        rule.hidden = !match;
+        shown += match ? 1 : 0;
+      }
+
+      for (const group of groups) {
+        const left = group.querySelectorAll(".rule:not([hidden])").length;
+        const chip = group.querySelector(".rule-group-head .chip");
+        group.hidden = left === 0;
+
+        // The category's count says how many of its rules the filter left.
+        chip.dataset.all ||= chip.textContent;
+        chip.textContent =
+          words.length === 0 ? chip.dataset.all : left === 1 ? "1 rule" : left + " rules";
+
+        if (links.has(group.id)) {
+          links.get(group.id).parentElement.hidden = left === 0;
+        }
+      }
+
+      count.textContent =
+        words.length === 0 ? "" : shown === 1 ? "1 rule" : shown + " rules";
+    });
+
+    const open = () => {
+      const target = document.getElementById(
+        decodeURIComponent(location.hash.slice(1))
+      );
+
+      if (target && target.tagName === "DETAILS") {
+        target.open = true;
+      }
+    };
+
+    open();
+    window.addEventListener("hashchange", open);
+
+    const motion = matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "auto"
+      : "smooth";
+
+    // The category whose rules cross a band near the top of the window is the one in view.
+    const seen = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const link = links.get(entry.target.id);
+
+          if (!entry.isIntersecting || !link) {
+            continue;
+          }
+
+          for (const other of links.values()) {
+            other.removeAttribute("aria-current");
+          }
+
+          link.setAttribute("aria-current", "location");
+
+          // On a phone the categories scroll sideways: keep the current one on screen.
+          const left = link.offsetLeft - strip.offsetLeft;
+
+          if (
+            left < strip.scrollLeft ||
+            left + link.offsetWidth > strip.scrollLeft + strip.clientWidth
+          ) {
+            strip.scrollTo({ left: left - 16, behavior: motion });
+          }
+        }
+      },
+      { rootMargin: "-25% 0px -65% 0px" }
+    );
+
+    for (const group of groups) {
+      seen.observe(group);
+    }
   }
 
   // The report's Share menu: the system's share sheet where the browser has one, and the menu

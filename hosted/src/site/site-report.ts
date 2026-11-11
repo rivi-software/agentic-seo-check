@@ -124,7 +124,7 @@ const homeSection = (start: SiteAudits["start"]): string => {
 
   return `<div class="report-section" id="home">
 <div class="report-section-head"><h3>The homepage</h3><span class="chip">${plural(seo.length + aeo.length, "finding")}</span></div>
-<p class="report-lede">Every finding on ${code(start.seo.url)}, with the edits that fix it. For the edits on another page, run the audit on it: each page in the list below opens the form with its address.</p>
+<p class="report-lede">Every finding on ${code(start.seo.url)}, with its fix. Open a page in the list below to audit it.</p>
 ${seoFacts(start.seo)}
 <h4 class="report-sub">SEO</h4>
 ${findingsHtml(seo, "No SEO findings on the homepage.")}
@@ -179,7 +179,7 @@ ${siteSection("aeo", "AEO findings", aeoFacts(aeo, "site"), aeo.findings, aeo.is
 ${homeSection(start)}
 ${pagesSection(seo, aeo)}
 ${crawlersHtml(aeo, "the homepage")}
-<div class="report-note">${icon("info")}<p>The findings on the pages are grouped by rule, with up to 10 of the pages each. Each page opens the form with its address: run the audit on it for its own findings and the edits that fix them. The crawl stops at ${HOSTED_LIMITS.maxPages} pages, ${HOSTED_LIMITS.maxDepth} links deep. For a larger site, run <code>npx @rivi-software/agentic-seo-check crawl ${esc(origin)}</code> on your machine.</p></div>`,
+<div class="report-note">${icon("info")}<p>Findings are grouped by rule, with up to 10 pages each; open a page for its own fixes. The crawl stops at ${HOSTED_LIMITS.maxPages} pages, ${HOSTED_LIMITS.maxDepth} links deep. For a larger site, run <code>npx @rivi-software/agentic-seo-check crawl ${esc(origin)}</code>.</p></div>`,
   });
 };
 
@@ -190,7 +190,7 @@ export const progressOpen = (url: string): string =>
 <div class="window report-window">
 <div class="report-bar"><div class="report-title"><h2 class="progress-title" id="progress-title">Crawling the site</h2><p class="report-url">${icon("globe")}<span>${esc(url)}</span></p></div></div>
 <div class="report-body progress-body">
-<p class="report-lede">Up to ${HOSTED_LIMITS.maxPages} pages, ${HOSTED_LIMITS.maxDepth} links deep from the homepage, then the checks across the site. The report follows here when the crawl is done, usually within a minute.</p>
+<p class="report-lede">Up to ${HOSTED_LIMITS.maxPages} pages, ${HOSTED_LIMITS.maxDepth} links deep. The report follows here, usually within a minute.</p>
 <ol class="progress-lines" role="log">
 `;
 

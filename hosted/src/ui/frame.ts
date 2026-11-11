@@ -70,23 +70,25 @@ export interface FramePage {
   noindex?: boolean;
 }
 
-/** The pages of both hostnames, in the order the header lists them. */
+/**
+ * The pages of both hostnames, in the order the header lists them: three, for the people who use
+ * the tool. The page for site owners, which the User-Agent links to directly, is in the footer.
+ */
 const NAV: [href: string, label: string][] = [
-  [`${SITE_ORIGIN}/`, "Audit a page"],
+  [`${SITE_ORIGIN}/`, "Audit"],
   [`${SITE_ORIGIN}/rules`, "Rules"],
   [`${MCP_ORIGIN}/`, "MCP server"],
-  [`${MCP_ORIGIN}/crawler`, "For site owners"],
 ];
 
 const FOOTER: [heading: string, links: [href: string, label: string][]][] = [
   [
     "The tool",
     [
-      [`${SITE_ORIGIN}/`, "Audit a page"],
+      [`${SITE_ORIGIN}/`, "Audit a page or site"],
       [`${SITE_ORIGIN}/rules`, "The rules"],
       [`${MCP_ORIGIN}/`, "Hosted MCP server"],
       [CLAUDE_DIRECTORY_URL, "In the Claude Directory"],
-      [`${SITE_ORIGIN}/llms.txt`, "llms.txt"],
+      [`${MCP_ORIGIN}/crawler`, "For site owners"],
     ],
   ],
   [
@@ -103,8 +105,8 @@ const FOOTER: [heading: string, links: [href: string, label: string][]][] = [
     [
       [MAKER_URL, "rivi.software"],
       [OPEN_SOURCE_URL, "Open source at RIVI"],
-      [`${MCP_ORIGIN}/crawler`, "For site owners"],
       [ABUSE_URL, "Report abuse"],
+      [`${SITE_ORIGIN}/llms.txt`, "llms.txt"],
     ],
   ],
 ];
@@ -126,7 +128,7 @@ const footer = (host: Host): string => `<footer class="site-footer">
 <div class="footer-grid">
 <div class="footer-brand">
 <a class="site-logo" href="${linkFrom(host.origin, `${SITE_ORIGIN}/`)}">${MARK}<span>RIVI ${PRODUCT_NAME}</span></a>
-<p>SEO and AEO audits for coding agents, with the exact fix for every finding. Open source under the MIT License.</p>
+<p>SEO and AEO audits with the exact fix for every finding.</p>
 <a class="btn btn-secondary btn-sm" href="${REPOSITORY_URL}">${GITHUB_MARK}Star it on GitHub</a>
 </div>
 ${FOOTER.map(
@@ -140,7 +142,7 @@ ${FOOTER.map(
 ).join("\n")}
 </div>
 <div class="footer-bottom">
-<p>${PRODUCT_NAME} is open source (MIT) and made by <a href="${MAKER_URL}">${MAKER}</a>. If this site or the hosted server has requested your site, <a href="${linkFrom(host.origin, `${MCP_ORIGIN}/crawler`)}">the page for site owners</a> says what the requests are and how to stop them. Report abuse through <a href="${ABUSE_URL}">help.rivi.software/contact</a>.</p>
+<p>Open source (MIT), made by <a href="${MAKER_URL}">${MAKER}</a>.</p>
 <div class="footer-links"><a href="${PRIVACY_URL}">Privacy policy</a><button class="footer-consent" type="button" data-consent-settings hidden>Cookie settings</button><a href="${MAKER_URL}">rivi.software</a></div>
 </div>
 </div>

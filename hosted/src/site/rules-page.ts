@@ -33,15 +33,21 @@ const REQUIREMENT_TAG: Record<Requirement, string> = {
   "ai-bots": "--ai-bots",
 };
 
+/**
+ * A rule as one line, its id, severity and what it finds, that opens on what to change. The page
+ * has some 200 of them: closed, they can be scanned. A link to `#<id>` opens the rule (site.js),
+ * and the text inside stays in the page for search engines and agents.
+ */
 const ruleHtml = (rule: RuleMeta): string => {
   const docs = rule.docs ? safeHref(rule.docs) : null;
 
-  return `<article class="rule sev-${rule.severity}" id="${esc(rule.id)}">
-<div class="rule-head"><h3><code>${esc(rule.id)}</code></h3>${severityChip(rule.severity)}${rule.requires ? `<span class="chip">${REQUIREMENT_TAG[rule.requires]}</span>` : ""}</div>
-<p>${esc(rule.description)}</p>
+  return `<details class="rule sev-${rule.severity}" id="${esc(rule.id)}">
+<summary><h3><code>${esc(rule.id)}</code></h3>${severityChip(rule.severity)}${rule.requires ? `<span class="chip">${REQUIREMENT_TAG[rule.requires]}</span>` : ""}${icon("chevron", "chev")}<span class="rule-desc">${esc(rule.description)}</span></summary>
+<div class="rule-body">
 <p class="rule-todo"><strong>What to change:</strong> ${esc(rule.recommendation)}</p>
 ${rule.requires ? `<p class="rule-when">${REQUIREMENT[rule.requires]}</p>` : ""}${docs ? `<a class="link-arrow" href="${docs}" rel="noopener">Documentation${icon("arrow", "arrow")}</a>` : ""}
-</article>`;
+</div>
+</details>`;
 };
 
 /** The rules by category, in the order the rules are listed. */
@@ -77,7 +83,7 @@ export const rulesPage = (): string => {
 <p class="pill rise"><span class="dot" aria-hidden="true"></span>${ALL_RULES.length} rules in ${groups.length} categories</p>
 <h1 class="hero-title rise" id="rules-title" style="--d:60ms">The rules of ${PRODUCT_NAME}.</h1>
 </div>
-<p class="lede rise" style="--d:120ms">The audits report ${ALL_RULES.length} rules in ${groups.length} categories. Each rule has an id, a usual severity, what it finds on a page or site and what it recommends. A finding adds the exact edits for the page it is about.</p>
+<p class="lede rise" style="--d:120ms">What each rule finds, and what to change. Open a rule for its fix.</p>
 </div>
 </section>
 <div class="wrap rules-layout">
@@ -86,11 +92,16 @@ export const rulesPage = (): string => {
 <ul>${groups
       .map(
         ([category, rules]) =>
-          `<li><a href="#${category}">${CATEGORY_LABEL[category]} <span>${rules.length}</span></a></li>`
+          `<li><a href="#${category}" data-group="${category}">${CATEGORY_LABEL[category]} <span>${rules.length}</span></a></li>`
       )
       .join("")}</ul>
 </nav>
 <div>
+<div class="rules-filter" hidden>
+<label class="sr-only" for="rule-filter">Filter the rules</label>
+<div class="audit-field">${icon("search")}<input id="rule-filter" type="search" autocomplete="off" spellcheck="false" placeholder="Filter by id or text, such as canonical or GPTBot"></div>
+<p class="rules-count" aria-live="polite"></p>
+</div>
 ${groups
   .map(
     ([

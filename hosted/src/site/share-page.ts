@@ -64,17 +64,17 @@ const MEANING: [iconName: IconName, title: string, text: string][] = [
   [
     "search",
     "SEO: search engines",
-    `The SEO audit checks what Google, Bing and every index an answer engine draws on read from a page: its title and description, its canonical URL, whether it may be indexed, its headings, structured data, images and links, and the HTTP response. It has ${SEO_RULES.length} rules.`,
+    `What Google, Bing and answer engines read: the title, canonical, indexing, headings, structured data, links and the response. ${SEO_RULES.length} rules.`,
   ],
   [
     "bot",
     "AEO: AI answer engines",
-    `The AEO audit checks whether robots.txt lets AI crawlers such as OAI-SearchBot, Claude-SearchBot and PerplexityBot fetch the page, whether answer engines may quote it, and whether its authors, dates and entities are easy to lift into an answer. It has ${AEO_RULES.length} rules.`,
+    `Whether AI crawlers such as OAI-SearchBot and PerplexityBot may fetch the page, and answer engines quote it. ${AEO_RULES.length} rules.`,
   ],
   [
     "list",
     "How a score is counted",
-    "A page starts at 100. Each error takes off 15 points, each warning 5 and each info finding 1. A site's score is the average of its pages, less the findings across the site. 90 and up is good and under 50 is poor, as in Lighthouse.",
+    "A page starts at 100: an error takes 15 points, a warning 5, an info finding 1. A site's score averages its pages, less the site-wide findings. 90 and up is good, under 50 poor.",
   ],
 ];
 
@@ -117,11 +117,11 @@ export const sharePage = (link: ShareLink): string => {
 <div class="hero-copy">
 <p class="pill rise"><span class="dot" aria-hidden="true"></span>${label}, ${day}</p>
 <h1 class="share-title rise" id="share-title" style="--d:60ms">${addressHeading(result)}</h1>
-<p class="lede rise" style="--d:120ms">The scores ${PRODUCT_NAME} gave this ${what} on ${day}: SEO for search engines such as Google and Bing, and AEO for AI answer engines such as ChatGPT search, Claude, Perplexity and Google AI Overviews.</p>
+<p class="lede rise" style="--d:120ms">The scores ${PRODUCT_NAME} gave this ${what} on ${day}, for search engines and for AI answer engines.</p>
 </div>
 <div class="scores share-scores rise" style="--d:180ms">${scoreCard(null, "SEO: search engines", result.seo.score, result.seo.counts)}${scoreCard(null, "AEO: AI answer engines", result.aeo.score, result.aeo.counts)}</div>
 <div class="cta-actions share-actions rise" style="--d:240ms"><a class="btn btn-primary" href="/?${new URLSearchParams({ url: result.url })}#audit">Run this audit again${icon("arrow", "arrow")}</a><a class="btn btn-secondary" href="/">Audit your own ${what}</a></div>
-<p class="share-note">${icon("info")}<span>These are the scores on the day of the audit. The site keeps no report, so the findings, and the edits that fix them, come with a new run of the audit.</span></p>
+<p class="share-note">${icon("info")}<span>The site keeps no report: run the audit again for the findings and their fixes.</span></p>
 </div>
 </section>
 <section class="section section-tight" aria-labelledby="meaning-title">
@@ -129,7 +129,7 @@ export const sharePage = (link: ShareLink): string => {
 <div class="section-head">
 <p class="kicker">The scores</p>
 <h2 id="meaning-title">What the two scores measure.</h2>
-<p>${PRODUCT_NAME} is a free, open source audit by RIVI Software, with no AI model in it: the same page gets the same findings every time, and every finding comes with the edit that fixes it.</p>
+<p>${PRODUCT_NAME} is a free, open source audit by RIVI Software, with no AI model: the same page gets the same findings every time.</p>
 </div>
 <ul class="cards share-meaning">${MEANING.map(([iconName, heading, text]) => `<li class="card"><span class="card-icon">${icon(iconName)}</span><h3>${heading}</h3><p>${text}</p></li>`).join("")}</ul>
 </div>
