@@ -444,8 +444,8 @@ describe("telemetry", () => {
       const sent: PostHogEvent[] = [];
 
       const client = await connect(
-        localMcpAnalytics((e) => {
-          sent.push(e);
+        localMcpAnalytics((events) => {
+          sent.push(...events);
 
           return Promise.resolve(true);
         })

@@ -32,6 +32,7 @@ import type {
 import { z } from "zod";
 
 import { MCP_SERVER_NAME } from "../brand.js";
+import type { CaughtErrorContext } from "../core/errors.js";
 import { ALL_RULES } from "../core/rules/index.js";
 import { VERSION } from "../version.js";
 import { cleanMessage } from "./exceptions.js";
@@ -82,6 +83,14 @@ export interface McpToolCall extends McpCaller {
   intent?: string;
   /** What the tool noted of its call. */
   properties?: CallProperties;
+  /** Errors the core caught within the call (`noteCaughtInCall`), sent with its event (issue #85). */
+  caught?: CaughtInCall[];
+}
+
+/** An error the core caught and turned into a finding, within a tool call. */
+export interface CaughtInCall extends CaughtErrorContext {
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  error: unknown;
 }
 
 /** Where a server's calls are reported. Neither may throw into the call it is told about. */
@@ -92,12 +101,16 @@ export interface McpAnalytics {
   initialize: (caller: McpCaller) => void;
 }
 
-/** The call a tool is answering, and what the tool said of it and of its own failure. */
+/**
+ * The call a tool is answering, what the tool said of it and of its own failure, and what the core
+ * caught.
+ */
 interface Slot {
   tool: string;
   errorType?: McpErrorType;
   error?: unknown;
   properties: CallProperties;
+  caught: CaughtInCall[];
 }
 
 /**
@@ -141,6 +154,32 @@ export const noteCall = (properties: CallProperties): void => {
 
 /** The tool whose call is running here, if any: for an error the core caught within it. */
 export const currentTool = (): string | undefined => slots.getStore()?.tool;
+
+/** The most caught errors a call keeps for its events: one bug on every page of a crawl is one. */
+const MAX_CAUGHT = 1000;
+
+/**
+ * Keeps an error the core caught for the event of the call it happened in, so a call's errors go
+ * in one request with it (issue #85). False outside a call the transport watches: the caller then
+ * sends it on its own.
+ */
+export const noteCaughtInCall = (
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  error: unknown,
+  context: CaughtErrorContext
+): boolean => {
+  const slot = slots.getStore();
+
+  if (!slot) {
+    return false;
+  }
+
+  if (slot.caught.length < MAX_CAUGHT) {
+    slot.caught.push({ ...context, error });
+  }
+
+  return true;
+};
 
 const header = (
   headers: IsomorphicHeaders | undefined,
@@ -326,7 +365,7 @@ export const instrumentTransport = (
       ProtocolVersion.safeParse(header(headers, "mcp-protocol-version")).data;
 
     const { name, arguments: given } = call.data.params;
-    const slot: Slot = { tool: name, properties: {} };
+    const slot: Slot = { tool: name, properties: {}, caught: [] };
 
     pending.set(message.id, {
       tool: name,
@@ -377,6 +416,7 @@ export const instrumentTransport = (
       error: isError ? call.slot.error : undefined,
       ...call.given,
       properties: call.slot.properties,
+      caught: call.slot.caught.length > 0 ? call.slot.caught : undefined,
       ...call.caller,
     });
   };

@@ -265,7 +265,11 @@ export const ruleRanWith = (
       return selection.active.has("lighthouse");
     }
 
-    if (rule === "tool.rule-error" || rule === "response.fetch-failed") {
+    if (
+      rule === "tool.rule-error" ||
+      rule === "tool.page-error" ||
+      rule === "response.fetch-failed"
+    ) {
       return true;
     }
 

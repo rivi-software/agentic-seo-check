@@ -1,5 +1,6 @@
+import { REPOSITORY_URL } from "../brand.js";
 import { mapConcurrent, sleep } from "./concurrency.js";
-import { ExpectedError } from "./errors.js";
+import { caughtError, ExpectedError } from "./errors.js";
 import {
   DEFAULT_USER_AGENT,
   fetchPage,
@@ -18,12 +19,14 @@ import type { Refusals } from "./refusals.js";
 import { loadRobotsTxt, robotsUserAgentToken } from "./robots.js";
 import type { RobotsResult } from "./robots.js";
 import { isLocalHost } from "./rules/canonical.js";
+import { cap } from "./rules/rule.js";
 import { checkImages, probeUrlVariants } from "./site-probes.js";
 import type { ImageCheckResult, ProbeOptions } from "./site-probes.js";
 import type { LinkCheck, PageRecord, ProbeResults } from "./site-rules.js";
 import { emptySitemapProblems, loadSitemaps } from "./sitemap.js";
 import type {
   CrawlStats,
+  Finding,
   LinkInfo,
   RobotsTxtInfo,
   SitemapInfo,
@@ -97,7 +100,66 @@ export interface CrawlResult {
   refusals?: Refusals;
   /** The refusal that ended the requests to the site before the crawl was done. */
   stopped?: RequestRefusedError;
+  /** Pages the audit failed on, and so left out of the crawl (issue #85). */
+  failedPages?: FailedPage[];
 }
+
+/** A page the crawl left out because the audit threw on it: a bug of the tool's, not the site's. */
+export interface FailedPage {
+  url: string;
+  /** The error's message, for the user's finding (never for error tracking, which cleans it). */
+  error: string;
+}
+
+/**
+ * The `tool.page-error` finding: the pages a crawl left out because the audit failed on them. It is
+ * about the audit, not the site, so it names no fix; the site's other findings are complete.
+ */
+export const failedPageFindings = (
+  failed: readonly FailedPage[] | undefined
+): Finding[] => {
+  const [first] = failed ?? [];
+
+  if (!(failed && first)) {
+    return [];
+  }
+
+  return [
+    {
+      rule: "tool.page-error",
+      severity: "info",
+      category: "tool",
+      message: `The audit failed on ${failed.length} page(s), which are left out of the crawl. The first, ${first.url}, failed with: ${first.error}`,
+      recommendation: `Report this as a bug at ${REPOSITORY_URL}/issues, with the page's URL if you can share it. The findings of the other pages are complete.`,
+      fix: [],
+      evidence: { count: failed.length, pages: cap([...failed]) },
+    },
+  ];
+};
+
+/** A crawl's `includePatterns` or `excludePatterns` entry that is no regular expression. */
+export class InvalidPatternError extends ExpectedError {
+  override name = "InvalidPatternError";
+}
+
+/**
+ * The crawl's include or exclude patterns, compiled. A pattern that is no regular expression is
+ * the caller's mistake, said before any request goes out, and no bug (issue #85).
+ */
+export const userPatterns = (
+  patterns: readonly string[] | undefined,
+  which: "include" | "exclude"
+): RegExp[] =>
+  (patterns ?? []).map((pattern) => {
+    try {
+      // oxlint-disable-next-line eslint/require-unicode-regexp -- the user's own patterns, in JavaScript's default syntax; the u flag would reject some of them
+      return new RegExp(pattern);
+    } catch (error) {
+      throw new InvalidPatternError(
+        `The ${which} pattern ${JSON.stringify(pattern)} is not a valid regular expression: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  });
 
 /** Image URLs a crawl requests at most, the ones shown on most pages first. */
 const MAX_IMAGE_CHECKS = 100;
@@ -151,13 +213,16 @@ const inCrawlOrder = (
 /**
  * Works through a queue that grows while it runs: each crawled page can add the links it found.
  * At most `concurrency` items run at once, and with `delayMs` each slot waits that long after its
- * item before it takes the next one. An item that throws is left out; the rest go on.
+ * item before it takes the next one. An item that throws is left out and given to `failed`; the
+ * rest go on.
  */
 const runQueue = async (
   queue: QueueItem[],
   concurrency: number,
   delayMs: number,
-  work: (item: QueueItem) => Promise<void>
+  work: (item: QueueItem) => Promise<void>,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until `failed` reads it
+  failed: (item: QueueItem, error: unknown) => void
 ): Promise<void> => {
   const limit = Math.max(1, concurrency);
   const running = new Set<Promise<void>>();
@@ -166,8 +231,9 @@ const runQueue = async (
     const task = (async () => {
       try {
         await work(item);
-      } catch {
+      } catch (error) {
         // The page is left out of the crawl; the rest of the queue goes on.
+        failed(item, error);
       }
 
       if (delayMs > 0) {
@@ -704,7 +770,23 @@ export const crawlSite = async (
     followLinks(page.links, finalKey, item.depth);
   };
 
-  await runQueue(queue, options.concurrency, options.delayMs, processItem);
+  // A network failure is a result and a refusal is handled in `processItem`, so what throws here
+  // is a bug of the audit's: the user is told which pages it left out, and error tracking hears it.
+  const failedPages: FailedPage[] = [];
+
+  await runQueue(
+    queue,
+    options.concurrency,
+    options.delayMs,
+    processItem,
+    (item, error) => {
+      caughtError(error);
+      failedPages.push({
+        url: item.url,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  );
 
   // With the start page refused there is no site to audit: the refusal says why.
   const startRefusal = refusals.of(startUrl);
@@ -848,5 +930,6 @@ export const crawlSite = async (
     imageSources: images?.imageSources,
     refusals,
     stopped,
+    failedPages: failedPages.length > 0 ? failedPages : undefined,
   };
 };

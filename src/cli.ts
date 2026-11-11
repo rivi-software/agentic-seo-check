@@ -35,7 +35,12 @@ import {
 } from "./telemetry/local.js";
 import type { CliRun } from "./telemetry/local.js";
 import { runReport } from "./telemetry/report.js";
-import { formatFor, statusLine, textOptionsFor } from "./terminal.js";
+import {
+  endQuietlyOnClosedPipe,
+  formatFor,
+  statusLine,
+  textOptionsFor,
+} from "./terminal.js";
 import type { OutputFormat } from "./terminal.js";
 import { VERSION } from "./version.js";
 
@@ -112,9 +117,9 @@ const finishRun = async (exitCode: number): Promise<void> => {
  * turned into a finding, and one nothing caught, which ends the run as Node would.
  */
 const watchErrors = (): void => {
-  onCaughtError((caught) => {
+  onCaughtError((caught, context) => {
     if (run) {
-      noteCliError(run, caught, true);
+      noteCliError(run, caught, true, context);
     }
   });
 
@@ -140,6 +145,12 @@ program
   )
   .showHelpAfterError()
   .hook("preAction", async (_program, action) => {
+    // The MCP server's stdout is its connection to the client, whose end is the transport's to handle.
+    if (action.name() !== "mcp") {
+      endQuietlyOnClosedPipe(process.stdout);
+      endQuietlyOnClosedPipe(process.stderr);
+    }
+
     if (TRACKED.has(action.name()) && (await prepareTelemetry())) {
       run = startCliRun(action.name(), flagsGiven(action));
       watchErrors();
@@ -438,23 +449,36 @@ const auditFor = async (
   return { report: audit, output: render[format]() };
 };
 
+/** Writes the report to `-o`'s file; a file that cannot be written is the user's to fix, not a bug. */
+const writeReport = async (file: string, output: string): Promise<void> => {
+  await fs.writeFile(file, `${output}\n`, "utf-8").catch((error: Error) => {
+    throw new ExpectedError(
+      `Cannot write the report to ${file}: ${error.message}`
+    );
+  });
+};
+
 const runAudit = async (
   target: string,
   opts: CliOptions,
   mode: Mode
 ): Promise<void> => {
+  // Before the audit, so an error that ends it says what kind of target it was (issue #85).
+  if (run) {
+    run.target = await targetKind(target);
+  }
+
   const { report, output } = await auditFor(target, opts, mode);
   const { counts } = report;
 
   status.clear();
 
   if (run) {
-    run.target = await targetKind(target);
     run.report = runReport(report);
   }
 
   if (opts.out) {
-    await fs.writeFile(opts.out, `${output}\n`, "utf-8");
+    await writeReport(opts.out, output);
 
     if (!opts.quiet) {
       process.stderr.write(`Report written to ${opts.out}\n`);
