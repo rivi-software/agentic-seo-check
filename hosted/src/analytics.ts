@@ -19,7 +19,8 @@
  *
  * Issue #93 lets the Worker hear the errors the core catches (`hearCaughtError`) and the ones its
  * own work after an answer meets (`reportTask`), sends a call's errors in the call's request, one
- * event per bug, and gives each what its call's event says of the client and the options.
+ * event per bug, and gives each what its call's event says of the client and the options. Issue
+ * #96 does the same for a run of the website's form (`inRun`, `reportRun`).
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -33,10 +34,12 @@ import {
 import {
   caughtErrors,
   initializeEvent,
+  MAX_CAUGHT,
   noteCaughtInCall,
   toolCallEvent,
 } from "../../src/telemetry/mcp.js";
 import type {
+  CaughtInCall,
   McpAnalytics,
   McpCaller,
   McpEventContext,
@@ -264,10 +267,23 @@ export const inRequest = <T>(scope: RequestScope, work: () => T): T =>
   requests.run(scope, work);
 
 /**
+ * A run of the website's form (issue #96): the errors the core caught within it, which its end
+ * sends in one request (`reportRun`). A crawl's run goes on after the answer, as its stream does.
+ */
+export interface FormRun {
+  caught: CaughtInCall[];
+}
+
+const runs = new AsyncLocalStorage<FormRun>();
+
+/** Runs `work`, a run's audits, so that the errors the core catches in it are kept for its end. */
+export const inRun = <T>(run: FormRun, work: () => T): T => runs.run(run, work);
+
+/**
  * Hears an error the core caught and turned into a finding (issue #93): a rule that throws, a page
- * a crawl leaves out, a request it could not sign. Within a tool call, the call's events carry it.
- * Outside one, it is sent on its own, in the request it happened in. A Worker sets it once, with
- * `onCaughtError`.
+ * a crawl leaves out, a request it could not sign. Within a tool call, the call's events carry it,
+ * and within a run of the website's form, the run's (issue #96). Outside both, it is sent on its
+ * own, in the request it happened in. Each Worker sets it once, with `onCaughtError`.
  */
 export const hearCaughtError = (
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- as above
@@ -278,12 +294,78 @@ export const hearCaughtError = (
     return;
   }
 
+  const run = runs.getStore();
+
+  if (run) {
+    if (run.caught.length < MAX_CAUGHT) {
+      run.caught.push({ ...context, error });
+    }
+
+    return;
+  }
+
   const scope = requests.getStore();
 
   if (scope) {
     void reportError(scope.env, scope.ctx, error, scope.route, {
       properties: { ...context },
     });
+  }
+};
+
+/** How a run of the website's form ended, for its errors' events: from its record, never its address. */
+export interface RunEnd {
+  /** `web_audit_page` or `web_crawl_site`, as Analytics Engine records the run. */
+  tool: string;
+  outcome?: string;
+  requests?: number;
+  pages?: number;
+  /** The error that ended the run, when one did. */
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  error?: unknown;
+}
+
+/**
+ * Sends the errors of a run of the website's form when it ends (issue #96): those the core caught
+ * within it and the one that ended it, one event per bug, 10 at most, in one request. Nothing goes
+ * while the analytics are off, or for a run without a bug.
+ */
+export const reportRun = (
+  env: AnalyticsEnv,
+  ctx: Pick<ExecutionContext, "waitUntil">,
+  run: FormRun,
+  { error, ...end }: RunEnd
+): void => {
+  if (!env.POSTHOG_HOST) {
+    return;
+  }
+
+  try {
+    // The error that ended the run first, so the cap on bugs never drops it.
+    const errors = [
+      ...(error === undefined ? [] : [{ error, handled: true }]),
+      ...caughtErrors(run.caught),
+    ];
+
+    const sessionId = `ses_${uuidv7()}`;
+
+    const events = exceptionEvents(errors, {
+      distinctId: sessionId,
+      sessionId,
+      surface: "hosted",
+      properties: { route: "website:/audit", ...end },
+    });
+
+    if (events.length > 0) {
+      ctx.waitUntil(
+        sendEvents(events, {
+          host: env.POSTHOG_HOST,
+          timeoutMs: SEND_TIMEOUT_MS,
+        })
+      );
+    }
+  } catch {
+    // Error tracking never costs the visitor the report.
   }
 };
 
