@@ -313,6 +313,36 @@ describe("the hosted server's limits", () => {
     ]);
   });
 
+  it("count another site a page audit's redirect leads to, but not a crawl's link checks", async () => {
+    const { env, ctx, sites } = fakeEnv({ CALLER_SITES: 2 });
+    const profile = hostedProfile(env, ctx, PERSON);
+    const page = await profile.startCall(PAGE);
+    const crawl = await profile.startCall(CRAWL);
+
+    const go = (call: typeof page, url: string) =>
+      call.gate?.beforeRequest(new URL(url));
+
+    // Its own site, with or without www., and a redirect to a second site, which counts.
+    await expect(go(page, "https://example.com/")).resolves.toBeUndefined();
+    await expect(
+      go(page, "https://second.example.org/robots.txt")
+    ).resolves.toBeUndefined();
+    await expect(go(page, "https://third.example.net/")).resolves.toStrictEqual(
+      {
+        scope: "host",
+        message:
+          "The page led to third.example.net, another site than the one audited. This address has audited 2 different sites on the hosted server today, its daily limit per caller. Sites it audited today still work; others wait until 00:00 UTC. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp",
+      }
+    );
+    // A crawl checks links to any site, and counts none of them.
+    await expect(
+      go(crawl, "https://third.example.net/")
+    ).resolves.toBeUndefined();
+    expect([...sites.values()].map((s) => [...s])).toStrictEqual([
+      ["example.com", "second.example.org"],
+    ]);
+  });
+
   it("share a platform's 100 sites a day among its users, apart from other callers", async () => {
     const { env, ctx } = fakeEnv();
     const claude = hostedProfile(env, ctx, CLAUDE);

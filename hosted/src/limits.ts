@@ -193,6 +193,22 @@ const countRequests = async (
   todayCache.set(env.STATE, { day, count, readAt: Date.now() });
 };
 
+const sitesLimit = (env: LimitsEnv, caller: Caller): number =>
+  caller.platform ? env.PLATFORM_SITES : env.CALLER_SITES;
+
+/** Whether `caller` may audit the site of `host` today; a new site counts. */
+const admitSite = (
+  env: LimitsEnv,
+  caller: Caller,
+  host: string
+): Promise<boolean> =>
+  env.STATE.getByName("global").admitSite(
+    today(),
+    caller.key,
+    siteOf(host),
+    sitesLimit(env, caller)
+  );
+
 /** Throws the refusal of a tool call that the mode or a limit keeps out. */
 const admit = async (
   env: LimitsEnv,
@@ -234,19 +250,8 @@ const admit = async (
   }
 
   // Last, so that a call another limit refuses uses up no site.
-  if (call.fetches && call.host) {
-    const limit = caller.platform ? env.PLATFORM_SITES : env.CALLER_SITES;
-
-    const admitted = await env.STATE.getByName("global").admitSite(
-      today(),
-      caller.key,
-      siteOf(call.host),
-      limit
-    );
-
-    if (!admitted) {
-      throw new Error(sitesRefusal(caller, limit));
-    }
+  if (call.fetches && call.host && !(await admitSite(env, caller, call.host))) {
+    throw new Error(sitesRefusal(caller, sitesLimit(env, caller)));
   }
 };
 
@@ -320,13 +325,51 @@ const countSent = (
   }
 };
 
-/** The gate of one call: the limit per site, and a count of the requests it lets through. */
+/**
+ * The sites a call that audits one page may request: its own, and each other site a redirect of
+ * the page leads to, which counts as a site of the day too. A page audit requests nothing else
+ * (robots.txt and llms.txt are its own site's), so without this a redirect from a site the caller
+ * controls would audit any number of others. A crawl leaves out what redirects off its site, and
+ * its other requests to other hosts are link checks, so it has no such check.
+ */
+const pageSites = (
+  env: LimitsEnv,
+  caller: Caller,
+  host: string
+): ((hostname: string) => Promise<boolean>) => {
+  const sites = new Map([[siteOf(host), Promise.resolve(true)]]);
+
+  return (hostname) => {
+    const site = siteOf(hostname);
+    let admitted = sites.get(site);
+
+    if (!admitted) {
+      admitted = admitSite(env, caller, hostname);
+      sites.set(site, admitted);
+    }
+
+    return admitted;
+  };
+};
+
+/**
+ * The gate of one call: the sites a page audit may reach (`reaches`), the limit per site, and a
+ * count of the requests it lets through.
+ */
 const siteGate = (
   env: LimitsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
-  sent: Sent
+  sent: Sent,
+  reaches?: { caller: Caller; site: (hostname: string) => Promise<boolean> }
 ): RequestGate => ({
   beforeRequest: async (url) => {
+    if (reaches && !(await reaches.site(url.hostname))) {
+      return {
+        scope: "host",
+        message: `The page led to ${url.hostname}, another site than the one audited. ${sitesRefusal(reaches.caller, sitesLimit(env, reaches.caller))}`,
+      };
+    }
+
     const allowed = await env.SITE_REQUESTS.limit({ key: url.hostname });
 
     if (!allowed.success) {
@@ -386,7 +429,14 @@ export const hostedProfile = (
       const sent: Sent = { requests: 0, counted: 0 };
 
       return {
-        gate: siteGate(env, ctx, sent),
+        gate: siteGate(
+          env,
+          ctx,
+          sent,
+          call.host && !call.crawl
+            ? { caller, site: pageSites(env, caller, call.host) }
+            : undefined
+        ),
         end: ({ outcome, pages }) => {
           keep(call, outcome, {
             durationMs: Date.now() - started,

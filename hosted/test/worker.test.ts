@@ -56,6 +56,10 @@ const site = new Map<string, Route>(
     "https://shop.example.com/about": {
       body: html("About the fixture shop", '<a href="/">Home</a>'),
     },
+    "https://shop.example.com/away": {
+      status: 301,
+      headers: { location: "https://elsewhere.example.com/page" },
+    },
     "https://shop.example.com/sitemap.xml.gz": {
       headers: { "content-type": "application/gzip" },
       body: new Uint8Array(
@@ -997,13 +1001,28 @@ describe("the hosted Worker in workerd", () => {
 
         await again.text();
 
-        // The second site is refused; www. names the first site again.
-        expect([first.status, other.status, again.status]).toStrictEqual([
-          200, 429, 200,
-        ]);
+        const away = await sendForm(
+          "https://shop.example.com/away",
+          undefined,
+          undefined,
+          capped
+        );
+
+        const awayPage = await away.text();
+
+        // The second site is refused, and a redirect to it; www. names the first site again.
+        expect([
+          first.status,
+          other.status,
+          again.status,
+          away.status,
+        ]).toStrictEqual([200, 429, 200, 502]);
         expect(firstPage).toContain("About the fixture shop");
         expect(otherPage).toContain(
           "This address has audited 1 different site on the hosted server today, its daily limit per caller. Sites it audited today still work; others wait until 00:00 UTC."
+        );
+        expect(awayPage).toContain(
+          "The page led to elsewhere.example.com, another site than the one audited."
         );
         expect(
           requests.some((r) => r.url.includes("elsewhere.example.com/page"))
