@@ -1,0 +1,5 @@
+---
+"@rivi-software/agentic-seo-check": minor
+---
+
+The AEO audit reads robots.txt for eight more AI crawlers, each from its operator's own documentation (issue #34): the answer bots Amzn-SearchBot and Amzn-User (Amazon, Alexa), meta-webindexer and meta-externalfetcher (Meta AI), MistralAI-Index (Mistral search) and YandexAdditional (Yandex AI answers), and the training bots Amazonbot and MistralAI-Training. Each is a new entry in `crawlers.bots`, so a site that blocks a new answer bot now gets an `aeo.robots-blocks-answer-bot` warning and a lower AEO score; a blocked training bot is info. A `YandexAdditionalBot` group counts as YandexAdditional's own, as Yandex reads either name, and the page is blocked when either group blocks it; `AiBot` has a new `aliases` field for such names. With `--ai-bots`, the probe also requests the page as each new bot that has a User-Agent, and sends PerplexityBot's and Perplexity-User's User-Agents in the form Perplexity documents now. MistralAI-User's `usedFor` names Vibe, and Perplexity-User's says robots.txt may not apply.

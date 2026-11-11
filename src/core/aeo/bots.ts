@@ -10,6 +10,12 @@ import type {
 export interface AiBot {
   /** The robots.txt product token. */
   name: string;
+  /**
+   * Other robots.txt tokens the operator reads as this bot (YandexAdditionalBot for
+   * YandexAdditional). A group for any of them counts as the bot's own, and each one that blocks
+   * a page keeps the bot from it.
+   */
+  aliases?: string[];
   operator: string;
   purpose: AiBotPurpose;
   usedFor: string;
@@ -30,6 +36,20 @@ const PERPLEXITY_DOCS = "https://docs.perplexity.ai/guides/bots";
 
 const GOOGLE_CRAWLERS_DOCS =
   "https://developers.google.com/crawling/docs/crawlers-fetchers/google-common-crawlers";
+
+const AMAZON_DOCS = "https://developer.amazon.com/amazonbot";
+
+const META_DOCS =
+  "https://developers.facebook.com/docs/sharing/webmasters/web-crawlers";
+
+const MISTRAL_DOCS = "https://docs.mistral.ai/robots";
+
+/**
+ * Amazon's User-Agents end in `Chrome/W.X.Y.Z Safari/537.36`, a placeholder for the Chrome build
+ * they run; the probe sends a real Chrome version in its place, as the bots do.
+ */
+const amazonUserAgent = (token: string): string =>
+  `Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ${token}/0.1) Chrome/157.0.8103.39 Safari/537.36`;
 
 /**
  * The crawlers that decide whether a site can show up in AI answers, from the operators' own
@@ -100,16 +120,16 @@ export const AI_BOTS: AiBot[] = [
     usedFor: "Perplexity search results",
     docs: PERPLEXITY_DOCS,
     userAgent:
-      "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)",
+      "Mozilla/5.0 (compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)",
   },
   {
     name: "Perplexity-User",
     operator: "Perplexity",
     purpose: "answer",
-    usedFor: "pages Perplexity fetches for a user",
+    usedFor: "pages Perplexity fetches for a user; robots.txt may not apply",
     docs: PERPLEXITY_DOCS,
     userAgent:
-      "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Perplexity-User/1.0; +https://perplexity.ai/perplexity-user)",
+      "Mozilla/5.0 (compatible; Perplexity-User/1.0; +https://perplexity.ai/perplexity-user)",
   },
   {
     name: "Google-Extended",
@@ -131,10 +151,65 @@ export const AI_BOTS: AiBot[] = [
     name: "MistralAI-User",
     operator: "Mistral AI",
     purpose: "answer",
-    usedFor: "pages Le Chat fetches for a user",
-    docs: "https://docs.mistral.ai/robots",
+    usedFor: "pages Vibe fetches for a user",
+    docs: MISTRAL_DOCS,
     userAgent:
       "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; MistralAI-User/1.0; +https://docs.mistral.ai/robots)",
+  },
+  {
+    name: "Amzn-SearchBot",
+    operator: "Amazon",
+    purpose: "answer",
+    usedFor: "search experiences in Amazon products, such as Alexa",
+    docs: AMAZON_DOCS,
+    userAgent: amazonUserAgent("Amzn-SearchBot"),
+  },
+  {
+    name: "Amzn-User",
+    operator: "Amazon",
+    purpose: "answer",
+    usedFor:
+      "pages Alexa fetches for a user's question; robots.txt may not apply",
+    docs: AMAZON_DOCS,
+    userAgent: amazonUserAgent("Amzn-User"),
+  },
+  {
+    name: "meta-webindexer",
+    operator: "Meta",
+    purpose: "answer",
+    usedFor: "Meta AI search, to cite and link sources",
+    docs: META_DOCS,
+    userAgent:
+      "meta-webindexer/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)",
+  },
+  {
+    name: "meta-externalfetcher",
+    operator: "Meta",
+    purpose: "answer",
+    usedFor:
+      "links Meta AI fetches for a user, agents included; robots.txt may not apply",
+    docs: META_DOCS,
+    userAgent:
+      "meta-externalfetcher/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)",
+  },
+  {
+    name: "MistralAI-Index",
+    operator: "Mistral AI",
+    purpose: "answer",
+    usedFor: "the Mistral search index behind Vibe's answers",
+    docs: MISTRAL_DOCS,
+    userAgent:
+      "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; MistralAI-Index/1.0; +https://docs.mistral.ai/robots)",
+  },
+  {
+    // Yandex reads either name; its own example writes the second.
+    name: "YandexAdditional",
+    aliases: ["YandexAdditionalBot"],
+    operator: "Yandex",
+    purpose: "answer",
+    usedFor:
+      "Yandex AI answers in search, as a robots.txt token (or YandexAdditionalBot)",
+    docs: "https://yandex.com/support/webmaster/en/yandex-ai",
   },
   {
     name: "GPTBot",
@@ -174,9 +249,26 @@ export const AI_BOTS: AiBot[] = [
     operator: "Meta",
     purpose: "training",
     usedFor: "training Meta's AI models and indexing for Meta products",
-    docs: "https://developers.facebook.com/docs/sharing/webmasters/web-crawlers",
+    docs: META_DOCS,
     userAgent:
       "meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)",
+  },
+  {
+    name: "Amazonbot",
+    operator: "Amazon",
+    purpose: "training",
+    usedFor: "improving Amazon's products; may train Amazon AI models",
+    docs: AMAZON_DOCS,
+    userAgent: amazonUserAgent("Amazonbot"),
+  },
+  {
+    name: "MistralAI-Training",
+    operator: "Mistral AI",
+    purpose: "training",
+    usedFor: "training Mistral's models",
+    docs: MISTRAL_DOCS,
+    userAgent:
+      "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; MistralAI-Training/1.0; +https://docs.mistral.ai/robots)",
   },
 ];
 
@@ -189,6 +281,16 @@ const KNOWN_SIGNALS = new Set(["search", "ai-input", "ai-train", "use"]);
 /** How robots.txt groups match product tokens: lower-cased, without a version. */
 const productToken = (agent: string): string =>
   agent.split("/")[0]?.trim().toLowerCase() ?? "";
+
+/** The names robots.txt may give a bot: its token and its aliases, as written. */
+const namesOf = (bot: AiBot): string[] => [bot.name, ...(bot.aliases ?? [])];
+
+/** The product tokens a robots.txt group may name an AI bot by, lower-cased: its own and its aliases. */
+export const botTokens = (name: string): string[] => {
+  const bot = AI_BOTS.find((b) => b.name === name);
+
+  return (bot ? namesOf(bot) : [name]).map(productToken);
+};
 
 /** A group's user-agent lines as the file writes them, with any comment or blank lines between. */
 export interface AgentRun {
@@ -454,32 +556,33 @@ const ruleLine = (l: RobotsLine): RobotsRuleLine => ({
   tokens: l.agents.map(productToken),
 });
 
+/** Whether every group in `agents` lets its bot fetch `url`: one that blocks it keeps the bot out. */
+const allowsAll = (
+  allows: (target: string, agent: string) => boolean,
+  url: string,
+  agents: string[]
+): boolean => agents.every((a) => allows(url, a));
+
 /** The lines a group of its own for a bot keeps from the group it followed. */
 const COPIED_KEYS = new Set(["allow", "disallow", "content-signal"]);
 
-/** The product token of the group a bot follows. */
-const groupToken = (bot: AiBotAccess): string => {
-  if (bot.robotsGroup === "named") {
-    return productToken(bot.name);
-  }
-
-  return bot.robotsGroup === "googlebot" ? "googlebot" : "*";
-};
-
 /**
- * The lines of the group a bot follows that keep it from `blocked`, and the group's other rules.
- * `lineOf` gives the line robots-parser blocked each URL with, for a pattern `pathMatches` misses.
+ * The lines of the groups a bot follows (`agents`: its own names, `Googlebot` or `*`) that keep it
+ * from `blocked`, and the groups' other rules. `lineOf` gives the line robots-parser blocked each
+ * URL with, for a pattern `pathMatches` misses.
  */
 const blockOf = (
   lines: RobotsLine[],
-  token: string,
+  agents: string[],
   group: RobotsBlock["group"],
   blocked: string[],
   lineOf: (url: string) => number
 ): RobotsBlock => {
+  const tokens = new Set(agents.map(productToken));
+
   // One object per line, so `blocking` holds the very lines `rules` lists.
   const own = lines.flatMap((l) =>
-    l.agents.some((a) => productToken(a) === token)
+    l.agents.some((a) => tokens.has(productToken(a)))
       ? [{ line: l, rule: ruleLine(l) }]
       : []
   );
@@ -539,20 +642,31 @@ export const crawlerAccess = (
   const lineOf = found ? ruleLineMatcher(robots.url, text) : null;
   const urls = pageUrls.length ? pageUrls : [startUrl];
 
-  const bots = AI_BOTS.map((bot): AiBotAccess => {
-    const token = productToken(bot.name);
-    let robotsGroup: AiBotAccess["robotsGroup"] = "none";
-    let agent = bot.name;
+  // The user agents whose groups each bot follows: its names robots.txt has a group for (a page is
+  // blocked when any of them blocks it), `Googlebot` for Applebot, or `*`.
+  const agentsOf = new Map<string, string[]>();
 
-    if (groups?.named.has(token)) {
+  const bots = AI_BOTS.map((bot): AiBotAccess => {
+    const named = namesOf(bot).filter((n) =>
+      groups?.named.has(productToken(n))
+    );
+
+    let robotsGroup: AiBotAccess["robotsGroup"] = "none";
+    let agents = [bot.name];
+
+    if (named.length) {
       robotsGroup = "named";
-    } else if (token === "applebot" && groups?.named.has("googlebot")) {
+      agents = named;
+    } else if (bot.name === "Applebot" && groups?.named.has("googlebot")) {
       // Apple: without an Applebot group, Applebot follows the Googlebot group.
       robotsGroup = "googlebot";
-      agent = "Googlebot";
+      agents = ["Googlebot"];
     } else if (groups?.named.has("*")) {
       robotsGroup = "wildcard";
+      agents = ["*"];
     }
+
+    agentsOf.set(bot.name, agents);
 
     if (status === "unreachable") {
       return {
@@ -572,11 +686,12 @@ export const crawlerAccess = (
       purpose: bot.purpose,
       usedFor: bot.usedFor,
       robotsGroup,
-      allowed: allows ? allows(startUrl, agent) : true,
+      allowed: allows ? allowsAll(allows, startUrl, agents) : true,
       // A path `User-agent: *` keeps every crawler from is a site-wide choice, which the SEO
       // audit reports; only a page this bot may not fetch while other crawlers may counts here.
       blockedPages: allows
-        ? urls.filter((u) => !allows(u, agent) && allows(u, "*")).length
+        ? urls.filter((u) => !allowsAll(allows, u, agents) && allows(u, "*"))
+            .length
         : 0,
     };
   });
@@ -585,25 +700,26 @@ export const crawlerAccess = (
 
   if (allows && groups) {
     for (const bot of bots) {
-      if (bot.robotsGroup === "none") {
+      const agents = agentsOf.get(bot.name);
+
+      if (bot.robotsGroup === "none" || !agents) {
         continue;
       }
-
-      const token = groupToken(bot);
-      const agent = bot.robotsGroup === "googlebot" ? "Googlebot" : bot.name;
 
       // The pages the AEO rules report this bot blocked on: the start page, and pages only it is kept from.
       const blocked = [
         ...(bot.allowed ? [] : [startUrl]),
-        ...urls.filter((u) => !allows(u, agent) && allows(u, "*")),
+        ...urls.filter((u) => !allowsAll(allows, u, agents) && allows(u, "*")),
       ];
 
       if (blocked.length) {
         blocks.set(
           bot.name,
-          blockOf(groups.lines, token, bot.robotsGroup, blocked, (u) =>
-            lineOf ? lineOf(u, agent) : -1
-          )
+          blockOf(groups.lines, agents, bot.robotsGroup, blocked, (u) => {
+            const agent = agents.find((a) => !allows(u, a)) ?? bot.name;
+
+            return lineOf ? lineOf(u, agent) : -1;
+          })
         );
       }
     }

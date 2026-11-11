@@ -426,6 +426,131 @@ describe("AI crawler access", () => {
     });
   });
 
+  it.each(["YandexAdditional", "YandexAdditionalBot"])(
+    "reads a %s group as YandexAdditional's own",
+    (name) => {
+      const text = `User-agent: *\nDisallow: /private/\n\nUser-agent: ${name}\nDisallow: /\nContent-Signal: ai-input=no\n`;
+
+      const site = crawlerAccess(
+        robotsAt(text),
+        text,
+        "https://www.example.com/",
+        []
+      );
+
+      expect(botIn(site, "YandexAdditional")).toMatchObject({
+        robotsGroup: "named",
+        allowed: false,
+      });
+
+      const found = aeoSiteFindings({
+        crawlers: site,
+        llmsTxt: null,
+        pageCount: 1,
+      });
+
+      expect(found.map((f) => [f.rule, f.message])).toStrictEqual([
+        ["aeo.robots-blocks-answer-bot", "robots.txt blocks YandexAdditional."],
+        [
+          "aeo.content-signal-blocks-answers",
+          `robots.txt Content-Signal asks ${name} for ai-input=no.`,
+        ],
+      ]);
+    }
+  );
+
+  it("follows a YandexAdditionalBot group over *, and keeps the bot out where either name is blocked", () => {
+    const pages = [
+      "https://www.example.com/",
+      "https://www.example.com/private/a",
+      "https://www.example.com/drafts/a",
+    ];
+
+    const text = [
+      "User-agent: *",
+      "Disallow: /private/",
+      "",
+      "User-agent: YandexAdditional",
+      "Allow: /",
+      "",
+      "User-agent: YandexAdditionalBot",
+      "Disallow: /drafts/",
+    ].join("\n");
+
+    const site = crawlerAccess(robotsAt(text), text, pages[0] ?? "", pages);
+
+    // /private/ is open to both names; /drafts/ is closed to one, which keeps the bot out.
+    expect(botIn(site, "YandexAdditional")).toMatchObject({
+      robotsGroup: "named",
+      allowed: true,
+      blockedPages: 1,
+    });
+  });
+
+  it("reports Amzn-SearchBot as an answer bot and Amazonbot as a training bot", () => {
+    const text =
+      "User-agent: *\nAllow: /\n\nUser-agent: Amzn-SearchBot\nUser-agent: Amazonbot\nDisallow: /\n";
+
+    const found = aeoSiteFindings({
+      crawlers: crawlerAccess(
+        robotsAt(text),
+        text,
+        "https://www.example.com/",
+        []
+      ),
+      llmsTxt: null,
+      pageCount: 1,
+    });
+
+    expect(found.map((f) => [f.rule, f.severity, f.message])).toStrictEqual([
+      [
+        "aeo.robots-blocks-answer-bot",
+        "warning",
+        "robots.txt blocks Amzn-SearchBot.",
+      ],
+      [
+        "aeo.robots-blocks-training-bot",
+        "info",
+        "robots.txt blocks Amazonbot.",
+      ],
+    ]);
+  });
+
+  it("lets Amazon, Meta, Mistral and Yandex bots in through a * group that allows them", () => {
+    const text =
+      "User-agent: *\nDisallow: /admin/\n\nUser-agent: GPTBot\nDisallow: /\n";
+
+    const site = crawlerAccess(
+      robotsAt(text),
+      text,
+      "https://www.example.com/",
+      []
+    );
+
+    for (const name of [
+      "Amzn-SearchBot",
+      "Amzn-User",
+      "meta-webindexer",
+      "meta-externalfetcher",
+      "MistralAI-Index",
+      "YandexAdditional",
+      "Amazonbot",
+      "MistralAI-Training",
+    ]) {
+      expect(botIn(site, name)).toMatchObject({
+        robotsGroup: "wildcard",
+        allowed: true,
+        blockedPages: 0,
+      });
+    }
+
+    expect(
+      aeoSiteFindings({ crawlers: site, llmsTxt: null, pageCount: 1 }).map(
+        (f) => f.message
+      )
+    ).toStrictEqual(["robots.txt blocks GPTBot."]);
+  });
+
   it("reports only the search crawlers robots.txt really blocks", () => {
     const onlyGoogle =
       "User-agent: Googlebot\nAllow: /\n\nUser-agent: *\nDisallow: /\n";
