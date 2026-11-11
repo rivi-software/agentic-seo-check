@@ -1,9 +1,9 @@
 /**
  * The website at agentic-seo.rivi.software (issue #39) as a Worker of its own,
- * agentic-seo-check-site (wrangler.site.jsonc), apart from the MCP server's: it deploys with each
- * change to main that reaches it, while the MCP server deploys with each npm release. The two
- * still share their limits: the same rate limiting namespaces, and the MCP Worker's HostedState
- * object for the day's counts.
+ * agentic-seo-check-site (wrangler.site.jsonc), beside the MCP server's: both deploy with each
+ * change to main that reaches them, the MCP server first (deploy-hosted.yml). The two share their
+ * limits: the same rate limiting namespaces, and the MCP Worker's HostedState object for the day's
+ * counts.
  */
 import { reportError } from "../analytics.js";
 import type { ErrorRoute } from "../analytics.js";

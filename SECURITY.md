@@ -34,7 +34,7 @@ There is no bug bounty.
 
 ## Supported versions
 
-Only the latest published version gets fixes. A fix comes out as a new version: upgrade to get it. The hosted server deploys with each release, so it always runs the latest version. The website deploys with each change to the main branch, so it gets a fix as soon as the fix is merged, before the release.
+Only the latest published version gets fixes. A fix comes out as a new version: upgrade to get it. The hosted server and the website deploy with each change to the main branch, so they get a fix as soon as the fix is merged, before the release.
 
 ## Scope
 

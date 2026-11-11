@@ -1,5 +1,7 @@
 name: Release
 
+# Publishes to npm only. The hosted server and the website deploy from deploy-hosted.yml, which the
+# push of a release's version commit starts like any other change to main.
 on:
   push:
     branches:
@@ -21,8 +23,6 @@ jobs:
     permissions:
       contents: read
       id-token: write # npm trusted publishing and provenance
-    outputs:
-      published: ${{ steps.changesets.outputs.published }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,17 +71,3 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           # The default in v2, set so a bump that changes it does not move commits to the git CLI.
           push-with-git-cli: false
-
-  # The hosted MCP server runs the release just published, and the website deploys again with it:
-  # a job of its own, whose environment holds the Cloudflare token, so the publish job never sees it.
-  deploy-hosted:
-    name: Deploy the hosted server
-    needs: release
-    if: needs.release.outputs.published == 'true'
-    permissions:
-      contents: read
-    uses: ./.github/workflows/deploy-hosted.yml
-    # A called workflow sees only the secrets its caller hands it, and that holds for the secrets of
-    # its own job's environment too: without this, the hosted environment's CLOUDFLARE_API_TOKEN
-    # reaches the deploy step empty, while the environment's variables come through.
-    secrets: inherit
