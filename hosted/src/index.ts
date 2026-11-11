@@ -76,8 +76,9 @@ const refreshOpenAiRanges = async (env: Env): Promise<void> => {
 
 /**
  * One MCP request: stateless, so every POST gets its own server and transport, and the answer is
- * JSON. There are no sessions to resume or end, so GET and DELETE answer 405, as the protocol
- * allows.
+ * JSON. The `Mcp-Session-Id` an `initialize` is answered with is a token for the analytics alone
+ * (analytics.ts), which any request can read without the server keeping anything. There is no
+ * session to resume or end, so GET and DELETE answer 405, as the protocol allows.
  */
 const handleMcp = async (
   request: Request,
@@ -96,7 +97,12 @@ const handleMcp = async (
     await openAiRanges(env)
   );
 
-  const tracking = hostedAnalytics(env, ctx, caller);
+  const tracking = hostedAnalytics(
+    env,
+    ctx,
+    caller,
+    request.headers.get("mcp-session-id")
+  );
 
   const server = createMcpServer({
     hosted: hostedProfile(env, ctx, caller, tracking?.observe),
@@ -122,6 +128,13 @@ const handleMcp = async (
 
     for (const [name, value] of Object.entries(CORS)) {
       headers.set(name, value);
+    }
+
+    // The client sends the session's token back with each request, so its calls share a session.
+    const session = tracking?.sessionToken();
+
+    if (session && response.ok) {
+      headers.set("mcp-session-id", session);
     }
 
     return new Response(response.body, { status: response.status, headers });

@@ -452,11 +452,13 @@ describe("telemetry", () => {
           $geoip_disable: true,
           surface: "local",
           os: process.platform,
-          $session_id: start.properties.$session_id,
+          distinct_id: start.properties.distinct_id,
+          $session_id: start.properties.distinct_id,
         },
       });
-      expect(call.properties.$session_id).toMatch(/^ses_/u);
-      expect(call.properties.distinct_id).toBe(call.properties.$session_id);
+      expect(start.properties.distinct_id).toMatch(/^ses_/u);
+      // A handshake counts no session: most connections call no tool.
+      expect(start.properties).not.toHaveProperty("$session_id");
       expect(JSON.stringify(sent)).not.toContain("Private title");
     });
   });
