@@ -2,8 +2,8 @@ name: Deploy the website
 
 # The website (agentic-seo.rivi.software) is a Worker of its own, agentic-seo-check-site
 # (hosted/wrangler.site.jsonc), and goes live with each change to main that reaches its bundle,
-# without waiting for an npm release as the MCP server does. Deploy the hosted server also runs it
-# after each deploy of the MCP server. A maintainer can run it by hand on main or a release tag.
+# without waiting for an npm release as the MCP server does. Deploy the hosted server deploys it
+# too, right after the MCP server. A maintainer can run this by hand on main or a release tag.
 #
 # A run deploys the commit it runs on, and nothing else: the environment's rule for main and v*
 # checks the ref a run is for, so an input naming other code would take the Cloudflare token past
@@ -23,12 +23,6 @@ on:
       - "pnpm-workspace.yaml"
       - ".node-version"
       - ".github/workflows/deploy-site.yml"
-  workflow_call:
-    inputs:
-      server-deployed:
-        description: The MCP server was just deployed from this commit, so it runs this commit's Durable Object.
-        type: boolean
-        default: false
   workflow_dispatch:
 
 permissions:
@@ -59,27 +53,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The commit the run is for: main's, the tag's, or the one the MCP server just deployed.
+          # The commit the run is for: main's or the tag's.
           ref: ${{ github.sha }}
           # The release tags, for the check below.
           fetch-depth: 0
           persist-credentials: false
 
       # The website binds the MCP server's Durable Object (hosted/src/state.ts), which runs the code
-      # the MCP server last deployed: the last release's, unless it was just deployed from this
-      # commit. While this commit's state.ts differs from that, the website's code may call what the
-      # object does not have yet, so the website waits for the MCP server's next deploy, which runs
-      # this workflow after it.
+      # the MCP server last deployed: the last release's. While this commit's state.ts differs from
+      # that, the website's code may call what the object does not have yet, so the website waits
+      # for the MCP server's next deploy, which deploys the website right after its own.
       - name: The MCP server runs this commit's Durable Object
         id: state
-        env:
-          SERVER_DEPLOYED: ${{ inputs.server-deployed || false }}
         run: |
-          if [[ "$SERVER_DEPLOYED" == true ]]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           release=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)
 
           if git diff --quiet "$release" HEAD -- hosted/src/state.ts; then

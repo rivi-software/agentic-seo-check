@@ -64,11 +64,11 @@ Opening a link requests nothing from the audited site and writes no record. With
 The two Workers deploy apart:
 
 - **The MCP server** runs the latest npm release, the only version SECURITY.md supports: the release workflow publishes a version to npm, then calls [`deploy-hosted.yml`](../.github/workflows/deploy-hosted.yml). To change a limit or `MODE` before the next release, merge the change to `wrangler.jsonc`, then run **Deploy the hosted server** by hand on `main`. To roll it back, run it on an earlier release tag that has `hosted/` (`gh workflow run deploy-hosted.yml --ref v0.7.0`); the website, which deploys after it, goes back to that tag too. A tag from before the website had a Worker of its own routes `agentic-seo.rivi.software` back to the MCP server's Worker: run **Deploy the website** on `main` afterwards to take it back.
-- **The website** runs `main`: [`deploy-site.yml`](../.github/workflows/deploy-site.yml) deploys it with each push to `main` that changes what its bundle is built from (`src/`, `hosted/` but its tests and docs, `package.json`, the lockfile), and again after each run of **Deploy the hosted server**. A fix to the core reaches the website before the release that brings it to npm and the MCP server. Run **Deploy the website** by hand on `main` to deploy it again, or on a release tag to roll it back.
+- **The website** runs `main`: [`deploy-site.yml`](../.github/workflows/deploy-site.yml) deploys it with each push to `main` that changes what its bundle is built from (`src/`, `hosted/` but its tests and docs, `package.json`, the lockfile), and again with each run of **Deploy the hosted server**, which deploys it straight after the MCP server, in the same job. A fix to the core reaches the website before the release that brings it to npm and the MCP server. Run **Deploy the website** by hand on `main` to deploy it again, or on a release tag to roll it back.
 
 Both jobs run in the GitHub environment `hosted`, which holds the Cloudflare token; the publish job never sees it. A run deploys the commit it runs on and refuses any ref but `main` and release tags, so no input can hand the token other code.
 
-The website binds the MCP server's Durable Object, which runs the code the MCP server last deployed. While `src/state.ts` at a commit differs from the last release's, the website's code may call a method the object does not have yet, so its deploy waits, with a warning on the run, and the next deploy of the MCP server deploys it after its own. Keep the object's methods additive: the MCP server's release and the website's `main` both call it.
+The website binds the MCP server's Durable Object, which runs the code the MCP server last deployed. While `src/state.ts` at a commit differs from the last release's, the website's code may call a method the object does not have yet, so its deploy waits, with a warning on the run, and the next deploy of the MCP server deploys it right after its own. Keep the object's methods additive: the MCP server's release and the website's `main` both call it.
 
 Each Worker has its own `MODE`. The MCP server's (`wrangler.jsonc`) is `open`, `no-crawls` (crawls are refused, single page audits work) or `closed` (every tool call is refused, with the local server as the way out); the website's (`wrangler.site.jsonc`) is `open`, `no-crawls` (the form audits a homepage alone) or `closed` (the form is off). To pause both, change both and deploy both.
 
@@ -106,8 +106,8 @@ Once, before the first deploy:
        pnpm run site:secret SHARE_KEY
        ```
 
-    2. Merge to `main`. **Deploy the website** moves the Custom Domain `agentic-seo.rivi.software` from the MCP server's Worker to the website's, as Wrangler does for a deploy without a terminal.
-    3. The MCP server's next deploy drops the website's code and route from its Worker. Then delete from it the secrets only the website reads: `pnpm exec wrangler secret delete TURNSTILE_SECRET_KEY --config hosted/wrangler.jsonc`, and `SHARE_KEY` and `SHARE_KEY_PREVIOUS` likewise.
+    2. Merge to `main`. The first deploy of the website moves the Custom Domain `agentic-seo.rivi.software` from the MCP server's Worker to the website's, as Wrangler does for a deploy without a terminal. While `src/state.ts` differs from the last release's, **Deploy the website** waits: run **Deploy the hosted server** on `main` instead. Its MCP deploy drops the hostname from the MCP server's Worker (a deploy sets a Worker's whole list of Custom Domains), and the website's deploy, seconds later in the same job, takes it.
+    3. Once the MCP server's Worker no longer has the website's route, delete from it the secrets only the website reads: `pnpm exec wrangler secret delete TURNSTILE_SECRET_KEY --config hosted/wrangler.jsonc`, and `SHARE_KEY` and `SHARE_KEY_PREVIOUS` likewise.
 
 ## Answering an abuse report
 
