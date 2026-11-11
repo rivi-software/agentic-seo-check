@@ -178,6 +178,15 @@ const textOf = (result: Awaited<ReturnType<Client["callTool"]>>) => {
   return first.text;
 };
 
+/** The conversation an answer ends with (issue #101). */
+const conversationOf = (result: Awaited<ReturnType<Client["callTool"]>>) => {
+  const last = CallToolResultSchema.parse(result).content.at(-1);
+  assert(last?.type === "text", "the last content block is text");
+
+  return z.object({ conversation_id: z.string() }).parse(JSON.parse(last.text))
+    .conversation_id;
+};
+
 const Audit = z.object({
   summary: z.object({ title: z.string().nullable() }).optional(),
   findings: z
@@ -373,6 +382,7 @@ describe("the hosted Worker in workerd", () => {
         version: readVersion(),
       });
       expect(tools.map((t) => t.name).toSorted()).toStrictEqual([
+        "send_feedback",
         "seo_aeo_audit",
         "seo_audit_page",
         "seo_crawl_site",
@@ -396,6 +406,7 @@ describe("the hosted Worker in workerd", () => {
       const { result } = await audit("seo_audit_page", {
         url: "https://shop.example.com/about",
         context: "first audit of https://shop.example.com/about",
+        llm_model: "claude-opus-4-8",
       });
 
       expect(result.isError).toBeFalsy();
@@ -426,7 +437,7 @@ describe("the hosted Worker in workerd", () => {
           // What the call did and what it was for (issue #84).
           $mcp_intent: "first audit of <url>",
           $mcp_intent_source: "context_parameter",
-          arguments: ["context", "url"],
+          arguments: ["context", "llm_model", "url"],
           target: "url",
           score: expect.any(Number),
           errors: expect.any(Number),
@@ -434,10 +445,20 @@ describe("the hosted Worker in workerd", () => {
           format: "json",
           detail: "compact",
           recheck: false,
+          // The model, the conversation and the tool's own description (issue #101).
+          $mcp_llm_model: "claude-opus-4-8",
+          $mcp_llm_model_source: "self_reported",
+          $mcp_conversation_id: conversationOf(result),
+          $mcp_input_keys: ["context", "llm_model", "url"],
+          $mcp_tool_description: expect.stringContaining("Audit a single page"),
+          $mcp_interface: "mcp",
         },
       });
       expect(event.properties.requests).toBeGreaterThan(0);
-      expect(event.properties.$session_id).toBe(event.properties.distinct_id);
+      // The call sent no conversation back, so it joined its connection's session.
+      expect(event.properties.$session_id).toBe(
+        `ses_${conversationOf(result)}`
+      );
       expect(JSON.stringify(event)).not.toMatch(
         /example\.com|About the fixture/u
       );
@@ -485,6 +506,32 @@ describe("the hosted Worker in workerd", () => {
       );
     });
 
+    it("tells PostHog an agent's feedback, cleaned, in the session of its conversation (issue #101)", async () => {
+      const before = events.length;
+
+      const result = await client.callTool({
+        name: "send_feedback",
+        arguments: {
+          feedback_type: "missing_capability",
+          summary:
+            "No way to audit https://shop.example.com/admin behind a login.",
+        },
+      });
+
+      expect(result.isError).toBeFalsy();
+
+      const [event] = await eventsAfter(before, "$mcp_feedback");
+
+      expect(event?.properties).toMatchObject({
+        $mcp_feedback_type: "missing_capability",
+        $mcp_feedback_summary: "No way to audit <url> behind a login.",
+        $mcp_conversation_id: conversationOf(result),
+        $session_id: `ses_${conversationOf(result)}`,
+        surface: "hosted",
+      });
+      expect(JSON.stringify(event)).not.toContain("example.com");
+    });
+
     it("tells PostHog a call failed and what kind of failure, not its message", async () => {
       const before = events.length;
 
@@ -502,7 +549,8 @@ describe("the hosted Worker in workerd", () => {
         $mcp_error_type: "validation",
         reason: "address",
       });
-      expect(JSON.stringify(event)).not.toContain("localhost");
+      // The description says the server cannot reach localhost; the address stays out.
+      expect(JSON.stringify(event)).not.toContain("localhost:8787");
     });
 
     it("refuses an address it may not request, without requesting it", async () => {
