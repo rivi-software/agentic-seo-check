@@ -14,6 +14,7 @@ import {
   CATEGORY_LABEL,
   plural,
 } from "../../../src/core/report/labels.js";
+import { sortFindings } from "../../../src/core/rules/index.js";
 import type {
   AeoAudit,
   Finding,
@@ -177,10 +178,12 @@ const homeSection = (start: SiteAudits["start"]): ReportSection[] => {
     return [];
   }
 
-  const findings = [
+  // Each audit's findings come sorted, the two together do not: sorted again, the group with the
+  // worst finding comes first whichever audit it is from.
+  const findings = sortFindings([
     ...start.seo.findings,
     ...start.aeo.findings.filter((f) => AEO_PAGE_RULE_IDS.has(f.rule)),
-  ];
+  ]);
 
   return [
     {

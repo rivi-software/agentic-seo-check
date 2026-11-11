@@ -354,6 +354,48 @@ describe("the report of a site audit", () => {
     expect(home).toContain('class="edits"');
   });
 
+  it("puts the homepage's worst group first, whichever audit it is from", () => {
+    const { start } = audits;
+    const info = start?.seo.findings.filter((f) => f.severity === "info") ?? [];
+    const [base] = info;
+
+    expect(base).toBeDefined();
+
+    if (!start || !base) {
+      return;
+    }
+
+    // SEO findings that are only info, and an AEO error on the page, which comes after them.
+    const html = renderSiteReport({
+      ...audits,
+      start: {
+        seo: { ...start.seo, findings: info },
+        aeo: {
+          ...start.aeo,
+          findings: [
+            {
+              ...base,
+              rule: "aeo.page-error",
+              severity: "error",
+              category: "aeo",
+            },
+          ],
+        },
+      },
+    });
+
+    const home = html.slice(
+      html.indexOf('id="home"'),
+      html.indexOf('id="pages"')
+    );
+
+    expect(
+      home
+        .slice(home.indexOf('class="finding-group"'))
+        .startsWith('class="finding-group" id="home-aeo"')
+    ).toBeTruthy();
+  });
+
   it("never lets the site's text become markup", () => {
     expect(report).not.toContain("<script>alert");
     expect(report).not.toContain("<img");
