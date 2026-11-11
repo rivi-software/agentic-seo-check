@@ -28,8 +28,9 @@
   "build": { "command": "node scripts/posthog-js.ts" },
   "workers_dev": false,
   "preview_urls": false,
-  // A crawl at the caps costs about 15 s of CPU; this is the default limit, written down.
-  "limits": { "cpu_ms": 30000 },
+  // A crawl at the caps (100 pages, both audits) took 6 s of CPU on a laptop with 113 KB pages
+  // (issue #73); Cloudflare's machines are slower and pages may be larger. Workers Paid allows 300 s.
+  "limits": { "cpu_ms": 120000 },
   // The optional packages behind rendering and Lighthouse, which the hosted server leaves out: each import
   // gets a module that fails to load, as a missing package does.
   "alias": {
@@ -40,8 +41,8 @@
   },
   // Approximate, and counted per Cloudflare location. The landing page and the refusals state these numbers.
   "ratelimits": [
-    // Requests to one hostname, from every caller together: a crawl at the caps sends about 150.
-    { "name": "SITE_REQUESTS", "namespace_id": "35001", "simple": { "limit": 300, "period": 60 } },
+    // Requests to one hostname, from every caller together: a crawl at the caps sends about 300.
+    { "name": "SITE_REQUESTS", "namespace_id": "35001", "simple": { "limit": 600, "period": 60 } },
     // Tool calls per IP address (seo_list_rules is not counted), and the crawls among them.
     { "name": "CALLER_CALLS", "namespace_id": "35002", "simple": { "limit": 30, "period": 60 } },
     { "name": "CALLER_CRAWLS", "namespace_id": "35003", "simple": { "limit": 3, "period": 60 } },
@@ -49,7 +50,8 @@
     { "name": "PLATFORM_CALLS", "namespace_id": "35004", "simple": { "limit": 300, "period": 60 } },
     { "name": "PLATFORM_CRAWLS", "namespace_id": "35005", "simple": { "limit": 30, "period": 60 } }
   ],
-  // The day's count of outgoing requests, and ChatGPT's connector addresses.
+  // The day's count of outgoing requests, the sites each caller audited today, and ChatGPT's
+  // connector addresses.
   "durable_objects": { "bindings": [{ "name": "STATE", "class_name": "HostedState" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HostedState"] }],
   // One record per tool call: the tool, the outcome, the duration, the requests and pages, the target hostname.
@@ -62,6 +64,11 @@
     "MODE": "open",
     // Outgoing requests a day, all callers together: past it, audits that request sites wait for 00:00 UTC.
     "DAILY_REQUESTS": 100000,
+    // Different sites (hostnames, without www.) one caller may audit a day (issue #73): an IP
+    // address, or claude.ai and ChatGPT, each for all its users together. A site audited today
+    // stays open to its caller until 00:00 UTC.
+    "CALLER_SITES": 10,
+    "PLATFORM_SITES": 100,
     // The token OpenAI asks the domain to serve at /.well-known/openai-apps-challenge (#33); none yet.
     "OPENAI_APPS_CHALLENGE": "",
     // The public site key of the website's Turnstile widget ("agentic-seo-check website audit

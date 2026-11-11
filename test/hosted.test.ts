@@ -317,8 +317,8 @@ describe("the hosted server", () => {
       const pageTool = tools.find((t) => t.name === "seo_audit_page");
 
       expect(crawl?.inputSchema.properties).toMatchObject({
-        maxPages: { maximum: 25 },
-        maxDepth: { maximum: 3 },
+        maxPages: { maximum: 100, default: 100 },
+        maxDepth: { maximum: 5, default: 5 },
         concurrency: { maximum: 4 },
         includePatterns: { maxItems: 20, items: { maxLength: 200 } },
         timeoutMs: { maximum: 15_000 },
@@ -496,7 +496,7 @@ describe("the hosted server", () => {
 
       const tooMany = await client.callTool({
         name: "seo_crawl_site",
-        arguments: { url: "https://www.example.com/", maxPages: 26 },
+        arguments: { url: "https://www.example.com/", maxPages: 101 },
       });
 
       const tooLong = await client.callTool({

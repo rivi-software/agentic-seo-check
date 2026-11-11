@@ -5,6 +5,13 @@ import { auditHtml } from "../../src/core/audit.ts";
 import { ORIGIN } from "../src/limits.ts";
 import { crawlerPage, landingPage } from "../src/pages.ts";
 
+/** The daily limits as wrangler.jsonc sets them. */
+const DAILY = {
+  DAILY_REQUESTS: 100_000,
+  CALLER_SITES: 10,
+  PLATFORM_SITES: 100,
+};
+
 /** The audit of a page as the Worker serves it, at `path`. */
 const audit = (html: string, path: string) => {
   const url = `${ORIGIN}${path}`;
@@ -34,7 +41,7 @@ const problems = (findings: { rule: string; severity: string }[]) =>
 
 describe("the hosted server's pages", () => {
   it("pass the server's own SEO audit", async () => {
-    const landing = await audit(landingPage(100_000), "/");
+    const landing = await audit(landingPage(DAILY), "/");
     const crawler = await audit(crawlerPage(), "/crawler");
 
     expect(problems(landing.findings)).toStrictEqual([]);
@@ -42,7 +49,7 @@ describe("the hosted server's pages", () => {
   });
 
   it("pass the server's own AEO audit", async () => {
-    const landing = await auditAeoHtml(landingPage(100_000), {
+    const landing = await auditAeoHtml(landingPage(DAILY), {
       url: `${ORIGIN}/`,
     });
 
@@ -50,14 +57,16 @@ describe("the hosted server's pages", () => {
   });
 
   it("state the limits wrangler.jsonc sets", () => {
-    const html = landingPage(100_000);
+    const html = landingPage(DAILY);
 
     for (const limit of [
-      "300 requests a minute",
+      "600 requests a minute",
       "30 calls a minute, 3 crawls a minute among them",
       "300 calls a minute, 30 crawls a minute among them",
+      "10 a day; a site audited today can be audited again until 00:00 UTC",
+      "<td>100 a day</td>",
       "100,000 a day",
-      "25 pages, 3 links deep, 50 link checks, 10 sitemaps of up to 5 MB",
+      "100 pages, 5 links deep, 100 link checks, 10 sitemaps of up to 5 MB",
       "the first 2 MB of its HTML, within 15 seconds",
     ]) {
       expect(html).toContain(limit);
@@ -81,11 +90,9 @@ describe("the hosted server's pages", () => {
       'href="/.well-known/http-message-signatures-directory"'
     );
     expect(html).toContain("Every audit reads robots.txt first and obeys it");
-    expect(landingPage(100_000)).toContain(
+    expect(landingPage(DAILY)).toContain(
       "The server obeys robots.txt for every request it sends"
     );
-    expect(landingPage(100_000)).toContain(
-      "https://help.rivi.software/contact"
-    );
+    expect(landingPage(DAILY)).toContain("https://help.rivi.software/contact");
   });
 });

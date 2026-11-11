@@ -24,6 +24,13 @@ import {
 import { CLAUDE_DIRECTORY_URL } from "../src/ui/frame.ts";
 import { OG_IMAGE, SERVER_CARD, SITE_CARD } from "../src/ui/og.ts";
 
+/** The daily limits as wrangler.jsonc sets them. */
+const DAILY = {
+  DAILY_REQUESTS: 100_000,
+  CALLER_SITES: 10,
+  PLATFORM_SITES: 100,
+};
+
 const OPEN = {
   open: true,
   crawls: true,
@@ -123,7 +130,7 @@ describe("the website's pages", () => {
 
   it("share one frame with the hosted server's pages, served from each page's own hostname", () => {
     const site = [homePage(OPEN), rulesPage(), notFoundPage()];
-    const server = [landingPage(100_000), crawlerPage()];
+    const server = [landingPage(DAILY), crawlerPage()];
 
     for (const html of [...site, ...server]) {
       expect(html).toContain('<script src="/site.js" defer></script>');
@@ -146,7 +153,7 @@ describe("the website's pages", () => {
     const pages: [html: string, origin: string, path: string][] = [
       [homePage(OPEN), SITE_ORIGIN, "/"],
       [rulesPage(), SITE_ORIGIN, "/rules"],
-      [landingPage(100_000), MCP_ORIGIN, "/"],
+      [landingPage(DAILY), MCP_ORIGIN, "/"],
       [crawlerPage(), MCP_ORIGIN, "/crawler"],
     ];
 
@@ -188,7 +195,7 @@ describe("the website's pages", () => {
       expect(html).toContain(link);
     }
 
-    for (const html of [homePage(OPEN), landingPage(100_000)]) {
+    for (const html of [homePage(OPEN), landingPage(DAILY)]) {
       expect(html).toContain(`<a class="badge" ${link}>`);
     }
 

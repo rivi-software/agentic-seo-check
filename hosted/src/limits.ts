@@ -1,8 +1,8 @@
 /**
  * The hosted server's limits (issue #35, part 4), in the shape `createMcpServer`'s hosted profile
- * asks for them: per caller or platform before a tool call, per site before each request, and per
- * day for every request together. A refusal names the limit, says when to try again and points to
- * the local server, which has none.
+ * asks for them: per caller or platform before a tool call, per site before each request, per day
+ * for every request together, and per day for the sites each caller audits (issue #73). A refusal
+ * names the limit, says when to try again and points to the local server, which has none.
  */
 import type { RequestGate } from "../../src/core/fetch.js";
 import { LOCAL_SERVER } from "../../src/core/hosted.js";
@@ -100,19 +100,53 @@ const siteRefusal = (host: string): string => {
 const dailyRefusal = (limit: number): string =>
   `The hosted server has sent its ${limit.toLocaleString("en")} requests for today, its daily limit for all callers together. Audits that request a site wait until 00:00 UTC; audits of inline HTML and seo_list_rules still work. ${NO_LIMITS}`;
 
+const sitesRefusal = (caller: Caller, limit: number): string => {
+  const sites = `${limit} different ${limit === 1 ? "site" : "sites"}`;
+
+  const who = caller.platform
+    ? `The users of ${PLATFORMS[caller.platform]} have together audited ${sites} on the hosted server today, its daily limit for the platform. Sites they audited today still work`
+    : `This address has audited ${sites} on the hosted server today, its daily limit per caller. Sites it audited today still work`;
+
+  return `${who}; others wait until 00:00 UTC. ${NO_LIMITS}`;
+};
+
+/**
+ * The site a call's host counts as for the daily cap: example.com and www.example.com are one.
+ * The URL parser has already lowercased the host.
+ */
+export const siteOf = (host: string): string =>
+  host.replace(/\.$/u, "").replace(/^www\./u, "");
+
 /** The UTC date the daily limit counts for. */
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-/** The day's count of requests that the HostedState Durable Object keeps. */
+/** The day's counts that the HostedState Durable Object keeps: requests, and each caller's sites. */
 export interface DayCounter {
   requests: (day: string) => Promise<number>;
   addRequests: (day: string, count: number) => Promise<number>;
+  /** Whether `caller` may audit `site` today, counting it when it is new; see HostedState. */
+  admitSite: (
+    day: string,
+    caller: string,
+    site: string,
+    limit: number
+  ) => Promise<boolean>;
 }
+
+/** The daily limits, as the landing page states them. */
+export type DailyLimits = Pick<
+  LimitsEnv,
+  "DAILY_REQUESTS" | "CALLER_SITES" | "PLATFORM_SITES"
+>;
 
 /** The Worker's bindings and variables the limits use (wrangler.jsonc). */
 export interface LimitsEnv {
   MODE: string;
   DAILY_REQUESTS: number;
+  /** Different sites one IP address may audit a day. */
+  CALLER_SITES: number;
+  /** Different sites claude.ai's users, or ChatGPT's, may audit a day, all together. */
+  PLATFORM_SITES: number;
   SITE_REQUESTS: RateLimit;
   CALLER_CALLS: RateLimit;
   CALLER_CRAWLS: RateLimit;
@@ -197,6 +231,22 @@ const admit = async (
 
   if (call.fetches && (await requestsToday(env)) >= env.DAILY_REQUESTS) {
     throw new Error(dailyRefusal(env.DAILY_REQUESTS));
+  }
+
+  // Last, so that a call another limit refuses uses up no site.
+  if (call.fetches && call.host) {
+    const limit = caller.platform ? env.PLATFORM_SITES : env.CALLER_SITES;
+
+    const admitted = await env.STATE.getByName("global").admitSite(
+      today(),
+      caller.key,
+      siteOf(call.host),
+      limit
+    );
+
+    if (!admitted) {
+      throw new Error(sitesRefusal(caller, limit));
+    }
   }
 };
 

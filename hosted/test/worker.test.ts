@@ -177,9 +177,14 @@ const audit = async (
   return { result, audit: Audit.safeParse(result.structuredContent).data };
 };
 
-/** Sends the audit form as a browser does, with Turnstile's token. */
-const sendForm = (url: string, token = "a-person", origin = SITE) =>
-  website.fetch(`${SITE}/audit`, {
+/** Sends the audit form as a browser does, with Turnstile's token, to `to` (the website). */
+const sendForm = (
+  url: string,
+  token = "a-person",
+  origin = SITE,
+  to: StartedWorker = website
+) =>
+  to.fetch(`${SITE}/audit`, {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
@@ -207,9 +212,9 @@ const fetchRead = async (
 
 /**
  * Starts the Worker in workerd, answering as `origin`: Wrangler's dev server gives every request
- * one hostname, whatever address it was sent to.
+ * one hostname, whatever address it was sent to. `vars` replace wrangler.jsonc's.
  */
-const start = (origin: string) =>
+const start = (origin: string, vars: Record<string, number> = {}) =>
   unstable_startWorker({
     config: new URL("../wrangler.jsonc", import.meta.url).pathname,
     build: {
@@ -217,7 +222,15 @@ const start = (origin: string) =>
       // wrangler.jsonc's build command runs in hosted/, as `wrangler` does.
       custom: { workingDirectory: new URL("../", import.meta.url).pathname },
     },
-    bindings: { POSTHOG_HOST: { type: "plain_text", value: POSTHOG } },
+    bindings: {
+      POSTHOG_HOST: { type: "plain_text", value: POSTHOG },
+      ...Object.fromEntries(
+        Object.entries(vars).map(([name, value]) => [
+          name,
+          { type: "json", value },
+        ])
+      ),
+    },
     dev: {
       origin: { hostname: new URL(origin).hostname, secure: true },
       server: { hostname: "127.0.0.1", port: 0 },
@@ -948,6 +961,56 @@ describe("the hosted Worker in workerd", () => {
       expect(page).toContain(
         "This address has started 3 crawls on the hosted server in the last minute"
       );
+    });
+
+    it("lets an address audit as many different sites a day as CALLER_SITES says, and those again", async () => {
+      // A Worker of its own, with its own Durable Object and limits, which allows one site a day.
+      const capped = await start(SITE, { CALLER_SITES: 1 });
+
+      try {
+        await capped.ready;
+
+        const first = await sendForm(
+          "https://shop.example.com/about",
+          undefined,
+          undefined,
+          capped
+        );
+
+        const firstPage = await first.text();
+
+        const other = await sendForm(
+          "https://elsewhere.example.com/page",
+          undefined,
+          undefined,
+          capped
+        );
+
+        const otherPage = await other.text();
+
+        const again = await sendForm(
+          "https://www.shop.example.com/about",
+          undefined,
+          undefined,
+          capped
+        );
+
+        await again.text();
+
+        // The second site is refused; www. names the first site again.
+        expect([first.status, other.status, again.status]).toStrictEqual([
+          200, 429, 200,
+        ]);
+        expect(firstPage).toContain("About the fixture shop");
+        expect(otherPage).toContain(
+          "This address has audited 1 different site on the hosted server today, its daily limit per caller. Sites it audited today still work; others wait until 00:00 UTC."
+        );
+        expect(
+          requests.some((r) => r.url.includes("elsewhere.example.com/page"))
+        ).toBeFalsy();
+      } finally {
+        await capped.dispose();
+      }
     });
   });
 });
