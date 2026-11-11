@@ -4,9 +4,11 @@
  * audit as the tools return it; no model reads or rewrites it. Everything quoted from the audited
  * page is escaped. A site's report (site-report.ts) is built from the same parts.
  *
- * A report is in sections, one tab each: an overview with an index of the findings, the findings
- * of each audit grouped by category, and the AI crawlers. The page's script shows one section at
- * a time; without it they follow one another.
+ * A report is a stack of cards: its address and buttons, the two scores, a strip of tabs, and
+ * under each tab the cards of one section. The overview has what to fix first, an index of the
+ * findings as a tile for each group, and the facts; each audit's section has a card for each
+ * category of findings; the last is the AI crawlers. The page's script shows one section at a
+ * time; without it they follow one another.
  */
 import { compactAeoAudit } from "../../../src/core/aeo/audit.js";
 import { compactAudit } from "../../../src/core/audit.js";
@@ -21,6 +23,7 @@ import {
   SEVERITIES,
   TARGET_LABEL,
 } from "../../../src/core/report/labels.js";
+import type { Band } from "../../../src/core/report/labels.js";
 import {
   renderAeoMarkdown,
   renderMarkdown,
@@ -47,10 +50,23 @@ const SEVERITY_LABEL: Record<Severity, string> = {
   info: "Info",
 };
 
+/** A score's band in a word, as the terminal's report names it. */
+const BAND_LABEL: Record<Band, string> = {
+  good: "Good",
+  fair: "Fair",
+  poor: "Poor",
+};
+
+/** The most findings the overview lists to fix first. */
+const MAX_FIX_FIRST = 5;
+
 /** The most characters of a finding's evidence the report prints. */
 const MAX_EVIDENCE_CHARS = 4000;
 
 export const code = (text: string): string => `<code>${esc(text)}</code>`;
+
+export const chip = (text: string): string =>
+  `<span class="chip">${text}</span>`;
 
 /** The severity as a coloured label, as the report and the rules page show it. */
 export const severityChip = (severity: Severity): string =>
@@ -115,7 +131,17 @@ const evidenceHtml = (evidence: NonNullable<Finding["evidence"]>): string => {
   return `<details class="evidence"><summary>${icon("chevron")}Evidence</summary><pre><code>${esc(shown)}</code></pre></details>`;
 };
 
-const findingHtml = (finding: Finding): string => {
+/**
+ * A finding's closed line: what is wrong first, in words, then the rule that says so and `chips`.
+ * The rules across the pages of a site (site-report.ts) are shown the same way.
+ */
+export const findingSummary = (
+  item: { severity: Severity; rule: string; message: string },
+  chips = ""
+): string =>
+  `<summary>${severityChip(item.severity)}<span class="finding-text"><span class="msg">${esc(item.message)}</span><span class="finding-meta">${code(item.rule)}${chips}</span></span>${icon("chevron", "chev")}</summary>`;
+
+const findingHtml = (finding: Finding, id: string): string => {
   const docs = finding.docs ? safeHref(finding.docs) : null;
 
   const body = [
@@ -124,7 +150,7 @@ const findingHtml = (finding: Finding): string => {
       ? `<p class="where"><span class="label">Where</span>${code(finding.selector)}</p>`
       : "",
     finding.fix && finding.fix.length > 0
-      ? `<ol class="edits">${finding.fix.map(editHtml).join("")}</ol>`
+      ? `<div class="fix"><p class="label">The fix</p><ol class="edits">${finding.fix.map(editHtml).join("")}</ol></div>`
       : "",
     finding.evidence && Object.keys(finding.evidence).length > 0
       ? evidenceHtml(finding.evidence)
@@ -135,8 +161,8 @@ const findingHtml = (finding: Finding): string => {
   ].join("");
 
   // Errors start open: they are what to fix first.
-  return `<details class="finding sev-${finding.severity}"${finding.severity === "error" ? " open" : ""}>
-<summary>${severityChip(finding.severity)}${code(finding.rule)}<span class="msg">${esc(finding.message)}</span>${icon("chevron", "chev")}</summary>
+  return `<details class="finding sev-${finding.severity}" id="${id}"${finding.severity === "error" ? " open" : ""}>
+${findingSummary(finding)}
 <div class="finding-body">${body}</div>
 </details>`;
 };
@@ -146,16 +172,34 @@ export const AEO_PAGE_RULE_IDS = new Set(
   AEO_PAGE_RULES.map((rule) => rule.meta.id)
 );
 
-/** A group of findings under a heading of its own: a category's, or those across the site. */
+/** One finding of a group as the overview names it: what it says, and where the report has it. */
+export interface GroupItem {
+  /** Its anchor: `<the group's id>-<its number in the group>`. */
+  id: string;
+  severity: Severity;
+  rule: string;
+  message: string;
+  /** How many pages have it, for a rule across the pages of a site. */
+  pages?: number;
+}
+
+/** The anchor of the item at `index` of the group at the anchor `groupId`. */
+export const itemId = (groupId: string, index: number): string =>
+  `${groupId}-${index + 1}`;
+
+/** A group of findings in a card of its own: a category's, or those across the site. */
 export interface FindingGroup {
   /** Its anchor, which the overview's index links to. */
   id: string;
   label: string;
-  /** The severity of each finding in it, for its counts. */
-  severities: Severity[];
+  /** Its findings as the overview names them, in the order the card lists them. */
+  items: GroupItem[];
   /** The findings, as HTML. */
   html: string;
 }
+
+const severitiesOf = (groups: FindingGroup[]): Severity[] =>
+  groups.flatMap((group) => group.items.map((item) => item.severity));
 
 /**
  * Groups of findings, under `title` when it has one: "On the pages" holds a site's page findings
@@ -198,8 +242,8 @@ export const byCategory = <T extends { category: Category }>(
   return [...groups];
 };
 
-const findingsList = (findings: Finding[]): string =>
-  `<div class="findings">${findings.map(findingHtml).join("\n")}</div>`;
+const findingsList = (groupId: string, findings: Finding[]): string =>
+  `<div class="findings">${findings.map((finding, index) => findingHtml(finding, itemId(groupId, index))).join("\n")}</div>`;
 
 /** `findings` as one group, or no group when there are none. */
 export const findingGroup = (
@@ -213,8 +257,13 @@ export const findingGroup = (
         {
           id,
           label,
-          severities: findings.map((finding) => finding.severity),
-          html: findingsList(findings),
+          items: findings.map(({ severity, rule, message }, index) => ({
+            id: itemId(id, index),
+            severity,
+            rule,
+            message,
+          })),
+          html: findingsList(id, findings),
         },
       ];
 
@@ -228,7 +277,7 @@ export const categoryGroups = (
   );
 
 const groupHtml = (group: FindingGroup, level: 4 | 5): string =>
-  `<div class="finding-group" id="${group.id}"><div class="finding-group-head"><h${level}>${group.label}</h${level}>${tally(group.severities)}</div>${group.html}</div>`;
+  `<div class="finding-group" id="${group.id}"><div class="finding-group-head"><h${level}>${group.label}</h${level}>${tally(severitiesOf([group]))}</div>${group.html}</div>`;
 
 /** Parts of findings with their headings, or `empty` when none of them has a finding. */
 export const partsHtml = (parts: FindingPart[], empty: string): string => {
@@ -241,45 +290,100 @@ export const partsHtml = (parts: FindingPart[], empty: string): string => {
   return `<div class="finding-groups">${shown
     .map((part) =>
       part.title
-        ? `<div class="finding-part"><div class="finding-group-head finding-part-head"><h4>${part.title}</h4>${tally(part.groups.flatMap((group) => group.severities))}</div>${part.groups.map((group) => groupHtml(group, 5)).join("\n")}</div>`
+        ? `<div class="finding-part"><div class="finding-group-head finding-part-head"><h4>${part.title}</h4>${tally(severitiesOf(part.groups))}</div>${part.groups.map((group) => groupHtml(group, 5)).join("\n")}</div>`
         : part.groups.map((group) => groupHtml(group, 4)).join("\n")
     )
     .join("\n")}</div>`;
 };
 
-/** One audit's column in the overview's index: a link to each of its groups, with their counts. */
-const indexColumn = (name: string, parts: FindingPart[]): string => {
-  const rows = parts.flatMap((part) =>
-    part.groups.length === 0
-      ? []
-      : [
-          ...(part.title ? [`<li class="index-sub">${part.title}</li>`] : []),
-          ...part.groups.map(
-            (group) =>
-              `<li><a href="#${group.id}"><span class="index-label">${group.label}</span>${tally(group.severities)}</a></li>`
-          ),
-        ]
-  );
+/** The worst severity among `severities`, which colours a tile of the index. */
+const worst = (severities: Severity[]): Severity | undefined =>
+  SEVERITIES.find((severity) => severities.includes(severity));
 
-  return `<div class="index-col"><p class="index-title">${name}</p>${
-    rows.length === 0
+/** One audit's card in the overview's index: a tile for each of its groups, with their counts. */
+const indexCard = (name: string, parts: FindingPart[]): string => {
+  const shown = parts.filter((part) => part.groups.length > 0);
+
+  const tiles = shown.flatMap((part) => [
+    ...(part.title ? [`<li class="index-sub">${part.title}</li>`] : []),
+    ...part.groups.map((group) => {
+      const severities = severitiesOf([group]);
+
+      return `<li><a class="index-tile is-${worst(severities) ?? "clear"}" href="#${group.id}"><span class="index-label">${group.label}</span>${tally(severities)}</a></li>`;
+    }),
+  ]);
+
+  return `<div class="report-card index-card"><div class="card-head"><div><p class="label">Findings by section</p><h4>${name}</h4></div>${tally(shown.flatMap((part) => severitiesOf(part.groups)))}</div>${
+    tiles.length === 0
       ? `<p class="index-empty">${icon("check")}No findings</p>`
-      : `<ul>${rows.join("")}</ul>`
+      : `<ul class="index-tiles">${tiles.join("")}</ul>`
   }</div>`;
 };
 
-/** A block of the overview, under its own heading; nothing when it has no body. */
-export const overviewPart = (title: string, body: string, id = ""): string =>
+/** A card of the report under its own heading, with `meta` beside it; nothing without a body. */
+export const overviewPart = (
+  title: string,
+  body: string,
+  id = "",
+  meta = ""
+): string =>
   body
-    ? `<div class="report-part"${id ? ` id="${id}"` : ""}><h4 class="report-sub">${title}</h4>${body}</div>`
+    ? `<div class="report-card report-part"${id ? ` id="${id}"` : ""}><div class="card-head"><h4>${title}</h4>${meta}</div>${body}</div>`
     : "";
+
+/** Cards side by side where the window is wide enough; nothing when none of them has a body. */
+export const cardRow = (cards: string[]): string => {
+  const shown = cards.filter(Boolean);
+
+  return shown.length === 0
+    ? ""
+    : `<div class="report-row">${shown.join("")}</div>`;
+};
 
 /** The overview's index of both audits' findings, by the groups their sections show them in. */
 export const findingsIndex = (seo: FindingPart[], aeo: FindingPart[]): string =>
-  overviewPart(
-    "Findings by section",
-    `<div class="section-index">${indexColumn("SEO: search engines", seo)}${indexColumn("AEO: AI answer engines", aeo)}</div>`
+  `<div class="report-row index-row">${indexCard("SEO: search engines", seo)}${indexCard("AEO: AI answer engines", aeo)}</div>`;
+
+const itemsOf = (parts: FindingPart[], audit: string) =>
+  parts.flatMap((part) =>
+    part.groups.flatMap((group) => group.items.map((item) => ({ audit, item })))
   );
+
+/**
+ * The overview's first card: the errors and warnings of both audits, the worst first, each a link
+ * to the finding with its fix. Info is left to the sections: it is seldom what to fix first.
+ */
+export const fixFirst = (seo: FindingPart[], aeo: FindingPart[]): string => {
+  const all = [...itemsOf(seo, "SEO"), ...itemsOf(aeo, "AEO")];
+
+  // Errors before warnings, each in the order its section lists them.
+  const urgent = (["error", "warning"] as const).flatMap((severity) =>
+    all.filter(({ item }) => item.severity === severity)
+  );
+
+  if (urgent.length === 0) {
+    return overviewPart(
+      "Fix first",
+      `<p class="empty">${icon("check")}No errors and no warnings: nothing that has to be fixed.</p>`
+    );
+  }
+
+  const rows = urgent
+    .slice(0, MAX_FIX_FIRST)
+    .map(
+      ({ audit, item }) =>
+        `<li><a class="fix-row sev-${item.severity}" href="#${item.id}">${severityChip(item.severity)}<span class="finding-text"><span class="msg">${esc(item.message)}</span><span class="finding-meta">${code(item.rule)}${chip(audit)}${item.pages === undefined ? "" : chip(plural(item.pages, "page"))}</span></span>${icon("arrow", "arrow")}</a></li>`
+    );
+
+  const more = urgent.length - rows.length;
+
+  return overviewPart(
+    "Fix first",
+    `<ol class="fix-list">${rows.join("")}</ol>${more > 0 ? `<p class="card-foot">And ${more} more under the SEO and AEO tabs.</p>` : ""}`,
+    "fix-first",
+    tally(urgent.map(({ item }) => item.severity))
+  );
+};
 
 /** The AEO findings of one page: those about the site's files, then the page's own. */
 const aeoPageParts = (findings: Finding[]): FindingPart[] => [
@@ -312,9 +416,6 @@ export interface ReportSection {
   chips?: string;
   body: string;
 }
-
-export const chip = (text: string): string =>
-  `<span class="chip">${text}</span>`;
 
 const tabHtml = (section: ReportSection): string =>
   `<a href="#${section.id}">${section.tab}${
@@ -500,11 +601,12 @@ export const scoreCard = (
   score: number,
   counts: SeverityCounts
 ): string => {
-  const inner = `${scoreRing(score)}<span class="score-text"><span class="score-name">${name}</span><span class="sr-only">Score ${score} of 100.</span>${countsHtml(counts)}</span>`;
+  const grade = band(score);
+  const inner = `${scoreRing(score)}<span class="score-text"><span class="score-head"><span class="score-name">${name}</span><span class="verdict">${BAND_LABEL[grade]}</span></span><span class="sr-only">Score ${score} of 100.</span>${countsHtml(counts)}${anchor ? `<span class="score-more">See the findings${icon("arrow", "arrow")}</span>` : ""}</span>`;
 
   return anchor
-    ? `<a class="score-card" href="#${anchor}">${inner}</a>`
-    : `<div class="score-card">${inner}</div>`;
+    ? `<a class="score-card band-${grade}" href="#${anchor}">${inner}</a>`
+    : `<div class="score-card band-${grade}">${inner}</div>`;
 };
 
 /**
@@ -532,8 +634,9 @@ export const reportData = (
   );
 
 /**
- * A report under the audit form: its bar with the address and the buttons, `body`, and `data`.
- * `share` is the Share menu (share-page.ts), when the site can sign a share link.
+ * A report under the audit form: a card with the address and the buttons, then `body`, a stack of
+ * cards, and `data`. `share` is the Share menu (share-page.ts), when the site can sign a share
+ * link.
  */
 export const reportFrame = (report: {
   title: string;
@@ -542,16 +645,14 @@ export const reportFrame = (report: {
   data: string;
   share?: string;
 }): string => `<section class="report" id="report" aria-labelledby="report-title">
-<div class="wrap">
-<div class="window report-window">
+<div class="wrap report-stack">
+<div class="window report-head">
 <div class="report-bar">
 <div class="report-title"><h2 id="report-title">${report.title}</h2><p class="report-url">${icon("globe")}<span>${esc(report.url)}</span></p></div>
 <div class="report-actions"><button class="btn btn-secondary btn-sm" type="button" data-report="download">${icon("download")}<span class="btn-label">Download JSON</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="copy">${icon("copy")}<span class="btn-label">Copy as Markdown</span></button>${report.share ?? ""}</div>
 </div>
-<div class="report-body">
+</div>
 ${report.body}
-</div>
-</div>
 </div>
 <script type="application/json" id="report-data">${report.data}</script>
 </section>`;
@@ -587,9 +688,12 @@ export const renderReport = (
       tab: "Overview",
       title: "Overview",
       body: [
+        fixFirst(seoParts, aeoParts),
         findingsIndex(seoParts, aeoParts),
-        overviewPart("The page", seoFacts(seo)),
-        overviewPart("For AI answer engines", aeoFacts(aeo, "page")),
+        cardRow([
+          overviewPart("The page", seoFacts(seo)),
+          overviewPart("For AI answer engines", aeoFacts(aeo, "page")),
+        ]),
       ].join("\n"),
     },
     {

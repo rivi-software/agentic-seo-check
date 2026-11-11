@@ -1,7 +1,7 @@
 /**
  * The report of a site audit as HTML (issue #45): the SEO and AEO audits of a crawl from a site's
- * homepage, in sections as a page's report is. The overview has the crawl, the site's AEO facts
- * and an index of the findings; each audit's section has its findings across the site and its
+ * homepage, in sections of cards as a page's report is. The overview has what to fix first, an
+ * index of the findings, the crawl and the site's AEO facts; each audit's section has its findings across the site and its
  * findings on the pages by rule, grouped by category; then the homepage's own findings with their
  * edits, every page with its scores, and the AI crawlers. Also the lines the form's answer shows
  * while the crawl runs. Everything quoted from the site is escaped.
@@ -28,6 +28,7 @@ import {
   AEO_PAGE_RULE_IDS,
   aeoFacts,
   byCategory,
+  cardRow,
   categoryGroups,
   chip,
   code,
@@ -35,6 +36,9 @@ import {
   facts,
   findingGroup,
   findingsIndex,
+  findingSummary,
+  fixFirst,
+  itemId,
   overviewPart,
   partsHtml,
   reportData,
@@ -42,7 +46,6 @@ import {
   scoreCard,
   sectionsHtml,
   seoFacts,
-  severityChip,
   statusTone,
 } from "./report.js";
 import type { FindingGroup, FindingPart, ReportSection } from "./report.js";
@@ -56,14 +59,14 @@ const pageLink = (url: string): string =>
   `<a class="page-link" href="${esc(`/?url=${encodeURIComponent(url)}#audit`)}">${esc(url)}</a>`;
 
 /** The findings of one rule on the pages, as a finding is shown, with the pages it is on. */
-const issueHtml = (issue: IssueRollup): string => {
+const issueHtml = (issue: IssueRollup, id: string): string => {
   const shown =
     issue.pages > issue.examples.length
       ? `, the first ${issue.examples.length}`
       : "";
 
-  return `<details class="finding sev-${issue.severity}">
-<summary>${severityChip(issue.severity)}${code(issue.rule)}<span class="msg">${esc(issue.message)}</span><span class="chip">${plural(issue.pages, "page")}</span>${icon("chevron", "chev")}</summary>
+  return `<details class="finding sev-${issue.severity}" id="${id}">
+${findingSummary(issue, chip(plural(issue.pages, "page")))}
 <div class="finding-body"><div class="todo"><p class="label">What to change</p><p>${esc(issue.recommendation)}</p></div><div class="examples"><p class="label">Pages${shown}</p><ul>${issue.examples.map((url) => `<li>${pageLink(url)}</li>`).join("")}</ul></div></div>
 </details>`;
 };
@@ -80,8 +83,14 @@ const issueGroup = (
         {
           id,
           label,
-          severities: issues.map((issue) => issue.severity),
-          html: `<div class="findings">${issues.map(issueHtml).join("\n")}</div>`,
+          items: issues.map(({ severity, rule, message, pages }, index) => ({
+            id: itemId(id, index),
+            severity,
+            rule,
+            message,
+            pages,
+          })),
+          html: `<div class="findings">${issues.map((issue, index) => issueHtml(issue, itemId(id, index))).join("\n")}</div>`,
         },
       ];
 
@@ -194,7 +203,7 @@ const homeSection = (start: SiteAudits["start"]): ReportSection[] => {
       title: "The homepage",
       chips: chip(plural(findings.length, "finding")),
       body: `<p class="report-lede">Every finding on ${code(start.seo.url)}, with its fix. Open a page in the list of pages to audit it.</p>
-${seoFacts(start.seo)}
+${overviewPart("The page", seoFacts(start.seo))}
 ${partsHtml([{ groups: categoryGroups("home", findings) }], "No findings on the homepage.")}`,
     },
   ];
@@ -247,9 +256,12 @@ export const renderSiteReport = (audits: SiteAudits, share = ""): string => {
       tab: "Overview",
       title: "Overview",
       body: [
+        fixFirst(seoParts, aeoParts),
         findingsIndex(seoParts, aeoParts),
-        overviewPart("The crawl", crawlFacts(seo), "crawl"),
-        overviewPart("For AI answer engines", aeoFacts(aeo, "site")),
+        cardRow([
+          overviewPart("The crawl", crawlFacts(seo), "crawl"),
+          overviewPart("For AI answer engines", aeoFacts(aeo, "site")),
+        ]),
       ].join("\n"),
     },
     {

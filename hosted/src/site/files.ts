@@ -345,7 +345,8 @@ export const SITE_JS = `(() => {
       }
     };
 
-    // A link to a section, or to a part of one (a score, the overview's index), opens its tab.
+    // A link to a section, or to a part of one (a score, the overview's index or a finding to fix
+    // first), opens its tab, and the finding it names.
     document.addEventListener("click", (event) => {
       const link = event.target.closest && event.target.closest('a[href^="#"]');
       const target =
@@ -363,6 +364,11 @@ export const SITE_JS = `(() => {
         open(index);
       } else {
         show(index);
+
+        if (target.tagName === "DETAILS") {
+          target.open = true;
+        }
+
         target.scrollIntoView();
       }
     });

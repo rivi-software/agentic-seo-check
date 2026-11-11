@@ -250,7 +250,56 @@ describe("the report of a page audit", () => {
     expect(
       titles.slice(0, titles.indexOf('class="finding-group"', 1))
     ).toContain("<code>title.generic</code>");
-    expect(report).toContain('<a href="#seo-title">');
+    // The overview's index has a tile for the category, which links to its card.
+    expect(report).toMatch(
+      /<a class="index-tile is-[a-z]+" href="#seo-title">/u
+    );
+  });
+
+  it("lists the errors and warnings to fix first, each a link to its finding, and names each score's band", async () => {
+    const url = "https://shop.example.com/";
+    const html = readFileSync("test/fixtures/bad-page.html", "utf-8");
+
+    const report = renderReport(
+      await auditHtml(html, { url, source: "url", target: url }),
+      await auditAeoHtml(html, { url })
+    );
+
+    const card = report.slice(report.indexOf('id="fix-first"'));
+
+    const links = [
+      ...card
+        .slice(0, card.indexOf("</ol>"))
+        .matchAll(
+          /class="fix-row sev-(?<severity>[a-z]+)" href="#(?<id>[a-z0-9-]+)"/gu
+        ),
+    ].map((match) => match.groups ?? {});
+
+    expect(links).toHaveLength(5);
+    expect(links[0]?.severity).toBe("error");
+    expect(links.map((link) => link.severity)).not.toContain("info");
+    // Every link names a finding the report has, under the same severity.
+    expect(
+      links.filter(
+        (link) =>
+          !report.includes(
+            `<details class="finding sev-${link.severity}" id="${link.id}"`
+          )
+      )
+    ).toStrictEqual([]);
+    expect(report).toContain('<span class="verdict">Poor</span>');
+  });
+
+  it("says so when a page has nothing to fix first", async () => {
+    const url = "https://shop.example.com/";
+
+    const report = renderReport(
+      { ...(await auditHtml("<html></html>", { url })), findings: [] },
+      { ...(await auditAeoHtml("<html></html>", { url })), findings: [] }
+    );
+
+    expect(report).toContain("No errors and no warnings");
+    expect(report).not.toContain('class="fix-row');
   });
 
   it("never lets the audited page's text become markup", async () => {
