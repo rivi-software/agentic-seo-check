@@ -43,7 +43,7 @@ import {
 
 /** The Worker's bindings and variables the audit form uses, beside the limits' and sharing's. */
 export interface SiteEnv extends LimitsEnv, ShareEnv, AnalyticsEnv {
-  /** Turnstile's public site key (wrangler.jsonc); empty until the widget exists. */
+  /** Turnstile's public site key (wrangler.site.jsonc); empty until the widget exists. */
   TURNSTILE_SITE_KEY: string;
   /** Turnstile's secret key, a Worker secret (`wrangler secret put TURNSTILE_SECRET_KEY`). */
   TURNSTILE_SECRET_KEY?: string;

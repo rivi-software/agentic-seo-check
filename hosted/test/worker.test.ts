@@ -1,8 +1,10 @@
 /**
- * The Worker as Cloudflare runs it: built by Wrangler with the same defines as a deploy, run in
+ * The Workers as Cloudflare runs them: built by Wrangler with the same defines as a deploy, run in
  * workerd, and driven over Streamable HTTP by the SDK's client, as test/mcp.test.ts drives the
- * local server over stdio. The Worker's own requests go to `site`, never to the internet.
+ * local server over stdio. The Workers' own requests go to `site`, never to the internet.
  */
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { gzipSync } from "node:zlib";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -13,7 +15,12 @@ import { unstable_startWorker } from "wrangler";
 import { z } from "zod";
 
 import { HOSTED_LIMITS } from "../../src/core/hosted.ts";
-import { readVersion, defines } from "../scripts/defines.ts";
+import {
+  defines,
+  readVersion,
+  SERVER_CONFIG,
+  SITE_CONFIG,
+} from "../scripts/defines.ts";
 
 const ORIGIN = "https://mcp.agentic-seo.rivi.software";
 const SITE = "https://agentic-seo.rivi.software";
@@ -138,12 +145,13 @@ const TEST_KEYID = "poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U";
 
 type StartedWorker = Awaited<ReturnType<typeof unstable_startWorker>>;
 
+/** The MCP server's Worker. */
 let worker: StartedWorker;
 
-/** The same Worker, answering as the website's hostname. */
+/** The website's Worker, which binds the MCP server's Durable Object. */
 let website: StartedWorker;
 
-/** The same Worker, answering as the MCP server's hostname in 0.7.0. */
+/** The MCP server's Worker again, answering as its hostname in 0.7.0. */
 let former: StartedWorker;
 let client: Client;
 let base: URL;
@@ -215,15 +223,36 @@ const fetchRead = async (
 };
 
 /**
- * Starts the Worker in workerd, answering as `origin`: Wrangler's dev server gives every request
- * one hostname, whatever address it was sent to. `vars` replace wrangler.jsonc's.
+ * Where the MCP server's Worker and the website's find each other, as `wrangler dev` sessions do:
+ * the website's Durable Object binding names the MCP server's Worker. Only one Worker of a name may
+ * be in a registry.
  */
-const start = (origin: string, vars: Record<string, number> = {}) =>
+const newRegistry = () => mkdtempSync(`${tmpdir()}/agentic-seo-check-workers-`);
+
+const registry = newRegistry();
+
+interface StartOptions {
+  /** The configuration in hosted/: the MCP server's, or the website's. */
+  config?: string;
+  /** The dev registry the Worker joins; none by default. */
+  registry?: string;
+  /** Variables that replace the configuration's. */
+  vars?: Record<string, number>;
+}
+
+/**
+ * Starts the Worker of `config` in workerd, answering as `origin`: Wrangler's dev server gives
+ * every request one hostname, whatever address it was sent to.
+ */
+const start = (
+  origin: string,
+  { config = SERVER_CONFIG, registry: joins, vars = {} }: StartOptions = {}
+) =>
   unstable_startWorker({
-    config: new URL("../wrangler.jsonc", import.meta.url).pathname,
+    config: new URL(`../${config}`, import.meta.url).pathname,
     build: {
-      define: defines(),
-      // wrangler.jsonc's build command runs in hosted/, as `wrangler` does.
+      define: defines(config),
+      // The configuration's build command runs in hosted/, as `wrangler` does.
       custom: { workingDirectory: new URL("../", import.meta.url).pathname },
     },
     bindings: {
@@ -243,6 +272,7 @@ const start = (origin: string, vars: Record<string, number> = {}) =>
       watch: false,
       // Serves /__scheduled, which runs the Cron Trigger.
       testScheduled: true,
+      ...(joins ? { registry: joins } : null),
       outboundService: async (request: Request) => {
         // PostHog, which the Worker tells of each tool call: kept apart from the sites' requests.
         if (request.url === `${POSTHOG}/batch/`) {
@@ -298,8 +328,8 @@ const start = (origin: string, vars: Record<string, number> = {}) =>
 
 describe("the hosted Worker in workerd", () => {
   beforeAll(async () => {
-    worker = await start(ORIGIN);
-    website = await start(SITE);
+    worker = await start(ORIGIN, { registry });
+    website = await start(SITE, { config: SITE_CONFIG, registry });
     former = await start(FORMER);
     await Promise.all([worker.ready, website.ready, former.ready]);
     base = await worker.url;
@@ -316,6 +346,7 @@ describe("the hosted Worker in workerd", () => {
       website?.dispose(),
       former?.dispose(),
     ]);
+    rmSync(registry, { recursive: true, force: true });
   });
 
   describe("the hosted Worker", () => {
@@ -968,11 +999,19 @@ describe("the hosted Worker in workerd", () => {
     });
 
     it("lets an address audit as many different sites a day as CALLER_SITES says, and those again", async () => {
-      // A Worker of its own, with its own Durable Object and limits, which allows one site a day.
-      const capped = await start(SITE, { CALLER_SITES: 1 });
+      // A website of its own, which allows one site a day, beside an MCP server of its own, whose
+      // Durable Object has counted no site yet.
+      const own = newRegistry();
+      const server = await start(ORIGIN, { registry: own });
+
+      const capped = await start(SITE, {
+        config: SITE_CONFIG,
+        registry: own,
+        vars: { CALLER_SITES: 1 },
+      });
 
       try {
-        await capped.ready;
+        await Promise.all([server.ready, capped.ready]);
 
         const first = await sendForm(
           "https://shop.example.com/about",
@@ -1028,7 +1067,8 @@ describe("the hosted Worker in workerd", () => {
           requests.some((r) => r.url.includes("elsewhere.example.com/page"))
         ).toBeFalsy();
       } finally {
-        await capped.dispose();
+        await Promise.all([capped.dispose(), server.dispose()]);
+        rmSync(own, { recursive: true, force: true });
       }
     });
   });

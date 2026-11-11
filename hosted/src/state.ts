@@ -24,6 +24,10 @@ const endOf = (day: string): number =>
  * limit (the rate limiting binding counts per 10 or 60 seconds only), the sites each caller audited
  * today, for the daily cap on sites (issue #73), and OpenAI's ChatGPT connector ranges, which a
  * Cron Trigger refreshes. One object, named "global", holds them.
+ *
+ * The website's Worker binds this class too (wrangler.site.jsonc), so its form counts in the same
+ * day, but the object runs the code the MCP server last deployed. The website deploys from main,
+ * so its deploy waits while this file differs from the last release's (deploy-site.yml).
  */
 export class HostedState extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {

@@ -15,7 +15,7 @@ import { VERSION } from "../../src/version.js";
 import type { Caller } from "./callers.js";
 import { requestSigner } from "./signing.js";
 
-/** The rate limits of wrangler.jsonc by binding name, built in by scripts/defines.ts. */
+/** The rate limits of the Worker's configuration by binding name, built in by scripts/defines.ts. */
 declare const HOSTED_RATE_LIMITS: Record<
   string,
   { limit: number; period: number }
@@ -29,7 +29,7 @@ export const ORIGIN = "https://mcp.agentic-seo.rivi.software";
  */
 export const FORMER_HOST = "mcp.agentic-seo-check.rivi.software";
 
-/** The project's website, which the same Worker serves on a hostname of its own (issue #39). */
+/** The project's website, a Worker of its own on a hostname of its own (issue #39, src/site/worker.ts). */
 export { WEBSITE_URL as SITE_ORIGIN } from "../../src/brand.js";
 
 /**
@@ -139,7 +139,7 @@ export type DailyLimits = Pick<
   "DAILY_REQUESTS" | "CALLER_SITES" | "PLATFORM_SITES"
 >;
 
-/** The Worker's bindings and variables the limits use (wrangler.jsonc). */
+/** The bindings and variables the limits use (wrangler.jsonc, and wrangler.site.jsonc alike). */
 export interface LimitsEnv {
   MODE: string;
   DAILY_REQUESTS: number;

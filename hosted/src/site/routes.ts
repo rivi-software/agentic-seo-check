@@ -3,9 +3,9 @@ import { POSTHOG_HOST } from "../../../src/telemetry/posthog.js";
 import { VERSION } from "../../../src/version.js";
 import { reportError } from "../analytics.js";
 /**
- * The routes of the website at agentic-seo.rivi.software (issue #39), which the Worker
- * serves beside the MCP server's own hostname: the homepage with the audit form, the rules, the
- * form's answer at /audit, and the files a crawler asks for.
+ * The routes of the website at agentic-seo.rivi.software (issue #39), which its own Worker serves
+ * (worker.ts): the homepage with the audit form, the rules, the form's answer at /audit, and the
+ * files a crawler asks for.
  */
 import { fontResponse, shareImageResponse } from "../ui/assets.js";
 import { OG_IMAGE } from "../ui/og.js";
@@ -15,16 +15,9 @@ import { answerAudit, formCrawls, formOpen } from "./audit.js";
 import type { SiteEnv } from "./audit.js";
 import { LLMS_TXT, SITE_JS, SITE_ROBOTS_TXT, SITEMAP_XML } from "./files.js";
 import { homePage, notFoundPage } from "./home.js";
-import { SITE_HOST } from "./layout.js";
 import { rulesPage } from "./rules-page.js";
 import { sharePage } from "./share-page.js";
 import { openShare, shareImageCacheKey } from "./share.js";
-
-/**
- * The website's hostname. Wrangler's dev server gives every request the hostname of the first
- * route, so the site is reached locally with `pnpm run hosted:dev --host` and this name.
- */
-export const isSiteHost = (hostname: string): boolean => hostname === SITE_HOST;
 
 const HTML = "text/html; charset=utf-8";
 const TEXT = "text/plain; charset=utf-8";

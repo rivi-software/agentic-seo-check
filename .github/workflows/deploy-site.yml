@@ -1,0 +1,117 @@
+name: Deploy the website
+
+# The website (agentic-seo.rivi.software) is a Worker of its own, agentic-seo-check-site
+# (hosted/wrangler.site.jsonc), and goes live with each change to main that reaches its bundle,
+# without waiting for an npm release as the MCP server does. Deploy the hosted server also runs it
+# after each deploy of the MCP server. A maintainer can run it by hand on main or a release tag.
+#
+# A run deploys the commit it runs on, and nothing else: the environment's rule for main and v*
+# checks the ref a run is for, so an input naming other code would take the Cloudflare token past
+# it. The first step checks that ref as well, in case the rule is missing.
+on:
+  push:
+    branches:
+      - main
+    # What the website's bundle is built from. A change elsewhere (tests, docs) leaves it as it is.
+    paths:
+      - "src/**"
+      - "hosted/**"
+      - "!hosted/test/**"
+      - "!hosted/**/*.md"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".node-version"
+      - ".github/workflows/deploy-site.yml"
+  workflow_call:
+    inputs:
+      server-deployed:
+        description: The MCP server was just deployed from this commit, so it runs this commit's Durable Object.
+        type: boolean
+        default: false
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare
+    if: github.repository == 'rivi-software/agentic-seo-check'
+    runs-on: ubuntu-24.04
+    # The MCP server's environment, which holds the Cloudflare token: only this job sees it.
+    environment:
+      name: hosted
+      url: https://agentic-seo.rivi.software/
+    concurrency:
+      group: deploy-site
+      cancel-in-progress: false
+    steps:
+      - name: Only main or a release tag
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "$REF" != refs/heads/main && "$REF" != refs/tags/v[0-9]* ]]; then
+            echo "::error::The website deploys from main or a release tag (v0.7.0), not from $REF."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit the run is for: main's, the tag's, or the one the MCP server just deployed.
+          ref: ${{ github.sha }}
+          # The release tags, for the check below.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The website binds the MCP server's Durable Object (hosted/src/state.ts), which runs the code
+      # the MCP server last deployed: the last release's, unless it was just deployed from this
+      # commit. While this commit's state.ts differs from that, the website's code may call what the
+      # object does not have yet, so the website waits for the MCP server's next deploy, which runs
+      # this workflow after it.
+      - name: The MCP server runs this commit's Durable Object
+        id: state
+        env:
+          SERVER_DEPLOYED: ${{ inputs.server-deployed || false }}
+        run: |
+          if [[ "$SERVER_DEPLOYED" == true ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          release=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)
+
+          if git diff --quiet "$release" HEAD -- hosted/src/state.ts; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            message="hosted/src/state.ts has changed since $release, whose Durable Object the MCP server runs. The website deploys after the MCP server's next deploy: the next release, or a run of Deploy the hosted server on main."
+            echo "::warning title=The website waits for the MCP server::$message"
+            echo "$message" >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup pnpm
+        if: steps.state.outputs.ready == 'true'
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node
+        if: steps.state.outputs.ready == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Install
+        if: steps.state.outputs.ready == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Check, build and test the Workers
+        if: steps.state.outputs.ready == 'true'
+        run: pnpm run hosted:verify
+
+      - name: Deploy
+        if: steps.state.outputs.ready == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm run site:deploy

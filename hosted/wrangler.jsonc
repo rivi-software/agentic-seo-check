@@ -1,7 +1,8 @@
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
   // The hosted MCP server (issue #35). Run Wrangler through `pnpm run hosted:dev|hosted:build|hosted:deploy`,
-  // which build in the package's version and the limits below (scripts/defines.ts).
+  // which build in the package's version and the limits below (scripts/defines.ts). The website is a
+  // Worker of its own, wrangler.site.jsonc, which shares this one's limits and Durable Object.
   "name": "agentic-seo-check-mcp",
   "send_metrics": false,
   "main": "src/index.ts",
@@ -10,19 +11,14 @@
   // fetch() to a site on Cloudflare goes through its zone's front door (redirects, WAF, Workers), as a
   // search engine's request does, rather than straight to its origin.
   "compatibility_flags": ["global_fetch_strictly_public"],
-  // The MCP server's hostname, and the website's (issue #39): the Worker routes by hostname. The
-  // third is the MCP server's hostname in 0.7.0, which still answers at /mcp (FORMER_HOST).
+  // The MCP server's hostname, and its hostname in 0.7.0, which still answers at /mcp (FORMER_HOST).
+  // The website's, agentic-seo.rivi.software, is wrangler.site.jsonc's.
   "routes": [
     { "pattern": "mcp.agentic-seo.rivi.software", "custom_domain": true },
-    { "pattern": "agentic-seo.rivi.software", "custom_domain": true },
     { "pattern": "mcp.agentic-seo-check.rivi.software", "custom_domain": true }
   ],
-  // The pages' fonts and share images (src/ui/assets.ts), and the fonts of a shared result's image
-  // (src/ui/share-image.ts), bundled as their bytes; resvg, which draws that image, as WebAssembly.
-  "rules": [
-    { "type": "Data", "globs": ["**/*.woff2", "**/*.png", "**/*.ttf"], "fallthrough": true },
-    { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }
-  ],
+  // The pages' fonts and share images (src/ui/assets.ts), bundled as their bytes.
+  "rules": [{ "type": "Data", "globs": ["**/*.woff2", "**/*.png"], "fallthrough": true }],
   // Copies posthog-js's browser build to .generated/posthog-js.txt, which the Worker bundles as text
   // and serves at /ph.js (issue #57).
   "build": { "command": "node scripts/posthog-js.ts" },
@@ -40,6 +36,7 @@
     "chrome-launcher": "./src/unavailable.ts"
   },
   // Approximate, and counted per Cloudflare location. The landing page and the refusals state these numbers.
+  // wrangler.site.jsonc has the same namespaces, so the website's form counts in the same limits.
   "ratelimits": [
     // Requests to one hostname, from every caller together: a crawl at the caps sends about 300.
     { "name": "SITE_REQUESTS", "namespace_id": "35001", "simple": { "limit": 600, "period": 60 } },
@@ -51,7 +48,7 @@
     { "name": "PLATFORM_CRAWLS", "namespace_id": "35005", "simple": { "limit": 30, "period": 60 } }
   ],
   // The day's count of outgoing requests, the sites each caller audited today, and ChatGPT's
-  // connector addresses.
+  // connector addresses. The website binds it too.
   "durable_objects": { "bindings": [{ "name": "STATE", "class_name": "HostedState" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HostedState"] }],
   // One record per tool call: the tool, the outcome, the duration, the requests and pages, the target hostname.
@@ -60,9 +57,11 @@
   // Fetches OpenAI's list of ChatGPT connector addresses once a day.
   "triggers": { "crons": ["17 3 * * *"] },
   "vars": {
-    // "open"; "no-crawls" refuses crawls; "closed" refuses every tool call. Change it and deploy.
+    // "open"; "no-crawls" refuses crawls; "closed" refuses every tool call. Change it and deploy. The
+    // website's form has a MODE of its own, in wrangler.site.jsonc.
     "MODE": "open",
     // Outgoing requests a day, all callers together: past it, audits that request sites wait for 00:00 UTC.
+    // The website checks the same count against its own copy of this number, which a test holds equal.
     "DAILY_REQUESTS": 100000,
     // Different sites (hostnames, without www.) one caller may audit a day (issue #73): an IP
     // address, or claude.ai and ChatGPT, each for all its users together. A site audited today
@@ -71,13 +70,9 @@
     "PLATFORM_SITES": 100,
     // The token OpenAI asks the domain to serve at /.well-known/openai-apps-challenge (#33); none yet.
     "OPENAI_APPS_CHALLENGE": "",
-    // The public site key of the website's Turnstile widget ("agentic-seo-check website audit
-    // form", invisible). Its secret key is the Worker secret TURNSTILE_SECRET_KEY; the audit form
-    // is off when either is missing. .dev.vars has Cloudflare's test keys for local runs.
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAF7cZ5A-51MpK6BR",
-    // Usage analytics in PostHog's EU project "Agentic SEO" (issue #57): the website's pageviews
-    // and events, after its consent banner's rules, and one event per MCP tool call. Empty turns
-    // both off; .dev.vars empties it for local runs.
+    // Usage analytics in PostHog's EU project "Agentic SEO" (issue #57): the pages' pageviews and
+    // events, after their consent banner's rules, and one event per MCP tool call. Empty turns both
+    // off; .dev.vars empties it for local runs.
     "POSTHOG_HOST": "https://eu.i.posthog.com"
   },
   // Errors only, as the Worker logs them: no invocation logs, which carry request details.
