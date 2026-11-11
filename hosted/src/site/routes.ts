@@ -1,4 +1,5 @@
 import { MARK_SVG } from "../../../src/brand.js";
+import { POSTHOG_HOST } from "../../../src/telemetry/posthog.js";
 import { VERSION } from "../../../src/version.js";
 /**
  * The routes of the website at agentic-seo.rivi.software (issue #39), which the Worker
@@ -7,6 +8,7 @@ import { VERSION } from "../../../src/version.js";
  */
 import { fontResponse, shareImageResponse } from "../ui/assets.js";
 import { OG_IMAGE } from "../ui/og.js";
+import { posthogResponse } from "../ui/posthog-script.js";
 import { shareImage } from "../ui/share-image.js";
 import { answerAudit, formCrawls, formOpen } from "./audit.js";
 import type { SiteEnv } from "./audit.js";
@@ -28,7 +30,8 @@ const TEXT = "text/plain; charset=utf-8";
 
 /**
  * Scripts from this site and Turnstile only, and none inline: a report quotes the audited page,
- * and nothing in it may run. Styles are the page's own <style>.
+ * and nothing in it may run. Styles are the page's own <style>. The pages send their analytics
+ * (issue #57) to PostHog's EU host, the only place besides this site they connect to.
  */
 const CSP = [
   "default-src 'none'",
@@ -37,7 +40,7 @@ const CSP = [
   "img-src 'self' data:",
   "font-src 'self'",
   "frame-src https://challenges.cloudflare.com",
-  "connect-src 'self'",
+  `connect-src 'self' ${POSTHOG_HOST}`,
   "form-action 'self'",
   "base-uri 'none'",
   "frame-ancestors 'none'",
@@ -252,6 +255,13 @@ export const siteRoute = (
 
     case "/site.js": {
       return file(request, SITE_JS, "text/javascript; charset=utf-8");
+    }
+
+    case "/ph.js": {
+      return (
+        posthogResponse(request, env.POSTHOG_HOST) ??
+        file(request, notFoundPage(), HTML, 404)
+      );
     }
 
     case "/favicon.svg": {

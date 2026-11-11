@@ -48,12 +48,32 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
  * needs no inline script. It gives every command and snippet marked data-copy a button that copies
  * it, waits for Turnstile's token before the audit form is sent, shows that an audit or a crawl is
  * running, gives the report as a JSON file or as Markdown on the clipboard, and adds the system's
- * share sheet to the report's Share menu. Without it every page still reads and works, but the
- * form. It runs once the page is read to its end, so after a crawl's streamed answer.
+ * share sheet to the report's Share menu. On the production hostnames it also loads PostHog from
+ * /ph.js for the usage analytics (issue #57), with the cookie banner, and sends the closed list of
+ * events below: never an address the visitor audited, nothing they typed and nothing from a
+ * report but its scores. Without it every page still reads and works, but the form. It runs once
+ * the page is read to its end, so after a crawl's streamed answer.
  */
 export const SITE_JS = `(() => {
   const COPY = ${JSON.stringify(`${icon("copy")}<span class="sr-only">Copy</span>`)};
   const COPIED = ${JSON.stringify(`${icon("check")}<span class="sr-only">Copied</span>`)};
+
+  // The analytics: PostHog, once /ph.js has loaded. Events from before then wait in \`queue\`.
+  let analytics = null;
+  const queue = [];
+
+  const track = (event, properties, options) => {
+    if (!analytics) {
+      queue.push([event, properties, options]);
+      return;
+    }
+
+    try {
+      analytics.capture(event, properties, options);
+    } catch {
+      // Analytics never break the page.
+    }
+  };
 
   // Shows \`text\` on a button for two seconds, then what it said before.
   const say = (button, text) => {
@@ -75,6 +95,13 @@ export const SITE_JS = `(() => {
     button.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(code.textContent);
+
+        if (block.classList.contains("share-url")) {
+          track("report_shared", { network: "copy_link" });
+        } else {
+          track("snippet_copied", { snippet: block.dataset.copy || "code" });
+        }
+
         button.classList.add("is-copied");
         button.innerHTML = COPIED;
         setTimeout(() => {
@@ -131,6 +158,13 @@ export const SITE_JS = `(() => {
     };
 
     form.addEventListener("submit", (event) => {
+      // Sent at once: the form's answer is the next page.
+      track(
+        "audit_requested",
+        { mode: crawls() ? "site" : "page" },
+        { send_instantly: true, transport: "sendBeacon" }
+      );
+
       if (!token()) {
         event.preventDefault();
         waiting = true;
@@ -164,6 +198,7 @@ export const SITE_JS = `(() => {
             text: button.dataset.shareText,
             url: button.dataset.shareUrl,
           });
+          track("report_shared", { network: "system" });
         } catch {
           // The person closed the sheet, or the browser refused it: nothing to show.
         }
@@ -196,6 +231,7 @@ export const SITE_JS = `(() => {
     for (const button of document.querySelectorAll("[data-report]")) {
       button.addEventListener("click", async () => {
         if (button.dataset.report === "download") {
+          track("report_downloaded", { format: "json" });
           const file = new Blob([JSON.stringify(data.json, null, 2)], {
             type: "application/json",
           });
@@ -209,6 +245,7 @@ export const SITE_JS = `(() => {
 
         try {
           await navigator.clipboard.writeText(data.markdown);
+          track("report_downloaded", { format: "markdown" });
           say(button, "Copied");
         } catch {
           say(button, "Could not copy");
@@ -216,7 +253,188 @@ export const SITE_JS = `(() => {
       });
     }
 
+    if (data.summary) {
+      track("audit_shown", data.summary);
+    }
+
     document.querySelector("#report").scrollIntoView();
+  }
+
+  const failed = document.querySelector("[data-failure]");
+
+  if (failed) {
+    track("audit_failed", { reason: failed.dataset.failure });
+  }
+
+  // A click on a link to one of these places, by name: never the address itself.
+  const TARGETS = {
+    "github.com": "github",
+    "www.npmjs.com": "npm",
+    "claude.ai": "claude_directory",
+    "mcp.agentic-seo.rivi.software": "hosted_server",
+    "agentic-seo.rivi.software": "website",
+  };
+
+  // The networks of the report's Share menu.
+  const NETWORKS = {
+    "x.com": "x",
+    "www.linkedin.com": "linkedin",
+    "bsky.app": "bluesky",
+  };
+
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest && event.target.closest("a[href]");
+
+    if (!link || link.hostname === location.hostname) {
+      return;
+    }
+
+    if (link.closest(".share-panel") && NETWORKS[link.hostname]) {
+      track("report_shared", { network: NETWORKS[link.hostname] });
+    } else if (TARGETS[link.hostname]) {
+      track(
+        "link_clicked",
+        { target: TARGETS[link.hostname] },
+        { transport: "sendBeacon" }
+      );
+    }
+  });
+
+  // An address of this site as an event records it, less what belongs to the audited site: a
+  // share link's result (its address and scores) and the address a link put in the form.
+  const OWN = /^(mcp\\.)?agentic-seo(-check)?\\.rivi\\.software$/;
+
+  const clean = (value) => {
+    if (typeof value !== "string" || !/^(\\/|https?:\\/\\/)/.test(value)) {
+      return value;
+    }
+
+    let url;
+
+    try {
+      url = new URL(value, location.href);
+    } catch {
+      return value;
+    }
+
+    if (!OWN.test(url.hostname) && url.hostname !== location.hostname) {
+      return value;
+    }
+
+    if (url.pathname.startsWith("/share/")) {
+      url.pathname = "/share/:result";
+    }
+
+    url.searchParams.delete("url");
+    url.hash = "";
+
+    return value.startsWith("/") ? url.pathname + url.search : url.href;
+  };
+
+  const cleanAll = (properties) => {
+    if (!properties) {
+      return;
+    }
+
+    // A share page's title names the address and its scores.
+    delete properties.title;
+    delete properties.$title;
+
+    for (const key of Object.keys(properties)) {
+      properties[key] = clean(properties[key]);
+    }
+  };
+
+  const banner = document.querySelector("#consent");
+  const settings = document.querySelector("[data-consent-settings]");
+
+  // Do Not Track and Global Privacy Control read as a decline: no banner, no cookie.
+  const declined =
+    navigator.doNotTrack === "1" || navigator.globalPrivacyControl === true;
+
+  const start = (module) => {
+    const posthog = module.default;
+
+    posthog.init(module.TOKEN, {
+      api_host: module.API_HOST,
+      ui_host: "https://eu.posthog.com",
+      defaults: "2026-08-30",
+      // Counted without a cookie until the visitor accepts one; one choice for both hostnames.
+      cookieless_mode: "on_reject",
+      opt_out_capturing_by_default: true,
+      opt_out_capturing_persistence_type: "cookie",
+      respect_dnt: true,
+      persistence: "localStorage+cookie",
+      cross_subdomain_cookie: true,
+      person_profiles: "identified_only",
+      capture_pageview: true,
+      capture_pageleave: true,
+      // The closed list of events above, and nothing from the page: a report quotes other sites.
+      autocapture: false,
+      rageclick: false,
+      capture_dead_clicks: false,
+      capture_heatmaps: false,
+      capture_exceptions: false,
+      capture_performance: false,
+      disable_session_recording: true,
+      disable_surveys: true,
+      disable_product_tours: true,
+      disable_web_experiments: true,
+      disable_conversations: true,
+      // No flags and no remote config: the project's settings turn nothing on here.
+      advanced_disable_flags: true,
+      before_send: (event) => {
+        if (event) {
+          cleanAll(event.properties);
+          cleanAll(event.$set);
+          cleanAll(event.$set_once);
+        }
+
+        return event;
+      },
+    });
+
+    analytics = posthog;
+
+    for (const [event, properties, options] of queue.splice(0)) {
+      track(event, properties, options);
+    }
+
+    if (!banner || !settings || declined) {
+      return;
+    }
+
+    const choose = (accept) => {
+      if (accept) {
+        posthog.opt_in_capturing();
+      } else {
+        posthog.opt_out_capturing();
+      }
+
+      banner.hidden = true;
+    };
+
+    for (const button of banner.querySelectorAll("[data-consent]")) {
+      button.addEventListener("click", () => {
+        choose(button.dataset.consent === "accept");
+      });
+    }
+
+    settings.hidden = false;
+    settings.addEventListener("click", () => {
+      banner.hidden = false;
+      banner.querySelector("[data-consent]").focus();
+    });
+
+    if (posthog.get_explicit_consent_status() === "pending") {
+      banner.hidden = false;
+    }
+  };
+
+  if (OWN.test(location.hostname)) {
+    import("/ph.js").then(start, () => {
+      // Off (no /ph.js), or blocked: the page works without it.
+    });
   }
 })();
 `;

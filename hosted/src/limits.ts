@@ -201,7 +201,15 @@ const admit = async (
 };
 
 /** How a call ended, for its record: a limit kept it out ("limited"), or `HostedCallEnd.outcome`. */
-type Outcome = HostedCallEnd["outcome"] | "limited";
+export type Outcome = HostedCallEnd["outcome"] | "limited";
+
+/** A call's record as the analytics hear it (analytics.ts): no hostname, which is for abuse reports only. */
+export interface CallRecord {
+  tool: string;
+  outcome: Outcome;
+  requests: number;
+  pages: number;
+}
 
 /**
  * Analytics Engine throws for an index longer than this many bytes, and a hostname can have 253
@@ -283,42 +291,62 @@ const siteGate = (
   },
 });
 
-/** The hosted profile of one request to /mcp: its caller's limits, and the Worker's bindings. */
+/**
+ * The hosted profile of one request to /mcp: its caller's limits, and the Worker's bindings.
+ * `observe` hears each call's record as it is written.
+ */
 export const hostedProfile = (
   env: LimitsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
-  caller: Caller
-): HostedProfile => ({
-  userAgent: USER_AGENT,
-  sign: requestSigner(env.WEB_BOT_AUTH_KEYS, ORIGIN),
-  startCall: async (call) => {
-    const started = Date.now();
+  caller: Caller,
+  observe?: (record: CallRecord) => void
+): HostedProfile => {
+  const keep = (
+    call: HostedCallInfo,
+    outcome: Outcome,
+    numbers: { durationMs: number; requests: number; pages: number }
+  ): void => {
+    record(env, call, outcome, numbers);
+    observe?.({
+      tool: call.tool,
+      outcome,
+      requests: numbers.requests,
+      pages: numbers.pages,
+    });
+  };
 
-    try {
-      await admit(env, caller, call);
-    } catch (error) {
-      record(env, call, "limited", {
-        durationMs: Date.now() - started,
-        requests: 0,
-        pages: 0,
-      });
+  return {
+    userAgent: USER_AGENT,
+    sign: requestSigner(env.WEB_BOT_AUTH_KEYS, ORIGIN),
+    startCall: async (call) => {
+      const started = Date.now();
 
-      throw error;
-    }
-
-    const sent: Sent = { requests: 0, counted: 0 };
-
-    return {
-      gate: siteGate(env, ctx, sent),
-      end: ({ outcome, pages }) => {
-        record(env, call, outcome, {
+      try {
+        await admit(env, caller, call);
+      } catch (error) {
+        keep(call, "limited", {
           durationMs: Date.now() - started,
-          requests: sent.requests,
-          pages,
+          requests: 0,
+          pages: 0,
         });
 
-        countSent(env, ctx, sent);
-      },
-    };
-  },
-});
+        throw error;
+      }
+
+      const sent: Sent = { requests: 0, counted: 0 };
+
+      return {
+        gate: siteGate(env, ctx, sent),
+        end: ({ outcome, pages }) => {
+          keep(call, outcome, {
+            durationMs: Date.now() - started,
+            requests: sent.requests,
+            pages,
+          });
+
+          countSent(env, ctx, sent);
+        },
+      };
+    },
+  };
+};

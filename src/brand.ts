@@ -11,6 +11,9 @@ import type { Icon } from "@modelcontextprotocol/sdk/types.js";
  */
 export const PRODUCT_NAME = "Agentic SEO Check";
 
+/** The MCP server's `name`, the same for the local and the hosted server. */
+export const MCP_SERVER_NAME = "agentic-seo-check";
+
 export const MAKER = "RIVI Software";
 export const MAKER_URL = "https://rivi.software";
 

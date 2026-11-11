@@ -79,4 +79,12 @@ export type {
   HostedCallInfo,
   HostedProfile,
   McpServerOptions,
+  StartMcpServerOptions,
 } from "./mcp.js";
+
+export type {
+  McpAnalytics,
+  McpCaller,
+  McpErrorType,
+  McpToolCall,
+} from "./telemetry/mcp.js";

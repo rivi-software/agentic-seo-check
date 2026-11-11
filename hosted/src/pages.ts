@@ -17,6 +17,7 @@ import {
   CLAUDE_DIRECTORY_URL,
   directoryBadge,
   frame,
+  PRIVACY_URL,
   publisher,
 } from "./ui/frame.js";
 import type { FramePage } from "./ui/frame.js";
@@ -53,12 +54,15 @@ const perPeriod = (name: Parameters<typeof rateLimit>[0], noun: string) => {
 
 const MB = (bytes: number): string => `${bytes / 1_000_000} MB`;
 
-/** A command or a snippet to copy. */
-const install = (text: string, prompt = false): string =>
-  `<div class="install" data-copy>${prompt ? '<span class="prompt">$</span>' : ""}<code>${esc(text)}</code></div>`;
+/**
+ * A command or a snippet to copy. `name` is what the page's `snippet_copied` event calls it (issue
+ * #57).
+ */
+const install = (text: string, name: string, prompt = false): string =>
+  `<div class="install" data-copy="${name}">${prompt ? '<span class="prompt">$</span>' : ""}<code>${esc(text)}</code></div>`;
 
-const snippet = (text: string): string =>
-  `<pre data-copy><code>${esc(text)}</code></pre>`;
+const snippet = (text: string, name: string): string =>
+  `<pre data-copy="${name}"><code>${esc(text)}</code></pre>`;
 
 /**
  * An example conversation with an assistant that has the server, to show what it does. The tools,
@@ -95,37 +99,40 @@ const CLIENTS: [name: string, how: string, code: string][] = [
     "Run this in a terminal:",
     install(
       `claude mcp add --transport http agentic-seo-check ${MCP_URL}`,
+      "setup_claude_code",
       true
     ),
   ],
   [
     "claude.ai, Cowork and the Claude apps",
     `Connect it from <a href="${CLAUDE_DIRECTORY_URL}">its listing in the Claude Directory</a>, or in claude.ai open Settings, then Connectors, and add a custom connector with this address. Either way it needs no sign-in.`,
-    install(MCP_URL),
+    install(MCP_URL, "setup_claude_ai"),
   ],
   [
     "ChatGPT",
     "Add a custom app (connector) with this address and no authentication. Custom apps need developer mode, under Settings, Apps, Advanced settings.",
-    install(MCP_URL),
+    install(MCP_URL, "setup_chatgpt"),
   ],
   [
     "Cursor",
     "In <code>.cursor/mcp.json</code>, or <code>~/.cursor/mcp.json</code> for every project:",
     snippet(
-      `{ "mcpServers": { "agentic-seo-check": { "url": "${MCP_URL}" } } }`
+      `{ "mcpServers": { "agentic-seo-check": { "url": "${MCP_URL}" } } }`,
+      "setup_cursor"
     ),
   ],
   [
     "VS Code",
     "In <code>.vscode/mcp.json</code>:",
     snippet(
-      `{ "servers": { "agentic-seo-check": { "type": "http", "url": "${MCP_URL}" } } }`
+      `{ "servers": { "agentic-seo-check": { "type": "http", "url": "${MCP_URL}" } } }`,
+      "setup_vscode"
     ),
   ],
   [
     "Any other MCP client",
     "Add a server with this address over Streamable HTTP, with no authentication.",
-    install(MCP_URL),
+    install(MCP_URL, "setup_other"),
   ],
 ];
 
@@ -197,7 +204,7 @@ export const landingPage = (dailyRequests: number): string =>
 </div>
 <div class="endpoint rise" style="--d:180ms">
 <p class="endpoint-label">The server's address</p>
-${install(MCP_URL)}
+${install(MCP_URL, "mcp_url")}
 <ul class="endpoint-facts"><li class="chip">${icon("check")}MCP over Streamable HTTP</li><li class="chip">${icon("check")}Read-only tools</li><li class="chip">${icon("check")}Obeys robots.txt</li></ul>
 ${directoryBadge()}
 </div>
@@ -256,7 +263,7 @@ ${limitRow("A page", `the first ${MB(HOSTED_LIMITS.maxBodyBytes)} of its HTML, w
 <thead><tr><th scope="col">What</th><th scope="col">Hosted</th><th scope="col">Local</th></tr></thead>
 <tbody>${COMPARISON.map(([what, hosted, local]) => `<tr><th scope="row">${what}</th><td>${mark(hosted)}</td><td>${mark(local)}</td></tr>`).join("")}</tbody>
 </table></div>
-<div class="local-run"><p>The local server, from the npm package:</p>${install(LOCAL_SERVER, true)}</div>
+<div class="local-run"><p>The local server, from the npm package:</p>${install(LOCAL_SERVER, "local_server", true)}</div>
 </div>
 </section>
 <section class="section section-tight" aria-labelledby="trust-title">
@@ -267,7 +274,7 @@ ${limitRow("A page", `the first ${MB(HOSTED_LIMITS.maxBodyBytes)} of its HTML, w
 </div>
 <div class="rows">
 <div class="row" id="robots"><h3>robots.txt</h3><div class="row-body"><p>The server obeys robots.txt for every request it sends, an audit of one page included: the group for <code>agentic-seo-check</code>, or <code>*</code> when there is none. A crawl waits between requests to a site as its <code>Crawl-delay</code> asks, for at most ${CRAWL_DELAY_BUDGET} in all. When robots.txt keeps it out, or a site turns it away, the server says so and requests nothing more there.</p></div></div>
-<div class="row" id="privacy"><h3>Privacy</h3><div class="row-body"><p>The server keeps no HTML you send, no reports and no headers. For each tool call, and each run of the website's page audit, it records the tool, the outcome, the duration, the number of requests and pages, and the hostname it audited, so that a report about too many requests to a site can be checked against what the server sent there. It records the hostname only, never the path or the query, and never your IP address. Records are kept for three months. The server runs on Cloudflare, which processes the requests for ${MAKER}.</p></div></div>
+<div class="row" id="privacy"><h3>Privacy</h3><div class="row-body"><p>The server keeps no HTML you send, no reports and no headers. For each tool call, and each run of the website's page audit, it records the tool, the outcome, the duration, the number of requests and pages, and the hostname it audited, so that a report about too many requests to a site can be checked against what the server sent there. It records the hostname only, never the path or the query, and never your IP address. Records are kept for three months. The server runs on Cloudflare, which processes the requests for ${MAKER}.</p><p>For usage analytics, each tool call also goes to PostHog, in the EU, as one event: the tool, whether it failed and how, the duration, the number of requests and pages, the MCP client and its version, and whether the call came from claude.ai's or ChatGPT's addresses. Never the hostname, the arguments, the answer or your IP address, and nothing that links two calls. These pages count visits with PostHog too, without a cookie unless you accept one. The <a href="${PRIVACY_URL}">privacy policy</a> has the details.</p></div></div>
 <div class="row" id="requests"><h3>Requests to your site</h3><div class="row-body"><p>If this server has requested your site, <a href="/crawler">the page for site owners</a> says what the requests are and how to stop them. Report abuse, such as too many requests to one site, through <a href="${ABUSE_URL}">help.rivi.software/contact</a>.</p></div></div>
 </div>
 </div>
@@ -325,14 +332,14 @@ export const crawlerPage = (): string =>
 <div class="row" id="requests"><h2>What the requests are</h2><div class="row-body"><p>Every audit reads robots.txt first and obeys it: the group for <code>agentic-seo-check</code>, or <code>*</code> when there is none. An audit of one page is then one request, plus any redirects; the website's form audits one page for search engines and for answer engines, which also reads llms.txt, and crawls the site when it is given the homepage. A crawl requests up to ${HOSTED_LIMITS.maxPages} pages, up to ${HOSTED_LIMITS.maxSitemaps} sitemaps and up to ${HOSTED_LIMITS.maxLinkChecks} link and image targets: about 150 requests. It waits between requests as <code>Crawl-delay</code> asks, and stops once those waits add up to more than ${CRAWL_DELAY_BUDGET}, every site's together. The server sends at most ${perPeriod("SITE_REQUESTS", "requests")} to one hostname, from all its callers together. A 429 or a challenge page ends its requests to the site, and a 403 those to the page: it does not retry, and sends no other User-Agent.</p></div></div>
 <div class="row" id="recognise"><h2>How to recognise them</h2><div class="row-body">
 <p>The requests carry this User-Agent:</p>
-${snippet(USER_AGENT)}
+${snippet(USER_AGENT, "user_agent")}
 <p>Each one over https is signed with <a href="https://datatracker.ietf.org/doc/html/rfc9421">HTTP Message Signatures</a>, as Web Bot Auth asks: it carries <code>Signature-Agent: "${ORIGIN}"</code> and the headers <code>Signature-Input</code> and <code>Signature</code>, made with an Ed25519 key that <a href="${DIRECTORY_PATH}">the key directory</a> lists. A request over https without a valid signature did not come from this server, whatever its User-Agent says. Requests over plain http go unsigned, since anyone on their path could copy a signature and send it again.</p>
 <p>They come from Cloudflare's network, with the header <code>CF-Worker: rivi.software</code>. A site on Cloudflare sees them with the address <code>2a06:98c0:3600::103</code>, which every Cloudflare Worker shares.</p>
 <p>The User-Agent <code>${LOCAL_PRODUCT_TOKEN}</code> is the same tool run on someone's own machine, as a command or a local MCP server. Its requests come from that machine, unsigned, and its crawls obey a robots.txt group for <code>${LOCAL_PRODUCT_TOKEN}</code>, or <code>*</code>.</p>
 </div></div>
 <div class="row" id="block"><h2>How to block them</h2><div class="row-body">
 <ul class="blocks">
-<li class="card"><h3>In robots.txt</h3><p>A group for the product token keeps the server out: every audit reads it before anything else.</p><pre data-copy><code>User-agent: agentic-seo-check
+<li class="card"><h3>In robots.txt</h3><p>A group for the product token keeps the server out: every audit reads it before anything else.</p><pre data-copy="robots_txt"><code>User-agent: agentic-seo-check
 Disallow: /</code></pre><p>Add a <code>User-agent: ${LOCAL_PRODUCT_TOKEN}</code> line to the group to keep out crawls run from people's own machines too.</p></li>
 <li class="card"><h3>In a firewall</h3><p>Block requests whose User-Agent contains <code>agentic-seo-check</code>, which both product tokens do.</p></li>
 <li class="card"><h3>On Cloudflare</h3><p>A WAF custom rule on <code>cf.worker.upstream_zone eq "rivi.software"</code> blocks the server, and with it every other Worker on rivi.software.</p></li>

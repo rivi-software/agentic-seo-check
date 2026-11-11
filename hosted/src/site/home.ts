@@ -9,7 +9,11 @@ import { HOSTED_LIMITS, LOCAL_SERVER } from "../../../src/core/hosted.js";
 import { AEO_RULES, SEO_RULES } from "../../../src/core/rules/index.js";
 import type { Category, Severity } from "../../../src/core/types.js";
 import { ORIGIN as MCP_ORIGIN, rateLimit } from "../limits.js";
-import { CLAUDE_DIRECTORY_URL, directoryBadge } from "../ui/frame.js";
+import {
+  CLAUDE_DIRECTORY_URL,
+  directoryBadge,
+  PRIVACY_URL,
+} from "../ui/frame.js";
 import { GITHUB_MARK, icon } from "../ui/icons.js";
 import type { IconName } from "../ui/icons.js";
 import { esc } from "./html.js";
@@ -21,6 +25,19 @@ import {
   SITE_ORIGIN,
 } from "./layout.js";
 import { PURPOSE_LABEL, scoreRing, severityChip } from "./report.js";
+
+/**
+ * What kind of refusal the form answered with, as the page's `audit_failed` event names it (issue
+ * #57): the address, the check that keeps bots out, a limit, the form switched off, the site's
+ * refusal, or any other failure of the audit.
+ */
+export type FailureKind =
+  | "address"
+  | "check"
+  | "limit"
+  | "paused"
+  | "refused"
+  | "fetch";
 
 /** The name of each rule category, as the homepage and the rules page head it. */
 export const CATEGORY_LABEL: Record<Category, string> = {
@@ -56,6 +73,8 @@ export interface HomeState {
   url?: string;
   /** Why there is no report, in the words of the refusal. */
   error?: string;
+  /** What kind of refusal `error` is, for the page's `audit_failed` event (issue #57). */
+  failure?: FailureKind;
   /** The report of the audit just run (report.ts, site-report.ts). */
   report?: string;
   /** A crawl is running, and its answer streams in: the form waits for it. */
@@ -95,7 +114,7 @@ const auditForm = (state: HomeState): string => {
     return `<div class="audit audit-off rise" style="--d:180ms" id="audit">
 <div class="audit-box">
 <p><strong>The page audit is switched off at the moment.</strong> Run the same audit from your machine:</p>
-<div class="install" data-copy><span class="prompt">$</span><code>${AUDIT_COMMAND}</code></div>
+<div class="install" data-copy="audit_command"><span class="prompt">$</span><code>${AUDIT_COMMAND}</code></div>
 </div>
 </div>`;
   }
@@ -109,7 +128,7 @@ ${submitButton(state.crawling ?? false)}
 </div>
 </div>
 <div class="cf-turnstile" data-sitekey="${esc(state.siteKey)}" data-callback="onAuditToken" data-action="audit"></div>
-${state.error ? `<p class="notice" role="alert">${icon("error")}<span>${esc(state.error)}</span></p>` : ""}
+${state.error ? `<p class="notice" role="alert"${state.failure ? ` data-failure="${state.failure}"` : ""}>${icon("error")}<span>${esc(state.error)}</span></p>` : ""}
 <ul class="audit-facts">${formFacts(state.crawls)
     .map((fact) => `<li>${icon("check")}${fact}</li>`)
     .join("")}</ul>
@@ -320,6 +339,9 @@ const FINDING_PARTS: [name: string, text: string][] = [
   ["evidence", "what the audit saw on the page, capped"],
 ];
 
+/** What each route's command is called in the page's `snippet_copied` event (issue #57). */
+const ROUTE_SNIPPETS = ["audit_command", "local_server", "mcp_url"];
+
 const ROUTES: [
   iconName: IconName,
   title: string,
@@ -370,6 +392,11 @@ const KEEPS: [iconName: IconName, title: string, text: string][] = [
     "shield",
     "Bots kept out",
     "Cloudflare Turnstile checks that a person sent the form, and the hosted limits keep each site to a fair share.",
+  ],
+  [
+    "chart",
+    "Visits, counted",
+    "PostHog (EU) counts visits and actions such as running an audit, never the address you audited. A cookie only if you accept one.",
   ],
 ];
 
@@ -450,7 +477,7 @@ ${botChips()}
 </div>
 <div class="window">
 <div class="window-bar"><span class="window-title">canonical.missing</span><span class="window-actions sev-warning">${severityChip("warning")}</span></div>
-<pre class="json" data-copy><code>${highlightJson(EXAMPLE_FINDING)}</code></pre>
+<pre class="json" data-copy="example_finding"><code>${highlightJson(EXAMPLE_FINDING)}</code></pre>
 </div>
 </div>
 </section>
@@ -463,7 +490,7 @@ ${botChips()}
 </div>
 <ul class="cards routes">${ROUTES.map(
       ([iconName, title, text, command, [href, label]], index) =>
-        `<li class="card${index === 2 ? " route-featured" : ""}"><span class="card-icon">${icon(iconName)}</span>${index === 2 ? '<span class="chip corner"><span class="dot" aria-hidden="true"></span>No install</span>' : ""}<h3>${title}</h3><p>${text}</p><div class="install" data-copy>${command}</div><a class="link-arrow" href="${href}">${label}${icon("arrow", "arrow")}</a></li>`
+        `<li class="card${index === 2 ? " route-featured" : ""}"><span class="card-icon">${icon(iconName)}</span>${index === 2 ? '<span class="chip corner"><span class="dot" aria-hidden="true"></span>No install</span>' : ""}<h3>${title}</h3><p>${text}</p><div class="install" data-copy="${ROUTE_SNIPPETS[index] ?? "route"}">${command}</div><a class="link-arrow" href="${href}">${label}${icon("arrow", "arrow")}</a></li>`
     ).join("")}</ul>
 <p class="section-foot">The README on <a href="${REPOSITORY_URL}">GitHub</a> covers every flag, tool and option, and the skill that teaches an agent to use them.</p>
 </div>
@@ -474,6 +501,7 @@ ${botChips()}
 <p class="kicker">Privacy</p>
 <h2 id="keeps-title">What this site keeps.</h2>
 <p>The audit runs on Cloudflare's network, with no AI model: the same rules give the same findings every time. The site stores no report and no page. A report's share link holds the address and the two scores, and nothing else: whoever you give it to sees them, and the site keeps no copy. For each run it records the outcome, the duration, the number of requests and the hostname audited, for three months, so that a report about too many requests to a site can be checked. It never records the path, the query or your IP address. The check that keeps bots out of the form is Cloudflare Turnstile.</p>
+<p>PostHog, in the EU, counts the visits to this site and a short list of actions: running an audit, with its kind and its scores, downloading or sharing a report, copying a command, following a link to GitHub, npm or the hosted server. Never the address you audited or anything you type. It counts a visit without a cookie, and sets one only when you accept it in the banner; <span class="nowrap">Cookie settings</span>, at the foot of each page, changes your choice. The <a href="${PRIVACY_URL}">privacy policy</a> has the details.</p>
 </div>
 <ul class="cards keeps">${KEEPS.map(([iconName, title, text]) => `<li class="card"><span class="keep-icon">${icon(iconName)}</span><h3>${title}</h3><p>${text}</p></li>`).join("")}</ul>
 </div>

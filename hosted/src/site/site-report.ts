@@ -16,6 +16,7 @@ import type {
   SiteAudit,
 } from "../../../src/core/types.js";
 import { icon } from "../ui/icons.js";
+import type { FailureKind } from "./home.js";
 import { esc } from "./html.js";
 import {
   aeoFacts,
@@ -200,9 +201,9 @@ export const progressLine = (event: ProgressEvent): string =>
     ? `<li class="is-page"><span class="progress-count">${event.crawled ?? ""}</span><code>${esc(event.message)}</code></li>\n`
     : `<li><span class="progress-count">${icon("chevron")}</span><span>${esc(event.message)}</span></li>\n`;
 
-/** Closes the progress lines, with why the crawl gave no report when it failed. */
-export const progressClose = (error?: string): string =>
-  `</ol>${error ? `\n<p class="notice" role="alert">${icon("error")}<span>${esc(error)}</span></p>` : ""}
+/** Closes the progress lines, with why the crawl gave no report when it failed, and its kind. */
+export const progressClose = (error?: string, kind?: FailureKind): string =>
+  `</ol>${error ? `\n<p class="notice" role="alert"${kind ? ` data-failure="${kind}"` : ""}>${icon("error")}<span>${esc(error)}</span></p>` : ""}
 </div>
 </div>
 </div>

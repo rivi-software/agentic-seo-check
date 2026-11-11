@@ -8,7 +8,7 @@ import { gzipSync } from "node:zlib";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { afterAll, assert, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, assert, beforeAll, describe, expect, it, vi } from "vitest";
 import { unstable_startWorker } from "wrangler";
 import { z } from "zod";
 
@@ -19,6 +19,9 @@ const ORIGIN = "https://mcp.agentic-seo.rivi.software";
 const SITE = "https://agentic-seo.rivi.software";
 const FORMER = "https://mcp.agentic-seo-check.rivi.software";
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+
+/** Where the Worker sends its analytics in the tests (issue #57): never PostHog itself. */
+const POSTHOG = "https://posthog.test";
 
 const html = (title: string, body = "", head = "") =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>${head}</head><body><h1>${title}</h1>${body}</body></html>`;
@@ -91,6 +94,31 @@ const site = new Map<string, Route>(
 
 /** What the Worker requested, with the User-Agent it sent. */
 const requests: { url: string; userAgent: string | null }[] = [];
+
+const PostHogBatch = z.object({
+  api_key: z.string(),
+  batch: z.array(
+    z.object({
+      event: z.string(),
+      timestamp: z.string().optional(),
+      properties: z.record(z.string(), z.unknown()),
+    })
+  ),
+});
+
+/** The events the Worker sent to POSTHOG, and the token each came with. */
+const events: (z.infer<typeof PostHogBatch>["batch"][number] & {
+  token: string;
+})[] = [];
+
+/** The events named `name` sent after the first `after` events, once at least one is in. */
+const eventsAfter = (after: number, name: string) =>
+  vi.waitFor(() => {
+    const found = events.slice(after).filter((e) => e.event === name);
+    assert(found.length > 0, `an ${name} event`);
+
+    return found;
+  });
 
 /** The Web Bot Auth headers of each request the Worker sent, by URL. */
 const signatures = new Map<string, Record<string, string | null>>();
@@ -168,7 +196,12 @@ const sendForm = (url: string, token = "a-person", origin = SITE) =>
 const start = (origin: string) =>
   unstable_startWorker({
     config: new URL("../wrangler.jsonc", import.meta.url).pathname,
-    build: { define: defines() },
+    build: {
+      define: defines(),
+      // wrangler.jsonc's build command runs in hosted/, as `wrangler` does.
+      custom: { workingDirectory: new URL("../", import.meta.url).pathname },
+    },
+    bindings: { POSTHOG_HOST: { type: "plain_text", value: POSTHOG } },
     dev: {
       origin: { hostname: new URL(origin).hostname, secure: true },
       server: { hostname: "127.0.0.1", port: 0 },
@@ -178,6 +211,17 @@ const start = (origin: string) =>
       // Serves /__scheduled, which runs the Cron Trigger.
       testScheduled: true,
       outboundService: async (request: Request) => {
+        // PostHog, which the Worker tells of each tool call: kept apart from the sites' requests.
+        if (request.url === `${POSTHOG}/batch/`) {
+          const body = PostHogBatch.parse(await request.json());
+
+          events.push(
+            ...body.batch.map((event) => ({ ...event, token: body.api_key }))
+          );
+
+          return Response.json({ status: 1 });
+        }
+
         // Turnstile, as the audit form asks it: only the token "a-person" passes.
         if (request.url === SITEVERIFY) {
           const sent = new URLSearchParams(await request.text());
@@ -265,6 +309,81 @@ describe("the hosted Worker in workerd", () => {
 
       expect(result.isError).toBeFalsy();
       expect(page?.findings?.map((f) => f.rule)).toContain("title.generic");
+    });
+
+    it("tells PostHog of a tool call: the tool and how it went, not the site or the answer", async () => {
+      const before = events.length;
+
+      const { result } = await audit("seo_audit_page", {
+        url: "https://shop.example.com/about",
+      });
+
+      expect(result.isError).toBeFalsy();
+
+      const [event] = await eventsAfter(before, "$mcp_tool_call");
+      assert(event, "the call's event");
+
+      expect(event).toMatchObject({
+        token: expect.stringMatching(/^phc_/u),
+        properties: {
+          $mcp_source: "posthog_mcp_analytics",
+          $mcp_server_name: "agentic-seo-check",
+          $mcp_server_version: readVersion(),
+          $mcp_tool_name: "seo_audit_page",
+          $mcp_is_error: false,
+          $process_person_profile: false,
+          surface: "hosted",
+          platform: "none",
+          outcome: "ok",
+          pages: 1,
+          requests: expect.any(Number),
+          distinct_id: expect.stringMatching(/^ses_[\da-f-]{36}$/u),
+          // The User-Agent's product token, never the rest of the header.
+          $mcp_client_user_agent: expect.stringMatching(/^[A-Za-z][\w.-]*$/u),
+        },
+      });
+      expect(event.properties.requests).toBeGreaterThan(0);
+      expect(event.properties.$session_id).toBe(event.properties.distinct_id);
+      expect(JSON.stringify(event)).not.toMatch(
+        /example\.com|About the fixture/u
+      );
+    });
+
+    it("tells PostHog of each initialize, with the client's name", async () => {
+      const before = events.length;
+
+      const other = new Client({ name: "analytics-test", version: "1.2.3" });
+      await other.connect(
+        new StreamableHTTPClientTransport(new URL("/mcp", base))
+      );
+      await other.close();
+
+      const [event] = await eventsAfter(before, "$mcp_initialize");
+
+      expect(event?.properties).toMatchObject({
+        $mcp_client_name: "analytics-test",
+        $mcp_client_version: "1.2.3",
+        surface: "hosted",
+      });
+    });
+
+    it("tells PostHog a call failed and what kind of failure, not its message", async () => {
+      const before = events.length;
+
+      const { result } = await audit("seo_audit_page", {
+        url: "http://localhost:8787/",
+      });
+
+      expect(result.isError).toBeTruthy();
+
+      const [event] = await eventsAfter(before, "$mcp_tool_call");
+
+      expect(event?.properties).toMatchObject({
+        $mcp_tool_name: "seo_audit_page",
+        $mcp_is_error: true,
+        $mcp_error_type: "validation",
+      });
+      expect(JSON.stringify(event)).not.toContain("localhost");
     });
 
     it("refuses an address it may not request, without requesting it", async () => {
@@ -404,6 +523,7 @@ describe("the hosted Worker in workerd", () => {
           "/robots.txt",
           "/favicon.svg",
           "/site.js",
+          "/ph.js",
           "/og.png",
           "/fonts/geist-latin.woff2",
           "/fonts/geist-mono-latin.woff2",
@@ -422,6 +542,7 @@ describe("the hosted Worker in workerd", () => {
         ["/robots.txt", 200, "text/plain; charset=utf-8"],
         ["/favicon.svg", 200, "image/svg+xml"],
         ["/site.js", 200, "text/javascript; charset=utf-8"],
+        ["/ph.js", 200, "text/javascript; charset=utf-8"],
         ["/og.png", 200, "image/png"],
         ["/fonts/geist-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-mono-latin.woff2", 200, "font/woff2"],
@@ -552,6 +673,31 @@ describe("the hosted Worker in workerd", () => {
         ["/fonts/geist-mono-latin.woff2", 200, "font/woff2"],
         ["/nope", 404, "text/html; charset=utf-8"],
       ]);
+    });
+
+    it("serves posthog-js as a module that names the project and the host, with a cookie banner it lets PostHog reach", async () => {
+      const [script, home] = await Promise.all([
+        website.fetch(`${SITE}/ph.js`),
+        website.fetch(`${SITE}/`),
+      ]);
+
+      const source = await script.text();
+      const page = await home.text();
+
+      expect(script.headers.get("content-type")).toBe(
+        "text/javascript; charset=utf-8"
+      );
+      expect(source).toMatch(
+        /get_explicit_consent_status[\s\S]*\nexport const TOKEN = "phc_\w+";\nexport const API_HOST = "https:\/\/posthog\.test";\n$/u
+      );
+      expect(source).not.toContain("sourceMappingURL");
+      // The footer's Cookie settings, then the banner: both hidden until PostHog has loaded.
+      expect(page).toMatch(
+        /data-consent-settings hidden[\s\S]*<section class="consent" id="consent"[^>]*hidden>/u
+      );
+      expect(home.headers.get("content-security-policy")).toContain(
+        "connect-src 'self' https://eu.i.posthog.com"
+      );
     });
 
     it("serves its own share image, not the hosted server's", async () => {

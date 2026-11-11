@@ -23,12 +23,15 @@ import {
   hostedUrlProblem,
   siteRefusal,
 } from "../src/core/hosted.js";
+import { HOSTED_TOOLS } from "../src/mcp-hosted.js";
 import { createMcpServer } from "../src/mcp.js";
 import type {
   HostedCallEnd,
   HostedCallInfo,
   HostedProfile,
 } from "../src/mcp.js";
+import { instrumentTransport } from "../src/telemetry/mcp.js";
+import type { McpToolCall } from "../src/telemetry/mcp.js";
 
 const USER_AGENT =
   "Mozilla/5.0 (compatible; agentic-seo-check/0.0.0-test; +https://mcp.agentic-seo.rivi.software/crawler)";
@@ -126,6 +129,31 @@ const connect = async (profile: HostedProfile) => {
   ]);
 
   return client;
+};
+
+/** `connect`, with the calls' analytics kept in `calls` (issue #57). */
+const connectWatched = async (profile: HostedProfile) => {
+  const calls: McpToolCall[] = [];
+  const server = createMcpServer({ hosted: profile });
+  const client = new Client({ name: "test-client", version: "0.0.0" });
+
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  await server.connect(serverTransport);
+  instrumentTransport(
+    serverTransport,
+    {
+      toolCall: (call) => calls.push(call),
+      initialize: () => {
+        // The tests here read the calls only.
+      },
+    },
+    HOSTED_TOOLS
+  );
+  await client.connect(clientTransport);
+
+  return { client, calls };
 };
 
 const textOf = (result: Awaited<ReturnType<Client["callTool"]>>) => {
@@ -304,6 +332,15 @@ describe("the hosted server", () => {
       expect(pageTool?.description).not.toContain("localhost dev server");
     });
 
+    it("counts every tool it lists in its analytics (issue #57)", async () => {
+      const client = await connect(profileWith().profile);
+      const { tools } = await client.listTools();
+
+      expect([...HOSTED_TOOLS].toSorted()).toStrictEqual(
+        tools.map((t) => t.name).toSorted()
+      );
+    });
+
     it("names every tool in its annotations and links each audit to its docs", async () => {
       const client = await connect(profileWith().profile);
       const { tools } = await client.listTools();
@@ -355,6 +392,46 @@ describe("the hosted server", () => {
       expect(textOf(result)).toBe(
         "Agentic SEO Check error: This address has started 30 tool calls."
       );
+    });
+
+    it("tells its analytics a limit from a site's refusal", async () => {
+      serve({ "*": { body: page("Shop home page for the fixture", "") } });
+
+      const limited = await connectWatched(
+        profileWith({ refuse: "This address has started 30 tool calls." })
+          .profile
+      );
+
+      const refused = await connectWatched(
+        profileWith({
+          gate: {
+            beforeRequest: () => ({
+              scope: "host",
+              message: "The site answered 403 to the hosted server.",
+            }),
+          },
+        }).profile
+      );
+
+      await limited.client.callTool({
+        name: "seo_list_rules",
+        arguments: { rule: "title.missing" },
+      });
+      await refused.client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      expect(
+        [...limited.calls, ...refused.calls].map((c) => [
+          c.tool,
+          c.isError,
+          c.errorType,
+        ])
+      ).toStrictEqual([
+        ["seo_list_rules", true, "rate_limited"],
+        ["seo_audit_page", true, "permission"],
+      ]);
     });
 
     it("answers a call whose end the server could not record, and tells it the end once", async () => {

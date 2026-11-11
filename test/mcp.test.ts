@@ -5,7 +5,7 @@ import { assert, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { REPOSITORY_URL, WEBSITE_URL } from "../src/brand.js";
-import { createMcpServer } from "../src/mcp.js";
+import { createMcpServer, LOCAL_TOOLS } from "../src/mcp.js";
 import { VERSION } from "../src/version.js";
 
 const connect = async () => {
@@ -71,6 +71,8 @@ describe("MCP server", () => {
       "seo_lighthouse",
       "seo_list_rules",
     ]);
+    // The analytics leave out a call to any tool not in LOCAL_TOOLS (issue #57).
+    expect([...LOCAL_TOOLS].toSorted()).toStrictEqual(names);
     const page = tools.find((t) => t.name === "seo_audit_page");
     assert(page, "seo_audit_page is listed");
     expect(page.annotations?.readOnlyHint).toBeTruthy();

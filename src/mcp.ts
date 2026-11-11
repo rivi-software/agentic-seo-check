@@ -2,7 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { MAKER, MCP_ICONS, PRODUCT_NAME, REPOSITORY_URL } from "./brand.js";
+import {
+  MAKER,
+  MCP_ICONS,
+  MCP_SERVER_NAME,
+  PRODUCT_NAME,
+  REPOSITORY_URL,
+} from "./brand.js";
 import {
   auditAeoDirectory,
   auditAeoHtml,
@@ -33,12 +39,15 @@ import {
   docsNote,
   fail,
   format,
+  InputError,
   LIST_RULES,
   listRules,
   respond,
   respondAeo,
   toOptions,
 } from "./mcp-shared.js";
+import { instrumentTransport } from "./telemetry/mcp.js";
+import type { McpAnalytics } from "./telemetry/mcp.js";
 import { VERSION } from "./version.js";
 
 export type {
@@ -48,7 +57,8 @@ export type {
   HostedProfile,
 } from "./mcp-hosted.js";
 
-export const MCP_SERVER_NAME = "agentic-seo-check";
+export { MCP_SERVER_NAME } from "./brand.js";
+
 export const MCP_SERVER_VERSION = VERSION;
 
 export interface McpServerOptions {
@@ -198,7 +208,7 @@ export const createMcpServer = (
         } else if (url) {
           audit = await auditUrl(url, options);
         } else {
-          throw new Error("Provide `url` or `html`.");
+          throw new InputError("Provide `url` or `html`.");
         }
 
         return respond(audit, input.format, input.detail);
@@ -541,7 +551,9 @@ export const createMcpServer = (
         );
 
         if (given.length !== 1) {
-          throw new Error("Provide exactly one of `url`, `html` or `dir`.");
+          throw new InputError(
+            "Provide exactly one of `url`, `html` or `dir`."
+          );
         }
 
         let audit: AeoAudit;
@@ -559,7 +571,7 @@ export const createMcpServer = (
         } else if (input.url) {
           audit = await auditAeoUrl(input.url, options);
         } else {
-          throw new Error("Provide `url`, `html` or `dir`.");
+          throw new InputError("Provide `url`, `html` or `dir`.");
         }
 
         return respondAeo(audit, input.format, input.detail);
@@ -576,8 +588,33 @@ export const createMcpServer = (
   return server;
 };
 
-export const startMcpServer = async (): Promise<void> => {
+/** The local server's tools, for its analytics: a call to any other name is left out. */
+export const LOCAL_TOOLS: ReadonlySet<string> = new Set([
+  "seo_audit_page",
+  "seo_crawl_site",
+  "seo_audit_directory",
+  "seo_lighthouse",
+  "seo_aeo_audit",
+  "seo_list_rules",
+]);
+
+export interface StartMcpServerOptions {
+  /**
+   * Where the tool calls are reported (issue #57). The CLI's `mcp` command and the
+   * agentic-seo-check-mcp binary pass PostHog's unless the user turned it off; a server started
+   * from the library reports nothing.
+   */
+  analytics?: McpAnalytics;
+}
+
+export const startMcpServer = async (
+  options: StartMcpServerOptions = {}
+): Promise<void> => {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  if (options.analytics) {
+    instrumentTransport(transport, options.analytics, LOCAL_TOOLS);
+  }
 };

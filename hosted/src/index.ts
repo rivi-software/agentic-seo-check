@@ -7,7 +7,10 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
 import { HOSTED_LIMITS } from "../../src/core/hosted.js";
+import { HOSTED_TOOLS } from "../../src/mcp-hosted.js";
 import { createMcpServer } from "../../src/mcp.js";
+import { instrumentTransport } from "../../src/telemetry/mcp.js";
+import { hostedAnalytics } from "./analytics.js";
 import { callerOf, OPENAI_RANGES_URL, parseOpenAiRanges } from "./callers.js";
 import { FORMER_HOST, hostedProfile, ORIGIN } from "./limits.js";
 import {
@@ -22,6 +25,7 @@ import { SITE_JS } from "./site/files.js";
 import { isSiteHost, siteRoute } from "./site/routes.js";
 import { fontResponse, shareImageResponse } from "./ui/assets.js";
 import { OG_IMAGE } from "./ui/og.js";
+import { posthogResponse } from "./ui/posthog-script.js";
 
 export { HostedState } from "./state.js";
 
@@ -91,8 +95,10 @@ const handleMcp = async (
     await openAiRanges(env)
   );
 
+  const tracking = hostedAnalytics(env, ctx, caller);
+
   const server = createMcpServer({
-    hosted: hostedProfile(env, ctx, caller),
+    hosted: hostedProfile(env, ctx, caller, tracking?.observe),
   });
 
   const transport = new WebStandardStreamableHTTPServerTransport({
@@ -104,6 +110,10 @@ const handleMcp = async (
   });
 
   await server.connect(transport);
+
+  if (tracking) {
+    instrumentTransport(transport, tracking.analytics, HOSTED_TOOLS);
+  }
 
   try {
     const response = await transport.handleRequest(request);
@@ -196,6 +206,13 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
     // The pages share the website's script and fonts.
     case "/site.js": {
       return page(request, SITE_JS, "text/javascript; charset=utf-8");
+    }
+
+    case "/ph.js": {
+      return (
+        posthogResponse(request, env.POSTHOG_HOST) ??
+        page(request, notFoundPage(), HTML, 404)
+      );
     }
 
     case OG_IMAGE.path: {

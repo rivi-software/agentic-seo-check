@@ -8,6 +8,9 @@ allowBuilds:
   # Wrangler runs the hosted server locally in workerd, whose binary comes from an optional platform package; its
   # script only checks it, as esbuild's does.
   workerd: true
+  # posthog-js (the website's analytics, bundled into the hosted Worker) depends on core-js, whose postinstall only
+  # prints a request for donations.
+  core-js: false
 
 # No transitive dependencies from git or tarball URLs.
 blockExoticSubdeps: true
