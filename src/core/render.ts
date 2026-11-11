@@ -7,9 +7,10 @@ import path from "node:path";
 import type { Browser } from "playwright";
 import type * as Playwright from "playwright";
 
+import { ExpectedError } from "./errors.js";
 import { DEFAULT_USER_AGENT } from "./fetch.js";
 
-export class RenderUnavailableError extends Error {
+export class RenderUnavailableError extends ExpectedError {
   constructor(message: string) {
     super(message);
     this.name = "RenderUnavailableError";

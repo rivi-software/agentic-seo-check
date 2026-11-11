@@ -7,6 +7,7 @@ import type {
   CrawlResult,
   ProgressEvent,
 } from "./crawl.js";
+import { caughtError, ExpectedError } from "./errors.js";
 import { DEFAULT_USER_AGENT, fetchPage, toResponseInfo } from "./fetch.js";
 import type { FetchOptions } from "./fetch.js";
 import { extractPage } from "./html/extract.js";
@@ -325,6 +326,10 @@ const renderFindings = async (
 
     return findings;
   } catch (error) {
+    // A finding for the user, and maybe a bug of ours (issue #60): the CLI's and the MCP server's
+    // error tracking hears it, unless it is an expected failure.
+    caughtError(error);
+
     return [
       toolFinding(
         "tool.render-unavailable",
@@ -359,6 +364,9 @@ const lighthouseFindings = async (
 
     return performanceFindings(perf);
   } catch (error) {
+    // As in renderFindings.
+    caughtError(error);
+
     return [
       toolFinding(
         "tool.lighthouse-unavailable",
@@ -844,7 +852,9 @@ export const resolveTarget = async (
   const stat = await fs.stat(target).catch(() => null);
 
   if (!stat) {
-    throw new Error(`Target "${target}" is not a URL, file or directory.`);
+    throw new ExpectedError(
+      `Target "${target}" is not a URL, file or directory.`
+    );
   }
 
   return stat.isDirectory()

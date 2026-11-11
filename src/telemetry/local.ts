@@ -12,9 +12,11 @@ import { z } from "zod";
 
 import { PRODUCT_NAME, REPOSITORY_URL } from "../brand.js";
 import { resolveTarget } from "../core/audit.js";
+import { onCaughtError } from "../core/errors.js";
 import type { AeoAudit, Audit, SeverityCounts } from "../core/types.js";
-import { initializeEvent, toolCallEvent } from "./mcp.js";
-import type { McpAnalytics, McpEventContext } from "./mcp.js";
+import { exceptionEvent } from "./exceptions.js";
+import { currentTool, initializeEvent, toolCallEvent } from "./mcp.js";
+import type { McpAnalytics, McpEventContext, McpToolCall } from "./mcp.js";
 import { BASE_PROPERTIES, sendEvents, uuidv7 } from "./posthog.js";
 import type { PostHogEvent } from "./posthog.js";
 
@@ -23,7 +25,13 @@ export const TELEMETRY_ENV = "AGENTIC_SEO_CHECK_TELEMETRY";
 
 export const TELEMETRY_DOCS = `${REPOSITORY_URL}#telemetry`;
 
-export const NOTICE = `${PRODUCT_NAME} sends anonymous usage data to RIVI Software (PostHog, EU): the command, the names of the flags, the kind of target, the exit code, the number of pages and findings, and the rules that fired. Never a URL, a hostname, a path or anything from a page. Turn it off with \`agentic-seo-check telemetry disable\` or DO_NOT_TRACK=1. ${TELEMETRY_DOCS}`;
+export const NOTICE = `${PRODUCT_NAME} sends anonymous usage data to RIVI Software (PostHog, EU): the command, the names of the flags, the kind of target, the exit code, the number of pages and findings, the rules that fired, and the type and stack of an unexpected error. Never a URL, a hostname, a path or anything from a page. Turn it off with \`agentic-seo-check telemetry disable\` or DO_NOT_TRACK=1. ${TELEMETRY_DOCS}`;
+
+/**
+ * Which NOTICE the user last saw: 1 said nothing of errors (issue #57), 2 does (issue #60). A user
+ * who saw an older one sees the new one once.
+ */
+export const NOTICE_VERSION = 2;
 
 type Env = Record<string, string | undefined>;
 
@@ -60,6 +68,8 @@ const SettingsSchema = z.object({
   enabled: z.boolean().optional(),
   /** The day the first-run notice was shown. */
   noticeShown: z.string().optional(),
+  /** Which notice that was (NOTICE_VERSION); a file without it saw the first. */
+  noticeVersion: z.number().optional(),
 });
 
 type Settings = z.infer<typeof SettingsSchema>;
@@ -162,12 +172,17 @@ export const prepareTelemetry = async (
     return false;
   }
 
-  if (!status.settings.noticeShown) {
+  const seen = status.settings.noticeShown
+    ? (status.settings.noticeVersion ?? 1)
+    : 0;
+
+  if (seen < NOTICE_VERSION) {
     (options.stderr ?? process.stderr).write(`${NOTICE}\n`);
 
     await writeSettings(status.file, {
       ...status.settings,
       noticeShown: new Date().toISOString().slice(0, 10),
+      noticeVersion: NOTICE_VERSION,
     });
   }
 
@@ -272,8 +287,17 @@ export const runReport = (report: Audit | AeoAudit): RunReport => {
   };
 };
 
-/** One run of a CLI command, as its event tells it. */
+/** An error a run met, for its `$exception` event (issue #60). */
+interface RunError {
+  error: unknown;
+  /** False when only the CLI's last resort caught it. */
+  handled: boolean;
+}
+
+/** One run of a CLI command, as its events tell it. */
 export interface CliRun {
+  /** The run's id, new each run: its `cli_command` and its errors share it, and nothing else does. */
+  id: string;
   command: string;
   /** The names of the flags the user gave, such as `--crawl`; never their values. */
   flags: readonly string[];
@@ -281,25 +305,38 @@ export interface CliRun {
   started: number;
   target?: TargetKind;
   report?: RunReport;
+  errors: RunError[];
 }
 
 export const startCliRun = (
   command: string,
   flags: readonly string[]
 ): CliRun => ({
+  id: uuidv7(),
   command,
   flags,
   startedAt: new Date(),
   started: performance.now(),
+  errors: [],
 });
 
-/** A run's `cli_command` event. Its id is new each time: no two runs can be linked. */
+/** Notes an error of `run`, for its `$exception` event; `sendCliRun` leaves out what is no bug. */
+export const noteCliError = (
+  run: CliRun,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  error: unknown,
+  handled: boolean
+): void => {
+  run.errors.push({ error, handled });
+};
+
+/** A run's `cli_command` event, with the run's id: no two runs can be linked. */
 export const cliEvent = (run: CliRun, exitCode: number): PostHogEvent => ({
   event: "cli_command",
   timestamp: run.startedAt.toISOString(),
   properties: {
     ...BASE_PROPERTIES,
-    distinct_id: uuidv7(),
+    distinct_id: run.id,
     surface: "cli",
     command: run.command,
     flags: run.flags,
@@ -318,23 +355,91 @@ export const cliEvent = (run: CliRun, exitCode: number): PostHogEvent => ({
 /** The longest a run waits for its event to be sent, after its output is written. */
 export const CLI_SEND_TIMEOUT_MS = 1000;
 
+/** The `$exception` events of a run's errors, beside its `cli_command`. */
+export const cliErrorEvents = (run: CliRun): PostHogEvent[] =>
+  run.errors.flatMap(
+    ({ error, handled }) =>
+      exceptionEvent(error, {
+        distinctId: run.id,
+        handled,
+        surface: "cli",
+        properties: { command: run.command, ...environment() },
+      }) ?? []
+  );
+
+/** Sends a run's event and its errors' in one request. */
 export const sendCliRun = (run: CliRun, exitCode: number): Promise<boolean> =>
-  sendEvents([cliEvent(run, exitCode)], { timeoutMs: CLI_SEND_TIMEOUT_MS });
+  sendEvents([cliEvent(run, exitCode), ...cliErrorEvents(run)], {
+    timeoutMs: CLI_SEND_TIMEOUT_MS,
+  });
+
+/**
+ * Takes over from Node when an error nothing caught would end the process: writes its stack to
+ * stderr as Node does, gives `report` a second at most to send it, and exits with 1, as Node does.
+ * A second such error while the first is sent ends the process at once.
+ */
+export const reportCrashes = (
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  report: (error: unknown) => Promise<void>
+): void => {
+  let crashed = false;
+
+  const crash = async (thrown: Error): Promise<void> => {
+    process.stderr.write(`${thrown.stack ?? String(thrown)}\n`);
+
+    if (!crashed) {
+      crashed = true;
+      await report(thrown);
+    }
+
+    process.exit(1);
+  };
+
+  process.on("uncaughtException", (thrown) => {
+    void crash(thrown);
+  });
+};
 
 /** A session of the local MCP server ends after this long without a call, as PostHog's docs say. */
 const IDLE_MS = 30 * 60_000;
 
+/** The local MCP server's analytics, and its error tracking (issue #60). */
+export interface LocalMcpAnalytics extends McpAnalytics {
+  /** An error the core caught and turned into a finding, in the call it happened in. */
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  caught: (error: unknown) => void;
+  /** An error nothing caught: resolves once its event is sent, or given up after a second. */
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- as above
+  crashed: (error: unknown) => Promise<void>;
+}
+
+/** An error's event on the local MCP server, in the session and the call it happened in. */
+const localErrorEvent = (
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  error: unknown,
+  handled: boolean,
+  where: McpEventContext,
+  tool: string | undefined
+): PostHogEvent | undefined =>
+  exceptionEvent(error, {
+    distinctId: where.sessionId,
+    sessionId: where.sessionId,
+    handled,
+    surface: "local",
+    properties: { $mcp_tool_name: tool, ...where.properties },
+  });
+
 /**
  * The local MCP server's analytics. A stdio connection is one client, so its calls share a
  * session, until a call comes after half an hour without one: a long-running server serves many
- * chats. `send` is for the tests.
+ * chats. `send` is for the tests; it gets how long the send may take.
  */
 export const localMcpAnalytics = (
-  send: (event: PostHogEvent) => void = (event) => {
-    // The server keeps running: the event is sent alongside the next call, never in its way.
-    void sendEvents([event], { timeoutMs: 5000 });
-  }
-): McpAnalytics => {
+  send: (event: PostHogEvent, timeoutMs: number) => Promise<boolean> = (
+    event,
+    timeoutMs
+  ) => sendEvents([event], { timeoutMs })
+): LocalMcpAnalytics => {
   let sessionId = `ses_${uuidv7()}`;
   let last = Date.now();
 
@@ -350,8 +455,51 @@ export const localMcpAnalytics = (
     return { sessionId, surface: "local", properties: environment() };
   };
 
-  return {
-    initialize: (caller) => send(initializeEvent(caller, context())),
-    toolCall: (call) => send(toolCallEvent(call, context())),
+  // The server keeps running: an event is sent alongside the next call, never in its way.
+  const later = (event: PostHogEvent | undefined): void => {
+    if (event) {
+      void send(event, 5000);
+    }
   };
+
+  return {
+    initialize: (caller) => later(initializeEvent(caller, context())),
+    toolCall: (call: McpToolCall) => {
+      const where = context();
+
+      later(toolCallEvent(call, where));
+
+      if (call.error !== undefined) {
+        later(localErrorEvent(call.error, true, where, call.tool));
+      }
+    },
+    caught: (error) =>
+      later(localErrorEvent(error, true, context(), currentTool())),
+    crashed: async (error) => {
+      const event = localErrorEvent(error, false, context(), currentTool());
+
+      if (event) {
+        await send(event, CLI_SEND_TIMEOUT_MS);
+      }
+    },
+  };
+};
+
+/**
+ * The local MCP server's telemetry, for `agentic-seo-check mcp` and agentic-seo-check-mcp: its
+ * analytics, the errors the core catches, and the ones nothing does. Undefined while it is off.
+ */
+export const localMcpTelemetry = async (): Promise<
+  LocalMcpAnalytics | undefined
+> => {
+  if (!(await prepareTelemetry())) {
+    return undefined;
+  }
+
+  const analytics = localMcpAnalytics();
+
+  onCaughtError(analytics.caught);
+  reportCrashes(analytics.crashed);
+
+  return analytics;
 };

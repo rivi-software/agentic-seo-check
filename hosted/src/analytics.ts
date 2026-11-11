@@ -1,16 +1,20 @@
 /**
  * The hosted server's analytics (issue #57): one `$mcp_tool_call` event per tool call and one
  * `$mcp_initialize` per `initialize`, sent to PostHog (EU) once the answer is on its way, with
- * `ctx.waitUntil`. The transport is stateless, so each call is its own session, and nothing that
+ * `ctx.waitUntil`, and an `$exception` event for each error that may be a bug (issue #60). The transport is stateless, so each call is its own session, and nothing that
  * could tie two calls to one person, such as the caller's address, goes into an event. What it
  * says of the caller is the MCP client and the platform the call comes from: claude.ai's or
  * ChatGPT's addresses, or neither. The hostname a call audited stays in Analytics Engine, for abuse
  * reports, and out of PostHog.
  */
+import { exceptionEvent } from "../../src/telemetry/exceptions.js";
 import { initializeEvent, toolCallEvent } from "../../src/telemetry/mcp.js";
 import type { McpAnalytics, McpEventContext } from "../../src/telemetry/mcp.js";
 import { sendEvents, uuidv7 } from "../../src/telemetry/posthog.js";
-import type { PostHogEvent } from "../../src/telemetry/posthog.js";
+import type {
+  PostHogEvent,
+  PropertyValue,
+} from "../../src/telemetry/posthog.js";
 import type { Caller } from "./callers.js";
 import type { CallRecord } from "./limits.js";
 
@@ -32,6 +36,57 @@ export interface HostedAnalytics {
 
 /** How long an event may take to reach PostHog; the answer has gone by then. */
 const SEND_TIMEOUT_MS = 10_000;
+
+/**
+ * Where in the Worker an error happened: the hostname's part (`server` or `website`) and the
+ * route, from a fixed list, never the request's address.
+ */
+export type ErrorRoute = `${"server" | "website"}:${string}`;
+
+/** An error's event: a session of its own, as every call has, and where it happened. */
+const errorEvent = (
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  error: unknown,
+  sessionId: string,
+  handled: boolean,
+  properties: Record<string, PropertyValue | undefined>
+): PostHogEvent | undefined =>
+  exceptionEvent(error, {
+    distinctId: sessionId,
+    sessionId,
+    handled,
+    surface: "hosted",
+    properties,
+  });
+
+/**
+ * Sends the `$exception` event of an error the Worker met, with `ctx.waitUntil`, unless the
+ * analytics are off or the error is no bug. `handled` is false for the Worker's last resort, the
+ * 500.
+ */
+export const reportError = (
+  env: AnalyticsEnv,
+  ctx: Pick<ExecutionContext, "waitUntil">,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- as above
+  error: unknown,
+  route: ErrorRoute,
+  handled = true
+): void => {
+  if (!env.POSTHOG_HOST) {
+    return;
+  }
+
+  const event = errorEvent(error, `ses_${uuidv7()}`, handled, { route });
+
+  if (event) {
+    ctx.waitUntil(
+      sendEvents([event], {
+        host: env.POSTHOG_HOST,
+        timeoutMs: SEND_TIMEOUT_MS,
+      })
+    );
+  }
+};
 
 /** The analytics of one request to /mcp, or undefined while they are off. */
 export const hostedAnalytics = (
@@ -77,7 +132,22 @@ export const hostedAnalytics = (
         const record = records.get(call.tool);
         records.delete(call.tool);
 
-        send(toolCallEvent(call, context(record)));
+        const where = context(record);
+        send(toolCallEvent(call, where));
+
+        // The error behind an internal failure, in the call's session.
+        const event =
+          call.error === undefined
+            ? undefined
+            : errorEvent(call.error, where.sessionId, true, {
+                route: "server:/mcp",
+                $mcp_tool_name: call.tool,
+                platform: where.properties?.platform,
+              });
+
+        if (event) {
+          send(event);
+        }
       },
     },
   };

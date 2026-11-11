@@ -5,6 +5,7 @@ import { PRODUCT_NAME, REPOSITORY_URL, WEBSITE_URL } from "./brand.js";
 import { compactAeoAudit } from "./core/aeo/audit.js";
 import { compactAudit } from "./core/audit.js";
 import type { CrawlOptions } from "./core/audit.js";
+import { ExpectedError } from "./core/errors.js";
 import { RequestRefusedError } from "./core/fetch.js";
 import { baselineFromIds } from "./core/recheck.js";
 import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
@@ -181,22 +182,25 @@ export const listRules = (input: { category?: string; rule?: string }) => {
 };
 
 /** A tool call whose arguments cannot work: its message tells the caller what to send instead. */
-export class InputError extends Error {
+export class InputError extends ExpectedError {
   override name = "InputError";
 }
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
 const errorTypeOf = (error: unknown): McpErrorType => {
-  if (error instanceof InputError) {
-    return "validation";
+  if (error instanceof RequestRefusedError) {
+    return "permission";
   }
 
-  return error instanceof RequestRefusedError ? "permission" : "internal";
+  // The caller's input, or something else the tool expects and explains, such as a directory that
+  // is not there.
+  return error instanceof ExpectedError ? "validation" : "internal";
 };
 
 /**
  * A tool error with `error`'s message. Its event (telemetry/mcp.ts) gets `type`, the kind of
- * failure, and never the message, which can name the audited URL.
+ * failure, and never the message, which can name the audited URL. An internal failure also hands
+ * over the error, for its `$exception` event (issue #60), which cleans the message first.
  */
 export const fail = (
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
@@ -212,6 +216,7 @@ export const fail = (
         { type: "text" as const, text: `${PRODUCT_NAME} error: ${message}` },
       ],
     },
-    type
+    type,
+    type === "internal" ? error : undefined
   );
 };

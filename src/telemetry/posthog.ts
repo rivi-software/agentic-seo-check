@@ -4,6 +4,7 @@
  * Node-only work and needs no PostHog SDK: an event is a JSON object sent to the capture API.
  */
 import { VERSION } from "../version.js";
+import type { ExceptionEntry } from "./exceptions.js";
 
 /**
  * The "Agentic SEO" project on PostHog Cloud EU. A project token can only send events, and every
@@ -14,8 +15,16 @@ export const POSTHOG_TOKEN = "phc_qodC2xP7RSMQH2zDUh5VhNHvXebc52o4mg5RKoGxFASK";
 /** Where events go: PostHog's EU ingestion host. */
 export const POSTHOG_HOST = "https://eu.i.posthog.com";
 
-/** A property's value: what these events carry is flat, as PostHog's MCP Analytics wants it. */
-export type PropertyValue = string | number | boolean | readonly string[];
+/**
+ * A property's value: what these events carry is flat, as PostHog's MCP Analytics wants it, but for
+ * the list of errors of an `$exception` event (exceptions.ts).
+ */
+export type PropertyValue =
+  | string
+  | number
+  | boolean
+  | readonly string[]
+  | readonly ExceptionEntry[];
 
 /** One event as PostHog's batch endpoint takes it. */
 export interface PostHogEvent {

@@ -1,4 +1,5 @@
 import { VERSION } from "../version.js";
+import { ExpectedError } from "./errors.js";
 import type { RedirectHop, ResponseInfo } from "./types.js";
 
 /**
@@ -40,7 +41,7 @@ export interface Refusal {
  * A request the gate refused, thrown out of `fetchPage` so that no caller takes it for an answer:
  * a link that was not requested is not checked, never broken.
  */
-export class RequestRefusedError extends Error {
+export class RequestRefusedError extends ExpectedError {
   readonly scope: Refusal["scope"];
   /** The request that was refused: the URL asked for, or a redirect it led to. */
   readonly url: string;

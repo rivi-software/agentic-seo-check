@@ -24,6 +24,7 @@ import type {
   SiteAudit,
 } from "../../../src/core/types.js";
 import type { HostedCall } from "../../../src/mcp.js";
+import { reportError } from "../analytics.js";
 import type { AnalyticsEnv } from "../analytics.js";
 import { callerOf } from "../callers.js";
 import { hostedProfile } from "../limits.js";
@@ -258,7 +259,9 @@ const runCrawl = async (
   typed: string,
   fetchOptions: FetchOptions,
   call: HostedCall,
-  env: ShareEnv
+  env: ShareEnv,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  reportFailure: (error: unknown) => void
 ): Promise<AuditAnswer> => {
   const feed = progressFeed();
 
@@ -279,6 +282,7 @@ const runCrawl = async (
         outcome: error instanceof RequestRefusedError ? "refused" : "error",
         pages: 0,
       });
+      reportFailure(error);
 
       return {
         error: failure("crawl", target, error),
@@ -445,7 +449,9 @@ export const answerAudit = async (
   };
 
   if (crawl) {
-    return runCrawl(target, typed, fetchOptions, call, env);
+    return runCrawl(target, typed, fetchOptions, call, env, (thrown) => {
+      reportError(env, ctx, thrown, "website:/audit");
+    });
   }
 
   try {
@@ -459,6 +465,7 @@ export const answerAudit = async (
       outcome: error instanceof RequestRefusedError ? "refused" : "error",
       pages: 0,
     });
+    reportError(env, ctx, error, "website:/audit");
 
     return refuse(
       502,
