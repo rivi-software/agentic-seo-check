@@ -132,13 +132,15 @@ const signatureOf = (bytes: ArrayBuffer) =>
 /** The keyid of the RFC 9421 test key in .dev.vars: its JWK thumbprint. */
 const TEST_KEYID = "poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U";
 
-let worker: Awaited<ReturnType<typeof unstable_startWorker>>;
+type StartedWorker = Awaited<ReturnType<typeof unstable_startWorker>>;
+
+let worker: StartedWorker;
 
 /** The same Worker, answering as the website's hostname. */
-let website: Awaited<ReturnType<typeof unstable_startWorker>>;
+let website: StartedWorker;
 
 /** The same Worker, answering as the MCP server's hostname in 0.7.0. */
-let former: Awaited<ReturnType<typeof unstable_startWorker>>;
+let former: StartedWorker;
 let client: Client;
 let base: URL;
 
@@ -188,6 +190,20 @@ const sendForm = (url: string, token = "a-person", origin = SITE) =>
       "cf-turnstile-response": token,
     }).toString(),
   });
+
+/**
+ * Sends `url` to the Worker `to` and reads the answer's body as soon as it comes, as Miniflare
+ * wants (vitest.config.ts): the answer, and its body as text.
+ */
+const fetchRead = async (
+  to: StartedWorker,
+  url: string,
+  init?: Parameters<StartedWorker["fetch"]>[1]
+) => {
+  const res = await to.fetch(url, init);
+
+  return { res, text: await res.text() };
+};
 
 /**
  * Starts the Worker in workerd, answering as `origin`: Wrangler's dev server gives every request
@@ -649,7 +665,7 @@ describe("the hosted Worker in workerd", () => {
     it("sends its pages to the current hostname", async () => {
       const answers = await Promise.all(
         ["/", "/crawler?from=ua"].map(async (path) => {
-          const res = await former.fetch(`${FORMER}${path}`, {
+          const { res } = await fetchRead(former, `${FORMER}${path}`, {
             redirect: "manual",
           });
 
@@ -704,14 +720,14 @@ describe("the hosted Worker in workerd", () => {
 
     it("serves posthog-js as a module that names the project and the host, with a cookie banner it lets PostHog reach", async () => {
       const [script, home] = await Promise.all([
-        website.fetch(`${SITE}/ph.js`),
-        website.fetch(`${SITE}/`),
+        fetchRead(website, `${SITE}/ph.js`),
+        fetchRead(website, `${SITE}/`),
       ]);
 
-      const source = await script.text();
-      const page = await home.text();
+      const { text: source } = script;
+      const { text: page } = home;
 
-      expect(script.headers.get("content-type")).toBe(
+      expect(script.res.headers.get("content-type")).toBe(
         "text/javascript; charset=utf-8"
       );
       expect(source).toMatch(
@@ -722,20 +738,15 @@ describe("the hosted Worker in workerd", () => {
       expect(page).toMatch(
         /data-consent-settings hidden[\s\S]*<section class="consent" id="consent"[^>]*hidden>/u
       );
-      expect(home.headers.get("content-security-policy")).toContain(
+      expect(home.res.headers.get("content-security-policy")).toContain(
         "connect-src 'self' https://eu.i.posthog.com"
       );
     });
 
     it("serves its own share image, not the hosted server's", async () => {
-      const [ours, theirs] = await Promise.all([
-        website.fetch(`${SITE}/og.png`),
-        fetch(new URL("/og.png", base)),
-      ]);
-
       const [siteCard, serverCard] = await Promise.all([
-        ours.arrayBuffer(),
-        theirs.arrayBuffer(),
+        website.fetch(`${SITE}/og.png`).then((res) => res.arrayBuffer()),
+        fetch(new URL("/og.png", base)).then((res) => res.arrayBuffer()),
       ]);
 
       expect([signatureOf(siteCard), signatureOf(serverCard)]).toStrictEqual([
@@ -748,7 +759,10 @@ describe("the hosted Worker in workerd", () => {
     it("serves the fonts as WOFF2 files that never change, and no MCP endpoint", async () => {
       const font = await website.fetch(`${SITE}/fonts/geist-latin.woff2`);
       const bytes = new Uint8Array(await font.arrayBuffer());
-      const mcp = await website.fetch(`${SITE}/mcp`, { method: "POST" });
+
+      const { res: mcp } = await fetchRead(website, `${SITE}/mcp`, {
+        method: "POST",
+      });
 
       expect(new TextDecoder().decode(bytes.slice(0, 4))).toBe("wOF2");
       expect(font.headers.get("cache-control")).toBe(
@@ -814,14 +828,14 @@ describe("the hosted Worker in workerd", () => {
       const forged = `${SITE}/share/${Buffer.from("[1]").toString("base64url")}.${"A".repeat(22)}`;
 
       const [page, image] = await Promise.all([
-        website.fetch(forged),
-        website.fetch(`${forged}.png`),
+        fetchRead(website, forged),
+        fetchRead(website, `${forged}.png`),
       ]);
 
       expect([
-        page.status,
-        image.status,
-        image.headers.get("content-type"),
+        page.res.status,
+        image.res.status,
+        image.res.headers.get("content-type"),
       ]).toStrictEqual([404, 404, "text/html; charset=utf-8"]);
     });
 
@@ -860,17 +874,16 @@ describe("the hosted Worker in workerd", () => {
     it("requests nothing for a link that fills the field, or for GET /audit", async () => {
       const before = requests.length;
 
-      const filled = await website.fetch(
+      const filled = await fetchRead(
+        website,
         `${SITE}/?url=https://shop.example.com/about`
       );
 
-      const opened = await website.fetch(`${SITE}/audit`, {
+      const { res: opened } = await fetchRead(website, `${SITE}/audit`, {
         redirect: "manual",
       });
 
-      await expect(filled.text()).resolves.toContain(
-        'value="https://shop.example.com/about"'
-      );
+      expect(filled.text).toContain('value="https://shop.example.com/about"');
       expect(opened.status).toBe(303);
       expect(opened.headers.get("location")).toBe("/");
       expect(requests).toHaveLength(before);
