@@ -109,6 +109,7 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
     "@changesets/cli": "3.0.3",
+    "@resvg/resvg-wasm": "2.6.2",
     "@types/node": "22.20.5",
     "chrome-launcher": "^1.2.3",
     "lefthook": "2.2.2",

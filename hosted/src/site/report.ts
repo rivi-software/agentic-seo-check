@@ -316,13 +316,19 @@ export const crawlersHtml = (audit: AeoAudit, page = "this page"): string => {
 </div>`;
 };
 
+/** A score with its counts, linked to the findings at `#anchor`, or on its own with no anchor. */
 export const scoreCard = (
-  anchor: string,
+  anchor: string | null,
   name: string,
   score: number,
   counts: SeverityCounts
-): string =>
-  `<a class="score-card" href="#${anchor}">${scoreRing(score)}<span class="score-text"><span class="score-name">${name}</span><span class="sr-only">Score ${score} of 100.</span>${countsHtml(counts)}</span></a>`;
+): string => {
+  const inner = `${scoreRing(score)}<span class="score-text"><span class="score-name">${name}</span><span class="sr-only">Score ${score} of 100.</span>${countsHtml(counts)}</span>`;
+
+  return anchor
+    ? `<a class="score-card" href="#${anchor}">${inner}</a>`
+    : `<div class="score-card">${inner}</div>`;
+};
 
 const auditSection = (
   anchor: string,
@@ -352,18 +358,22 @@ export const reportData = (
     })
   );
 
-/** A report under the audit form: its bar with the address and the buttons, `body`, and `data`. */
+/**
+ * A report under the audit form: its bar with the address and the buttons, `body`, and `data`.
+ * `share` is the Share menu (share-page.ts), when the site can sign a share link.
+ */
 export const reportFrame = (report: {
   title: string;
   url: string;
   body: string;
   data: string;
+  share?: string;
 }): string => `<section class="report" id="report" aria-labelledby="report-title">
 <div class="wrap">
 <div class="window report-window">
 <div class="report-bar">
 <div class="report-title"><h2 id="report-title">${report.title}</h2><p class="report-url">${icon("globe")}<span>${esc(report.url)}</span></p></div>
-<div class="report-actions"><button class="btn btn-secondary btn-sm" type="button" data-report="download">${icon("download")}<span class="btn-label">Download JSON</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="copy">${icon("copy")}<span class="btn-label">Copy as Markdown</span></button></div>
+<div class="report-actions"><button class="btn btn-secondary btn-sm" type="button" data-report="download">${icon("download")}<span class="btn-label">Download JSON</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="copy">${icon("copy")}<span class="btn-label">Copy as Markdown</span></button>${report.share ?? ""}</div>
 </div>
 <div class="report-body">
 ${report.body}
@@ -387,16 +397,18 @@ const pageNote = (seo: PageAudit, homepage: boolean): string => {
 
 /**
  * The report of one page's SEO and AEO audits, to put under the audit form. `homepage`: the page
- * is a site's homepage, which the form audited alone.
+ * is a site's homepage, which the form audited alone. `share`: the Share menu, if any.
  */
 export const renderReport = (
   seo: PageAudit,
   aeo: AeoAudit,
-  homepage = false
+  homepage = false,
+  share = ""
 ): string =>
   reportFrame({
     title: "Audit report",
     url: seo.url,
+    share,
     data: reportData(seo, aeo, new URL(seo.url).hostname),
     body: `<div class="scores">${scoreCard("seo", "SEO: search engines", seo.score, seo.counts)}${scoreCard("aeo", "AEO: AI answer engines", aeo.score, aeo.counts)}</div>
 ${auditSection("seo", "SEO findings", seoFacts(seo), seo.findings)}

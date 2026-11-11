@@ -23,6 +23,9 @@ export const ABUSE_URL = "https://help.rivi.software/contact";
 export const NPM_URL =
   "https://www.npmjs.com/package/@rivi-software/agentic-seo-check";
 
+/** RIVI Software's account on X, which a card names and a post made from a report mentions. */
+export const X_ACCOUNT = "rivi_software";
+
 /** RIVI Software's page of the code it publishes, which lists this project. */
 const OPEN_SOURCE_URL = `${MAKER_URL}/open-source`;
 
@@ -47,6 +50,10 @@ export interface FramePage {
   body: string;
   /** Loads Cloudflare Turnstile, for the audit form. */
   turnstile?: boolean;
+  /** The page's own share image, in place of its hostname's card (a shared result's). */
+  image?: { url: string; alt: string };
+  /** Keeps the page out of search: it says little of its own (a shared result). */
+  noindex?: boolean;
 }
 
 /** The pages of both hostnames, in the order the header lists them. */
@@ -128,6 +135,11 @@ ${FOOTER.map(
 export const frame = (host: Host, page: FramePage): string => {
   const url = `${host.origin}${page.path}`;
 
+  const image = page.image ?? {
+    url: `${host.origin}${OG_IMAGE.path}`,
+    alt: cardAlt(host.card),
+  };
+
   const organization: JsonObject = {
     "@type": "Organization",
     "@id": PUBLISHER_ID,
@@ -144,7 +156,7 @@ export const frame = (host: Host, page: FramePage): string => {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(page.title)}</title>
 <meta name="description" content="${esc(page.description)}">
-<link rel="canonical" href="${url}">
+<link rel="canonical" href="${url}">${page.noindex ? '\n<meta name="robots" content="noindex">' : ""}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="${FONT_PATHS.sans}" as="font" type="font/woff2" crossorigin>
 <meta name="theme-color" content="#08090a">
@@ -153,12 +165,13 @@ export const frame = (host: Host, page: FramePage): string => {
 <meta property="og:title" content="${esc(page.title)}">
 <meta property="og:description" content="${esc(page.description)}">
 <meta property="og:url" content="${url}">
-<meta property="og:image" content="${host.origin}${OG_IMAGE.path}">
+<meta property="og:image" content="${esc(image.url)}">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="${OG_IMAGE.width}">
 <meta property="og:image:height" content="${OG_IMAGE.height}">
-<meta property="og:image:alt" content="${esc(cardAlt(host.card))}">
+<meta property="og:image:alt" content="${esc(image.alt)}">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@${X_ACCOUNT}">
 <script type="application/ld+json">${scriptSafe(
     JSON.stringify({
       "@context": "https://schema.org",

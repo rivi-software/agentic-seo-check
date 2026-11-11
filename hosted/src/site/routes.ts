@@ -1,4 +1,5 @@
 import { MARK_SVG } from "../../../src/brand.js";
+import { VERSION } from "../../../src/version.js";
 /**
  * The routes of the website at agentic-seo.rivi.software (issue #39), which the Worker
  * serves beside the MCP server's own hostname: the homepage with the audit form, the rules, the
@@ -6,12 +7,15 @@ import { MARK_SVG } from "../../../src/brand.js";
  */
 import { fontResponse, shareImageResponse } from "../ui/assets.js";
 import { OG_IMAGE } from "../ui/og.js";
+import { shareImage } from "../ui/share-image.js";
 import { answerAudit, formCrawls, formOpen } from "./audit.js";
 import type { SiteEnv } from "./audit.js";
 import { LLMS_TXT, SITE_JS, SITE_ROBOTS_TXT, SITEMAP_XML } from "./files.js";
 import { homePage, notFoundPage } from "./home.js";
 import { SITE_HOST } from "./layout.js";
 import { rulesPage } from "./rules-page.js";
+import { sharePage } from "./share-page.js";
+import { openShare } from "./share.js";
 
 /**
  * The website's hostname. Wrangler's dev server gives every request the hostname of the first
@@ -125,6 +129,59 @@ const audit = async (
   return new Response(readable, { status, headers });
 };
 
+/** A share link's page, and its image with `.png` after it (issue #54). */
+const SHARE_ROUTE = /^\/share\/(?<token>[\w-]+\.[\w-]{22})(?<png>\.png)?$/u;
+
+/**
+ * A shared result's page or image, when one of the keys signed it, and the 404 page otherwise.
+ * The page is kept out of search. The image of a result never changes within a version, so it is
+ * drawn once and kept in the Cache API of the Cloudflare location that drew it.
+ */
+const share = async (
+  request: Request,
+  env: SiteEnv,
+  ctx: Pick<ExecutionContext, "waitUntil">,
+  token: string,
+  png: boolean
+): Promise<Response> => {
+  const result = await openShare(env, token);
+
+  if (!result) {
+    return file(request, notFoundPage(), HTML, 404);
+  }
+
+  if (!png) {
+    const page = file(request, sharePage({ result, token }), HTML);
+    page.headers.set("x-robots-tag", "noindex");
+
+    return page;
+  }
+
+  // The cache keeps GET answers, and a HEAD asks for the same image without its body. The key
+  // names the version, so a deploy that changes the card draws it again.
+  const key = new Request(`${request.url}?v=${VERSION}`, { method: "GET" });
+  const cache = await caches.open("share-images");
+  const cached = await cache.match(key);
+
+  const image =
+    cached ??
+    new Response(await shareImage(result), {
+      headers: {
+        "content-type": "image/png",
+        "cache-control": "public, max-age=31536000, immutable",
+        "x-content-type-options": "nosniff",
+      },
+    });
+
+  if (!cached) {
+    ctx.waitUntil(cache.put(key, image.clone()));
+  }
+
+  return request.method === "HEAD"
+    ? new Response(null, { headers: image.headers })
+    : image;
+};
+
 export const siteRoute = (
   request: Request,
   env: SiteEnv,
@@ -152,6 +209,12 @@ export const siteRoute = (
       status: 405,
       headers: { allow: "GET, HEAD" },
     });
+  }
+
+  const shared = SHARE_ROUTE.exec(url.pathname)?.groups;
+
+  if (shared?.token) {
+    return share(request, env, ctx, shared.token, Boolean(shared.png));
   }
 
   switch (url.pathname) {

@@ -358,7 +358,7 @@ const KEEPS: [iconName: IconName, title: string, text: string][] = [
   [
     "fileX",
     "No report, no page",
-    "The site stores neither: the report is only in the answer your browser gets.",
+    "The site stores neither: the report is only in the answer your browser gets, and a share link holds only the address and the scores.",
   ],
   [
     "clock",
@@ -472,7 +472,7 @@ ${botChips()}
 <div class="split-copy">
 <p class="kicker">Privacy</p>
 <h2 id="keeps-title">What this site keeps.</h2>
-<p>The audit runs on Cloudflare's network, with no AI model: the same rules give the same findings every time. The site stores no report and no page. For each run it records the outcome, the duration, the number of requests and the hostname audited, for three months, so that a report about too many requests to a site can be checked. It never records the path, the query or your IP address. The check that keeps bots out of the form is Cloudflare Turnstile.</p>
+<p>The audit runs on Cloudflare's network, with no AI model: the same rules give the same findings every time. The site stores no report and no page. A report's share link holds the address and the two scores, and nothing else: whoever you give it to sees them, and the site keeps no copy. For each run it records the outcome, the duration, the number of requests and the hostname audited, for three months, so that a report about too many requests to a site can be checked. It never records the path, the query or your IP address. The check that keeps bots out of the form is Cloudflare Turnstile.</p>
 </div>
 <ul class="cards keeps">${KEEPS.map(([iconName, title, text]) => `<li class="card"><span class="keep-icon">${icon(iconName)}</span><h3>${title}</h3><p>${text}</p></li>`).join("")}</ul>
 </div>

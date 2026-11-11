@@ -159,14 +159,18 @@ ${rows.join("\n")}
 </div>`;
 };
 
-/** The report of a site's SEO and AEO audits from one crawl, to put under the audit form. */
-export const renderSiteReport = (audits: SiteAudits): string => {
+/**
+ * The report of a site's SEO and AEO audits from one crawl, to put under the audit form. `share`:
+ * the Share menu, if any.
+ */
+export const renderSiteReport = (audits: SiteAudits, share = ""): string => {
   const { seo, aeo, start } = audits;
   const { origin, hostname } = new URL(aeo.url);
 
   return reportFrame({
     title: "Site audit report",
     url: aeo.url,
+    share,
     data: reportData(seo, aeo, hostname),
     body: `<div class="scores">${scoreCard("seo", "SEO: search engines", seo.score, seo.counts)}${scoreCard("aeo", "AEO: AI answer engines", aeo.score, aeo.counts)}</div>
 ${crawlSection(seo)}
