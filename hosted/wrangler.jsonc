@@ -17,8 +17,12 @@
     { "pattern": "agentic-seo.rivi.software", "custom_domain": true },
     { "pattern": "mcp.agentic-seo-check.rivi.software", "custom_domain": true }
   ],
-  // The pages' fonts and share images (src/ui/assets.ts), bundled as their bytes.
-  "rules": [{ "type": "Data", "globs": ["**/*.woff2", "**/*.png"], "fallthrough": true }],
+  // The pages' fonts and share images (src/ui/assets.ts), and the fonts of a shared result's image
+  // (src/ui/share-image.ts), bundled as their bytes; resvg, which draws that image, as WebAssembly.
+  "rules": [
+    { "type": "Data", "globs": ["**/*.woff2", "**/*.png", "**/*.ttf"], "fallthrough": true },
+    { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }
+  ],
   "workers_dev": false,
   "preview_urls": false,
   // A crawl at the caps costs about 15 s of CPU; this is the default limit, written down.

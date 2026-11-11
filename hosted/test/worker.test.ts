@@ -604,6 +604,54 @@ describe("the hosted Worker in workerd", () => {
       });
     });
 
+    it("gives a report a share link, whose page stays out of search and whose image is the result's", async () => {
+      const res = await sendForm("shop.example.com/about");
+      const report = await res.text();
+      const link = /data-share-url="(?<url>[^"]+)"/u.exec(report)?.groups?.url;
+
+      assert(link, "the report has a share link");
+      expect(link.startsWith(`${SITE}/share/`)).toBeTruthy();
+
+      const page = await website.fetch(link);
+      const sharePage = await page.text();
+      const image = await website.fetch(`${link}.png`);
+      const png = Buffer.from(await image.arrayBuffer());
+
+      expect([
+        page.status,
+        page.headers.get("x-robots-tag"),
+        sharePage.includes(`<meta property="og:image" content="${link}.png">`),
+        image.headers.get("content-type"),
+        image.headers.get("cache-control"),
+      ]).toStrictEqual([
+        200,
+        "noindex",
+        true,
+        "image/png",
+        "public, max-age=31536000, immutable",
+      ]);
+      expect([
+        png.subarray(0, 8).toString("hex"),
+        png.readUInt32BE(16),
+        png.readUInt32BE(20),
+      ]).toStrictEqual([PNG_SIGNATURE, 1200, 630]);
+    });
+
+    it("answers a share link no key signed with the 404 page, and draws no image for it", async () => {
+      const forged = `${SITE}/share/${Buffer.from("[1]").toString("base64url")}.${"A".repeat(22)}`;
+
+      const [page, image] = await Promise.all([
+        website.fetch(forged),
+        website.fetch(`${forged}.png`),
+      ]);
+
+      expect([
+        page.status,
+        image.status,
+        image.headers.get("content-type"),
+      ]).toStrictEqual([404, 404, "text/html; charset=utf-8"]);
+    });
+
     it("crawls the site for the form when given its homepage, and streams its progress", async () => {
       const before = requests.length;
       const res = await sendForm("shop.example.com");

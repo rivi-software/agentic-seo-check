@@ -9,7 +9,11 @@ import { CLAUDE_DIRECTORY_URL } from "../ui/frame.js";
 import { icon } from "../ui/icons.js";
 import { SITE_ORIGIN } from "./layout.js";
 
-/** /audit answers a form, and its answer is a report nobody else should find. */
+/**
+ * /audit answers a form, and its answer is a report nobody else should find. /share/ stays open:
+ * X, LinkedIn and Bluesky fetch a shared result's page and image to draw its card, and the page
+ * keeps itself out of search with noindex.
+ */
 export const SITE_ROBOTS_TXT = `User-agent: *\nDisallow: /audit\n\nSitemap: ${SITE_ORIGIN}/sitemap.xml\n`;
 
 export const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -43,9 +47,9 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
  * The pages' script, served at /site.js on both hostnames so that the Content-Security-Policy
  * needs no inline script. It gives every command and snippet marked data-copy a button that copies
  * it, waits for Turnstile's token before the audit form is sent, shows that an audit or a crawl is
- * running, and gives the report as a JSON file or as Markdown on the clipboard. Without it every
- * page still reads and works, but the form. It runs once the page is read to its end, so after a
- * crawl's streamed answer.
+ * running, gives the report as a JSON file or as Markdown on the clipboard, and adds the system's
+ * share sheet to the report's Share menu. Without it every page still reads and works, but the
+ * form. It runs once the page is read to its end, so after a crawl's streamed answer.
  */
 export const SITE_JS = `(() => {
   const COPY = ${JSON.stringify(`${icon("copy")}<span class="sr-only">Copy</span>`)};
@@ -146,6 +150,43 @@ export const SITE_JS = `(() => {
       label.textContent = text;
     });
   }
+
+  // The report's Share menu: the system's share sheet where the browser has one, and the menu
+  // closes on a click outside it or on Escape.
+  const menus = document.querySelectorAll(".share-menu");
+
+  for (const button of document.querySelectorAll("[data-share-url]")) {
+    if (navigator.share) {
+      button.hidden = false;
+      button.addEventListener("click", async () => {
+        try {
+          await navigator.share({
+            text: button.dataset.shareText,
+            url: button.dataset.shareUrl,
+          });
+        } catch {
+          // The person closed the sheet, or the browser refused it: nothing to show.
+        }
+      });
+    }
+  }
+
+  document.addEventListener("click", (event) => {
+    for (const menu of menus) {
+      if (menu.open && !menu.contains(event.target)) {
+        menu.open = false;
+      }
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    for (const menu of menus) {
+      if (event.key === "Escape" && menu.open) {
+        menu.open = false;
+        menu.querySelector("summary").focus();
+      }
+    }
+  });
 
   const source = document.querySelector("#report-data");
 

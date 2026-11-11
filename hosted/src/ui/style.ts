@@ -273,7 +273,7 @@ const HOME = `
 const REPORT = `
 .report{padding:8px 0 var(--section);scroll-margin-top:calc(var(--header-h) + 16px)}
 .report-window{box-shadow:var(--shadow-panel)}
-.report-bar{display:flex;flex-wrap:wrap;align-items:center;gap:14px 20px;padding:18px 22px;border-bottom:1px solid var(--line);background:#ffffff04}
+.report-bar{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:14px 20px;padding:18px 22px;border-bottom:1px solid var(--line);background:#ffffff04}
 .report-title{display:grid;flex:1 1 20rem;gap:6px;min-width:0}
 .report-title h2{font-size:1.375rem;letter-spacing:-.02em}
 .report-url{display:flex;align-items:center;gap:8px;min-width:0;color:var(--text-muted);font-family:var(--mono);font-size:.8125rem;overflow-wrap:anywhere}
@@ -397,6 +397,32 @@ const REPORT = `
 .progress-lines code{padding:0;border:0;background:none;color:var(--text-body);font-size:.75rem}
 .progress-count{display:flex;align-items:center;justify-content:flex-end;height:1.5em;color:var(--signal-text);font-family:var(--mono);font-variant-numeric:tabular-nums}
 .progress-count .icon{width:13px;height:13px;transform:rotate(-90deg)}
+`;
+
+/**
+ * The report's Share menu, whose panel hangs from the report's bar so it stays on a phone's
+ * screen wherever the button wraps to, and the page a share link opens.
+ */
+const SHARE = `
+.share-menu>summary{list-style:none}
+.share-menu>summary::-webkit-details-marker{display:none}
+.share-menu[open]>summary{background:#ffffff1a;border-color:var(--line-strong)}
+.share-panel{position:absolute;top:calc(100% - 6px);right:16px;z-index:20;display:grid;gap:2px;width:min(340px,calc(100% - 32px));padding:8px;border:1px solid var(--line-strong);border-radius:var(--radius-card);background:var(--bg-raised);box-shadow:var(--shadow-panel)}
+.share-panel-head{padding:6px 12px 8px;color:var(--text-faint);font-size:.6875rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase}
+.share-panel>a,.share-native{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:10px 12px;border:0;border-radius:var(--radius-btn);background:none;color:var(--text-body);font:500 .9375rem/1.2 var(--sans);text-align:left;text-decoration:none;cursor:pointer}
+.share-panel>a:hover,.share-native:hover{color:var(--text);background:var(--bg-hover)}
+.share-panel>a .icon,.share-native .icon{width:14px;height:14px;color:var(--text-faint)}
+.share-native[hidden]{display:none}
+.share-url{margin:6px 4px 2px;padding-block:10px;font-size:.75rem}
+.share-url code{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
+.share-panel-note{padding:6px 12px 4px;color:var(--text-muted);font-size:.8125rem;line-height:1.5}
+.share-title{max-width:100%;font-size:clamp(2.2rem,5.4vw,4rem);overflow-wrap:anywhere}
+.share-scores{width:100%;max-width:760px;margin:48px auto 0}
+.share-actions{margin-top:32px}
+.share-note{display:flex;align-items:flex-start;gap:10px;max-width:40rem;margin:32px auto 0;color:var(--text-muted);font-size:.875rem;text-align:left}
+.share-note .icon{margin-top:3px;color:var(--info-text)}
+.share-meaning{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media (max-width:960px){.share-meaning{grid-template-columns:minmax(0,1fr)}}
 `;
 
 const RULES = `
@@ -526,6 +552,7 @@ export const STYLE = [
   LAYOUT,
   HOME,
   REPORT,
+  SHARE,
   RULES,
   SERVER,
   FOOTER,

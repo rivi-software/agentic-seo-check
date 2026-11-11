@@ -18,12 +18,20 @@ import {
   hostedFetch,
   hostedUrlProblem,
 } from "../../../src/core/hosted.js";
+import type {
+  AeoAudit,
+  PageAudit,
+  SiteAudit,
+} from "../../../src/core/types.js";
 import type { HostedCall } from "../../../src/mcp.js";
 import { callerOf } from "../callers.js";
 import { hostedProfile } from "../limits.js";
 import type { LimitsEnv } from "../limits.js";
 import type { HomeState } from "./home.js";
 import { renderReport } from "./report.js";
+import { shareMenu } from "./share-page.js";
+import { shareResult, signShare } from "./share.js";
+import type { ShareEnv } from "./share.js";
 import {
   progressClose,
   progressLine,
@@ -31,8 +39,8 @@ import {
   renderSiteReport,
 } from "./site-report.js";
 
-/** The Worker's bindings and variables the audit form uses, beside the limits'. */
-export interface SiteEnv extends LimitsEnv {
+/** The Worker's bindings and variables the audit form uses, beside the limits' and sharing's. */
+export interface SiteEnv extends LimitsEnv, ShareEnv {
   /** Turnstile's public site key (wrangler.jsonc); empty until the widget exists. */
   TURNSTILE_SITE_KEY: string;
   /** Turnstile's secret key, a Worker secret (`wrangler secret put TURNSTILE_SECRET_KEY`). */
@@ -136,18 +144,39 @@ const targetOf = (typed: string): URL | null => {
   return URL.canParse(address) ? new URL(address) : null;
 };
 
+/** The report's Share menu, or nothing when the site has no key to sign a share link with. */
+const shareFor = async (
+  env: ShareEnv,
+  seo: PageAudit | SiteAudit,
+  aeo: AeoAudit
+): Promise<string> => {
+  const link = await signShare(env, shareResult(seo, aeo));
+
+  return link ? shareMenu(link) : "";
+};
+
 /** The two audits of the page `target`, as a report. */
 const runAudits = async (
   target: URL,
-  fetchOptions: FetchOptions
+  fetchOptions: FetchOptions,
+  env: ShareEnv
 ): Promise<string> => {
   const [seo, aeo] = await Promise.all([
     auditUrl(target.href, { fetch: fetchOptions }),
     auditAeoUrl(target.href, { fetch: fetchOptions }),
   ]);
 
-  return renderReport(seo, aeo, isHomepage(target));
+  return renderReport(
+    seo,
+    aeo,
+    isHomepage(target),
+    await shareFor(env, seo, aeo)
+  );
 };
+
+/** A site's report, with its Share menu. */
+const siteReport = async (audits: SiteAudits, env: ShareEnv): Promise<string> =>
+  renderSiteReport(audits, await shareFor(env, audits.seo, audits.aeo));
 
 /** Why a run gave no report, in the words the form shows. */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
@@ -206,7 +235,8 @@ const runCrawl = async (
   target: URL,
   typed: string,
   fetchOptions: FetchOptions,
-  call: HostedCall
+  call: HostedCall,
+  env: ShareEnv
 ): Promise<AuditAnswer> => {
   const feed = progressFeed();
 
@@ -243,7 +273,7 @@ const runCrawl = async (
   if (first) {
     return {
       status: 200,
-      state: { url: target.href, report: renderSiteReport(first.audits) },
+      state: { url: target.href, report: await siteReport(first.audits, env) },
     };
   }
 
@@ -259,7 +289,7 @@ const runCrawl = async (
       write(progressClose("error" in done ? done.error : undefined));
 
       if ("audits" in done) {
-        write(renderSiteReport(done.audits));
+        write(await siteReport(done.audits, env));
       }
     },
   };
@@ -388,11 +418,11 @@ export const answerAudit = async (
   };
 
   if (crawl) {
-    return runCrawl(target, typed, fetchOptions, call);
+    return runCrawl(target, typed, fetchOptions, call, env);
   }
 
   try {
-    const report = await runAudits(target, fetchOptions);
+    const report = await runAudits(target, fetchOptions, env);
 
     call.end?.({ outcome: "ok", pages: 1 });
 
