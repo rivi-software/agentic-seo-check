@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { auditHtml } from "../src/core/audit.js";
 import type { PageSource, ResponseInfo } from "../src/core/types.js";
@@ -111,6 +111,18 @@ describe("loading signals", () => {
     await expect(
       findingsOf("loading.no-compression", page("<p>tiny</p>"), { headers: {} })
     ).resolves.toStrictEqual([]);
+  });
+
+  it("loading.no-compression says nothing in a Cloudflare Worker, which never sees Content-Encoding", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" });
+
+    try {
+      await expect(
+        findingsOf("loading.no-compression", page(words(400)), { headers: {} })
+      ).resolves.toStrictEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("img.lazy-above-fold looks at the first large image only", async () => {

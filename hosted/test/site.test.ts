@@ -66,11 +66,8 @@ describe("the website's pages", () => {
     const rules = await audit(rulesPage(), "/rules");
 
     expect(problems(home.findings)).toStrictEqual([]);
-    // The rules page quotes "lorem ipsum" as the text content.placeholder-text looks for, which
-    // that rule cannot tell from placeholder text left in a page.
-    expect(problems(rules.findings)).toStrictEqual([
-      "content.placeholder-text",
-    ]);
+    // It names "lorem ipsum" in content.placeholder-text's description, a mention and no filler.
+    expect(problems(rules.findings)).toStrictEqual([]);
   });
 
   it("pass the tool's own AEO audit", async () => {

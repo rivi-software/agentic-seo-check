@@ -544,15 +544,10 @@ describe("the hosted Worker in workerd", () => {
         url: `${ORIGIN}/`,
       });
 
-      // Cloudflare compresses the Worker's HTML and asks origins for compression on its network;
-      // local workerd does neither, so the compression check has nothing to go on here.
+      // In a Worker the compression check stays quiet: the site's Content-Encoding never shows.
       expect(result.isError).toBeFalsy();
       expect(
-        page?.findings
-          ?.filter(
-            (f) => f.severity !== "info" && f.rule !== "loading.no-compression"
-          )
-          .map((f) => f.rule)
+        page?.findings?.filter((f) => f.severity !== "info").map((f) => f.rule)
       ).toStrictEqual([]);
     });
   });
