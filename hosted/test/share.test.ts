@@ -4,7 +4,7 @@
  */
 import { readFileSync } from "node:fs";
 
-import { initWasm } from "@resvg/resvg-wasm";
+import { initWasm, Resvg } from "@resvg/resvg-wasm";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { auditAeoHtml } from "../../src/core/aeo/audit.ts";
@@ -298,6 +298,55 @@ describe("the share image", () => {
       png.readUInt32BE(16),
       png.readUInt32BE(20),
     ]).toStrictEqual(["89504e470d0a1a0a", OG_IMAGE.width, OG_IMAGE.height]);
+  });
+
+  it("has a glyph in its fonts for every character it writes, the ellipsis of a cut hostname too", () => {
+    const cards = [RESULT, SITE_RESULT].map((r) => shareCardSvg(r, fonts));
+
+    cards.push(
+      shareCardSvg(
+        {
+          ...SITE_RESULT,
+          url: `https://${"subdomain-".repeat(12)}example.co.uk/`,
+        },
+        fonts
+      )
+    );
+
+    const written = new Set(
+      cards.flatMap((svg) =>
+        [...svg.matchAll(/<text [^>]*>(?<words>[^<]*)<\/text>/gu)].flatMap(
+          (m) => [...(m.groups?.words ?? "").replaceAll("&amp;", "&")]
+        )
+      )
+    );
+
+    // resvg draws a character its fonts lack as nothing, so it has no box.
+    const drawn = (char: string, family: string) => {
+      const resvg = new Resvg(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><text x="10" y="150" font-family="${family}" font-size="72">${char}</text></svg>`,
+        { font: { fontBuffers: fonts, loadSystemFonts: false } }
+      );
+
+      const box = resvg.getBBox();
+      box?.free();
+      resvg.free();
+
+      return box !== undefined;
+    };
+
+    const missing = [...written]
+      .filter((char) => char.trim() !== "")
+      .flatMap((char) =>
+        ["Geist", "Geist Mono"].flatMap((family) =>
+          drawn(char, family) ? [] : [`${char} in ${family}`]
+        )
+      );
+
+    expect(written).toContain("…");
+    expect(missing).toStrictEqual([]);
+    // The check itself: a character the files lack has no box.
+    expect(drawn("é", "Geist")).toBeFalsy();
   });
 
   it("draws the hostname, never the path, and keeps the end of a hostname too long for it", () => {

@@ -2,8 +2,10 @@
  * The share image of a shared result (issue #54): a 1200×630 card in the look of the static cards
  * (scripts/og-image.ts), with the hostname, the kind of audit, the day and both scores as rings.
  * The Worker writes it as SVG and resvg turns that into a PNG. The words are set in static
- * instances of Geist cut to ASCII (assets/geist-*-ascii.ttf): resvg reads neither WOFF2 nor the
- * weights of a variable font. A hostname is ASCII, since URL keeps a domain name in punycode.
+ * instances of Geist cut to ASCII and five marks, … · – — ’ (assets/geist-*-ascii.ttf): resvg
+ * reads neither WOFF2 nor the weights of a variable font. resvg has no other fonts, so a character
+ * the files lack is drawn as nothing; test/share.test.ts holds every character the card writes to
+ * them. A hostname is ASCII, since URL keeps a domain name in punycode.
  * Only the hostname is drawn, never the path: anyone can type any path, and the card is what a
  * feed shows.
  */
