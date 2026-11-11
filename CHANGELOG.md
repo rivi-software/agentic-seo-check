@@ -1,5 +1,17 @@
 # @rivi-software/agentic-seo-check
 
+## 0.12.0
+
+### Minor Changes
+
+- e0f2b2e: The CLI has a report for people who run it without a coding agent (issue #65). `--format text` is the new default on a terminal, where `md` was. It opens with the score and its band (good, fair or poor) and the counts. The page's facts follow in two columns. Errors and warnings come in full: each with what to do, and each edit as a `-` line for what is there now and a `+` line for what to write. Info findings take one line each, the evidence is left out, and the report ends with what to fix first and the commands to run next. A crawl lists its site-wide findings, the page findings by rule and the 10 pages that score lowest. `aeo` shows one line for the AI crawlers of each purpose that robots.txt lets in, and a line for each one it keeps out. `rules` lists the rules by category, or one rule in full.
+  
+  Colour follows the terminal (`NO_COLOR` and `FORCE_COLOR` work as usual). In terminals known to support OSC 8 hyperlinks, rule ids link to their documentation. Progress during a crawl takes one line on stderr, which each step rewrites. `--help` for each command ends with examples. Output that is piped stays JSON, `-f md` and `-f json` are unchanged, and `-o report.txt` writes the text report. The layout of `text` is not part of the contract: scripts and agents should read `json`. Text from the audited page has its control characters removed before it is printed. The library exports `renderText`, `renderAeoText` and `renderRulesText`. The `cli_command` event now also records the report's format.
+
+### Patch Changes
+
+- 8c683ae: The MCP servers' `$mcp_initialize` event no longer carries `$session_id`, so PostHog counts a session only once a tool is called: most connections, such as a chat that loads the hosted server's connector, call none. The hosted server now answers `initialize` with an `Mcp-Session-Id` header, a token with the session's id and the client's name, version and protocol revision that the client sends back with each request, so the calls of one connection share a session and name their client. The server keeps nothing, and the tools and their answers are unchanged.
+
 ## 0.11.0
 
 ### Minor Changes
