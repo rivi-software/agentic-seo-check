@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { auditAeoHtml, auditSiteBoth } from "../../src/core/aeo/audit.ts";
 import type { SiteAudits } from "../../src/core/aeo/audit.ts";
+import { crawlerAccess } from "../../src/core/aeo/bots.ts";
 import { auditHtml } from "../../src/core/audit.ts";
 import { ALL_RULES } from "../../src/core/rules/index.ts";
 import { startFixtureServer } from "../../test/helpers/fixture-server.ts";
@@ -174,6 +175,37 @@ describe("the website's pages", () => {
         "og.incomplete"
       );
     }
+  });
+
+  it("let Google-Extended in past the section Cloudflare puts before robots.txt, and only there", () => {
+    // What Bot Preference Sync prepends for the rivi.software zone, cut to two of its groups.
+    const managed =
+      "# BEGIN Cloudflare Managed content\n\nUser-agent: *\nContent-Signal: search=yes,ai-train=no,use=reference\nAllow: /\n\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: Google-Extended\nDisallow: /\n\n# END Cloudflare Managed Content\n\n";
+
+    const url = `${SITE_ORIGIN}/robots.txt`;
+    const text = managed + SITE_ROBOTS_TXT;
+
+    const access = (pages: string[]) =>
+      crawlerAccess(
+        {
+          url,
+          status: 200,
+          found: true,
+          sitemaps: [],
+          text,
+          bytes: text.length,
+        },
+        text,
+        pages[0] ?? `${SITE_ORIGIN}/`,
+        pages
+      ).bots;
+
+    const allowed = (pages: string[], name: string) =>
+      access(pages).find((b) => b.name === name)?.allowed;
+
+    expect(allowed([`${SITE_ORIGIN}/`], "Google-Extended")).toBeTruthy();
+    expect(allowed([`${SITE_ORIGIN}/audit`], "Google-Extended")).toBeFalsy();
+    expect(allowed([`${SITE_ORIGIN}/`], "GPTBot")).toBeFalsy();
   });
 
   it("quote the example finding as text, not markup", () => {
