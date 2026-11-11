@@ -340,6 +340,9 @@ describe("the hosted Worker in workerd", () => {
           distinct_id: expect.stringMatching(/^ses_[\da-f-]{36}$/u),
           // The User-Agent's product token, never the rest of the header.
           $mcp_client_user_agent: expect.stringMatching(/^[A-Za-z][\w.-]*$/u),
+          // From the session's token: the call's own request names no client.
+          $mcp_client_name: "worker-test",
+          $mcp_client_version: "0.0.0",
         },
       });
       expect(event.properties.requests).toBeGreaterThan(0);
@@ -349,22 +352,46 @@ describe("the hosted Worker in workerd", () => {
       );
     });
 
-    it("tells PostHog of each initialize, with the client's name", async () => {
+    it("tells PostHog of each initialize, and puts the calls that follow in its session", async () => {
       const before = events.length;
 
       const other = new Client({ name: "analytics-test", version: "1.2.3" });
-      await other.connect(
-        new StreamableHTTPClientTransport(new URL("/mcp", base))
+
+      const transport = new StreamableHTTPClientTransport(
+        new URL("/mcp", base)
       );
+
+      await other.connect(transport);
+      await other.callTool({ name: "seo_list_rules", arguments: {} });
+      await other.callTool({ name: "seo_list_rules", arguments: {} });
       await other.close();
 
-      const [event] = await eventsAfter(before, "$mcp_initialize");
+      const [handshake] = await eventsAfter(before, "$mcp_initialize");
 
-      expect(event?.properties).toMatchObject({
+      const calls = await vi.waitFor(async () => {
+        const found = await eventsAfter(before, "$mcp_tool_call");
+        assert(found.length === 2, "both calls' events");
+
+        return found;
+      });
+
+      // The session's token, in the characters the protocol allows a session id.
+      expect(transport.sessionId).toMatch(/^[\w-]+$/u);
+      expect(handshake?.properties).toMatchObject({
         $mcp_client_name: "analytics-test",
         $mcp_client_version: "1.2.3",
         surface: "hosted",
       });
+      // The handshake is in no session of its own; the calls share the one it started.
+      expect(handshake?.properties).not.toHaveProperty("$session_id");
+      expect(calls.map((call) => call.properties)).toStrictEqual(
+        Array.from({ length: 2 }, () =>
+          expect.objectContaining({
+            $session_id: handshake?.properties.distinct_id,
+            $mcp_client_name: "analytics-test",
+          })
+        )
+      );
     });
 
     it("tells PostHog a call failed and what kind of failure, not its message", async () => {

@@ -299,7 +299,7 @@ export const instrumentTransport = (
 
 /** Where an event comes from: its session, the server that sends it, and that server's own properties. */
 export interface McpEventContext {
-  /** `ses_` and a UUIDv7: the session's, or the call's own when the server keeps none. */
+  /** `ses_` and a UUIDv7: the session's, or the call's own when nothing names one. */
   sessionId: string;
   surface: "hosted" | "local";
   properties?: Record<string, PropertyValue | undefined>;
@@ -317,7 +317,6 @@ const callerProperties = (caller: McpCaller) => ({
 const common = (context: McpEventContext) => ({
   ...BASE_PROPERTIES,
   distinct_id: context.sessionId,
-  $session_id: context.sessionId,
   $mcp_source: "posthog_mcp_analytics",
   $mcp_server_name: MCP_SERVER_NAME,
   $mcp_server_version: VERSION,
@@ -332,6 +331,7 @@ export const toolCallEvent = (
   timestamp: call.startedAt.toISOString(),
   properties: {
     ...common(context),
+    $session_id: context.sessionId,
     ...callerProperties(call),
     $mcp_tool_name: short(call.tool),
     $mcp_resource_name: short(call.tool),
@@ -342,6 +342,11 @@ export const toolCallEvent = (
   },
 });
 
+/**
+ * An `initialize`: the session's id is its `distinct_id`, but it has no `$session_id`, so PostHog
+ * counts no session from a handshake alone. A client such as claude.ai connects with every chat,
+ * and most chats call no tool, so a session counted from handshakes would be one nobody used.
+ */
 export const initializeEvent = (
   caller: McpCaller,
   context: McpEventContext,
