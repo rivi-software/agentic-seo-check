@@ -12,7 +12,11 @@ import { createMcpServer } from "../../src/mcp.js";
 import { instrumentTransport } from "../../src/telemetry/mcp.js";
 import { hostedAnalytics, reportError } from "./analytics.js";
 import type { ErrorRoute } from "./analytics.js";
-import { callerOf, OPENAI_RANGES_URL, parseOpenAiRanges } from "./callers.js";
+import {
+  callerOf,
+  openAiRangesReader,
+  refreshOpenAiRanges,
+} from "./callers.js";
 import { FORMER_HOST, hostedProfile, ORIGIN } from "./limits.js";
 import {
   crawlerPage,
@@ -43,35 +47,8 @@ const PREFLIGHT = {
   "access-control-max-age": "86400",
 };
 
-/** OpenAI's ranges as this isolate last read them: the Durable Object is asked at most once an hour. */
-let openAiCache: { ranges: string[]; readAt: number } | null = null;
-
-const openAiRanges = async (env: Env): Promise<string[]> => {
-  if (openAiCache && Date.now() - openAiCache.readAt < 3_600_000) {
-    return openAiCache.ranges;
-  }
-
-  const ranges = await env.STATE.getByName("global").openAiRanges();
-  openAiCache = { ranges, readAt: Date.now() };
-
-  return ranges;
-};
-
-/** Fetches OpenAI's list of ChatGPT connector addresses and keeps it for every isolate. */
-const refreshOpenAiRanges = async (env: Env): Promise<void> => {
-  const res = await fetch(OPENAI_RANGES_URL);
-
-  if (!res.ok) {
-    throw new Error(`${OPENAI_RANGES_URL} answered HTTP ${res.status}.`);
-  }
-
-  const ranges = parseOpenAiRanges(await res.text());
-
-  // An empty list is a broken file, not a ChatGPT without addresses: keep the last one.
-  if (ranges.length > 0) {
-    await env.STATE.getByName("global").setOpenAiRanges(ranges);
-  }
-};
+/** OpenAI's ranges as this isolate reads them: from the Durable Object at most once an hour. */
+const openAiRanges = openAiRangesReader();
 
 /**
  * One MCP request: stateless, so every POST gets its own server and transport, and the answer is
@@ -93,7 +70,7 @@ const handleMcp = async (
 
   const caller = callerOf(
     request.headers.get("cf-connecting-ip"),
-    await openAiRanges(env)
+    await openAiRanges(env, ctx)
   );
 
   const tracking = hostedAnalytics(

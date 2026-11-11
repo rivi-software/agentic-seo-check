@@ -1,13 +1,78 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import {
   callerOf,
   inRange,
+  OPENAI_RANGES_URL,
+  openAiRangesReader,
   parseAddress,
   parseOpenAiRanges,
 } from "../src/callers.ts";
+import type { RangesEnv } from "../src/callers.ts";
 
 const OPENAI = ["104.210.139.192/28", "2603:1030:0:1::/64"];
+
+/** OpenAI's list as it publishes it, with the ranges of OPENAI. */
+const LIST =
+  '{"creationTime":"2026-11-06T18:26:55","prefixes":[{"ipv4Prefix":"104.210.139.192/28"},{"ipv6Prefix":"2603:1030:0:1::/64"}]}';
+
+/** The STATE binding with OpenAI's ranges in memory, `ranges` to start with, as HostedState keeps them. */
+const fakeState = (ranges: string[] = []) => {
+  const stored = { ranges };
+  /** The objects asked for, as "jurisdiction/name", "/name" without one. */
+  const objects: string[] = [];
+  const waiting: Promise<unknown>[] = [];
+
+  const object = (jurisdiction: string) => (name: string) => {
+    objects.push(`${jurisdiction}/${name}`);
+
+    return {
+      openAiRanges: () => Promise.resolve(stored.ranges),
+      setOpenAiRanges: (list: string[]) => {
+        stored.ranges = list;
+
+        return Promise.resolve();
+      },
+    };
+  };
+
+  const env: RangesEnv = {
+    STATE: {
+      getByName: object(""),
+      jurisdiction: (jurisdiction) => ({ getByName: object(jurisdiction) }),
+    },
+  };
+
+  const ctx = {
+    waitUntil: (promise: Promise<unknown>) => {
+      waiting.push(promise);
+    },
+  };
+
+  return {
+    env,
+    ctx,
+    stored,
+    objects,
+    settled: () => Promise.all(waiting),
+  };
+};
+
+/** Answers the Worker's fetch() with `answer`, and lists what it fetched. */
+const stubFetch = (answer: () => Response): string[] => {
+  const fetched: string[] = [];
+
+  vi.stubGlobal("fetch", (url: string) => {
+    fetched.push(url);
+
+    return Promise.resolve(answer());
+  });
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
+
+  return fetched;
+};
 
 describe("callers", () => {
   it("counts claude.ai and ChatGPT each as one caller, by the platform's addresses", () => {
@@ -69,5 +134,67 @@ describe("callers", () => {
       )
     ).toStrictEqual(OPENAI);
     expect(() => parseOpenAiRanges('{"ranges":[]}')).toThrow(/prefixes/u);
+  });
+});
+
+describe("OpenAI's ranges", () => {
+  it("are read from the object in the EU, once an hour, and never fetched while it has them", async () => {
+    const fetched = stubFetch(() => new Response(LIST));
+    const { env, ctx, objects, settled } = fakeState(OPENAI);
+    const read = openAiRangesReader();
+
+    await expect(read(env, ctx)).resolves.toStrictEqual(OPENAI);
+    await expect(read(env, ctx)).resolves.toStrictEqual(OPENAI);
+    await settled();
+
+    expect(objects).toStrictEqual(["eu/global"]);
+    expect(fetched).toStrictEqual([]);
+  });
+
+  it("are fetched once when the object has none, as a new one has, and used from then on", async () => {
+    const fetched = stubFetch(() => new Response(LIST));
+    const { env, ctx, stored, settled } = fakeState();
+    const read = openAiRangesReader();
+
+    // Two requests at once: one fetch.
+    await expect(
+      Promise.all([read(env, ctx), read(env, ctx)])
+    ).resolves.toStrictEqual([[], []]);
+    await settled();
+
+    expect(stored.ranges).toStrictEqual(OPENAI);
+    await expect(read(env, ctx)).resolves.toStrictEqual(OPENAI);
+    expect(fetched).toStrictEqual([OPENAI_RANGES_URL]);
+  });
+
+  it("are fetched again an hour after a fetch that failed, not on every request", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+
+    const fetched = stubFetch(
+      () => new Response("Bad gateway", { status: 502 })
+    );
+
+    const logged = vi.spyOn(console, "error").mockReturnValue();
+    const { env, ctx, settled } = fakeState();
+    const read = openAiRangesReader();
+
+    await read(env, ctx);
+    await settled();
+    await read(env, ctx);
+    await settled();
+
+    expect(fetched).toHaveLength(1);
+    expect(logged).toHaveBeenCalledWith(
+      `Could not fetch OpenAI's ranges: ${OPENAI_RANGES_URL} answered HTTP 502.`
+    );
+
+    vi.setSystemTime(Date.now() + 3_600_000);
+    await read(env, ctx);
+    await settled();
+
+    expect(fetched).toHaveLength(2);
   });
 });

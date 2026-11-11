@@ -14,6 +14,8 @@ import type {
 import { VERSION } from "../../src/version.js";
 import type { Caller } from "./callers.js";
 import { requestSigner } from "./signing.js";
+import { globalState } from "./state.js";
+import type { StateEnv } from "./state.js";
 
 /** The rate limits of the Worker's configuration by binding name, built in by scripts/defines.ts. */
 declare const HOSTED_RATE_LIMITS: Record<
@@ -140,7 +142,7 @@ export type DailyLimits = Pick<
 >;
 
 /** The bindings and variables the limits use (wrangler.jsonc, and wrangler.site.jsonc alike). */
-export interface LimitsEnv {
+export interface LimitsEnv extends StateEnv<DayCounter> {
   MODE: string;
   DAILY_REQUESTS: number;
   /** Different sites one IP address may audit a day. */
@@ -153,7 +155,6 @@ export interface LimitsEnv {
   PLATFORM_CALLS: RateLimit;
   PLATFORM_CRAWLS: RateLimit;
   CALLS: AnalyticsEngineDataset;
-  STATE: { getByName: (name: string) => DayCounter };
   /**
    * The Ed25519 keys that sign every request (Web Bot Auth, issue #41), a Worker secret: a JSON
    * list of private JWKs, the first signing. Without it the requests go out unsigned.
@@ -178,7 +179,7 @@ const requestsToday = async (env: LimitsEnv): Promise<number> => {
     return cached.count;
   }
 
-  const count = await env.STATE.getByName("global").requests(day);
+  const count = await globalState(env).requests(day);
   todayCache.set(env.STATE, { day, count, readAt: Date.now() });
 
   return count;
@@ -189,7 +190,7 @@ const countRequests = async (
   requests: number
 ): Promise<void> => {
   const day = today();
-  const count = await env.STATE.getByName("global").addRequests(day, requests);
+  const count = await globalState(env).addRequests(day, requests);
   todayCache.set(env.STATE, { day, count, readAt: Date.now() });
 };
 
@@ -202,7 +203,7 @@ const admitSite = (
   caller: Caller,
   host: string
 ): Promise<boolean> =>
-  env.STATE.getByName("global").admitSite(
+  globalState(env).admitSite(
     today(),
     caller.key,
     siteOf(host),
