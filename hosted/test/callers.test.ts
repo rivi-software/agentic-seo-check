@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
+import type { ReportTask } from "../src/analytics.ts";
 import {
   callerOf,
   inRange,
@@ -180,16 +181,23 @@ describe("OpenAI's ranges", () => {
     const logged = vi.spyOn(console, "error").mockReturnValue();
     const { env, ctx, settled } = fakeState();
     const read = openAiRangesReader();
+    const reported: [unknown, string][] = [];
 
-    await read(env, ctx);
+    const report: ReportTask = (thrown, task) => {
+      reported.push([thrown, task]);
+    };
+
+    await read(env, ctx, report);
     await settled();
-    await read(env, ctx);
+    await read(env, ctx, report);
     await settled();
 
     expect(fetched).toHaveLength(1);
     expect(logged).toHaveBeenCalledWith(
       `Could not fetch OpenAI's ranges: ${OPENAI_RANGES_URL} answered HTTP 502.`
     );
+    // Error tracking hears it too (issue #93).
+    expect(reported).toStrictEqual([[expect.any(Error), "openai_ranges"]]);
 
     vi.setSystemTime(Date.now() + 3_600_000);
     await read(env, ctx);

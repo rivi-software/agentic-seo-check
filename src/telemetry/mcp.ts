@@ -36,6 +36,7 @@ import type { CaughtErrorContext } from "../core/errors.js";
 import { ALL_RULES } from "../core/rules/index.js";
 import { VERSION } from "../version.js";
 import { cleanMessage } from "./exceptions.js";
+import type { ReportedError } from "./exceptions.js";
 import { BASE_PROPERTIES, short } from "./posthog.js";
 import type { PostHogEvent, PropertyValue } from "./posthog.js";
 
@@ -92,6 +93,19 @@ export interface CaughtInCall extends CaughtErrorContext {
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
   error: unknown;
 }
+
+/**
+ * Errors the core caught within a call, as `exceptionEvents` reads them: handled, each with the
+ * rule or the task it names.
+ */
+export const caughtErrors = (
+  caught: readonly CaughtInCall[] = []
+): ReportedError[] =>
+  caught.map(({ error, ...context }) => ({
+    error,
+    handled: true,
+    properties: { ...context },
+  }));
 
 /** Where a server's calls are reported. Neither may throw into the call it is told about. */
 export interface McpAnalytics {

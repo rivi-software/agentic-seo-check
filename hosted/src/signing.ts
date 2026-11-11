@@ -80,11 +80,27 @@ export const parseKeys = async (secret: string): Promise<SigningKey[]> => {
 let loaded: { secret: string; keys: Promise<SigningKey[]> } | null = null;
 
 /**
+ * A secret that holds no Ed25519 private key, as error tracking hears it (issue #93): a fixed
+ * message, and nothing of the parser's error, which may quote the secret.
+ */
+export class SigningKeysError extends Error {
+  override name = "SigningKeysError";
+
+  constructor() {
+    super(
+      "WEB_BOT_AUTH_KEYS is not a list of Ed25519 private keys as JWKs: requests go out unsigned."
+    );
+  }
+}
+
+/**
  * The keys of the secret, read once per isolate. A secret that holds no Ed25519 private key is a
- * deploy's mistake: the requests go out unsigned, as without the secret, and the log says why.
+ * deploy's mistake: the requests go out unsigned, as without the secret, the log says why, and
+ * `onBadKeys` hears it, once.
  */
 export const signingKeys = (
-  secret: string | undefined
+  secret: string | undefined,
+  onBadKeys?: (error: SigningKeysError) => void
 ): Promise<SigningKey[]> => {
   if (!secret) {
     return Promise.resolve([]);
@@ -95,9 +111,10 @@ export const signingKeys = (
       secret,
       keys: parseKeys(secret).catch(() => {
         // Never the error itself, which may quote the secret.
-        console.error(
-          "WEB_BOT_AUTH_KEYS is not a list of Ed25519 private keys as JWKs: requests go out unsigned."
-        );
+        const error = new SigningKeysError();
+
+        console.error(error.message);
+        onBadKeys?.(error);
 
         return [];
       }),
@@ -192,13 +209,17 @@ export const requestSignature = async (
  * anyone on its path could read the signature and send it again, as this server, for a minute.
  */
 export const requestSigner =
-  (secret: string | undefined, agent: string) =>
+  (
+    secret: string | undefined,
+    agent: string,
+    onBadKeys?: (error: SigningKeysError) => void
+  ) =>
   async (url: URL): Promise<Record<string, string>> => {
     if (url.protocol !== "https:") {
       return {};
     }
 
-    const [key] = await signingKeys(secret);
+    const [key] = await signingKeys(secret, onBadKeys);
 
     return key ? requestSignature(key, agent, url) : {};
   };

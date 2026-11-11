@@ -43,7 +43,9 @@ export default {
       console.error(
         `Request failed: ${error instanceof Error ? error.message : String(error)}`
       );
-      reportError(env, ctx, error, errorRoute(request), false);
+      void reportError(env, ctx, error, errorRoute(request), {
+        handled: false,
+      });
 
       return new Response("Something went wrong on the website.\n", {
         status: 500,

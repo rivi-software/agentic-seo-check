@@ -13,7 +13,7 @@ import { z } from "zod";
 import { auditAeoHtml, auditAeoSite, auditAeoUrl } from "./core/aeo/audit.js";
 import type { AeoOptions } from "./core/aeo/audit.js";
 import { auditHtml, auditSite, auditUrl } from "./core/audit.js";
-import { ExpectedError } from "./core/errors.js";
+import { caughtError, ExpectedError } from "./core/errors.js";
 import { RequestRefusedError } from "./core/fetch.js";
 import type { FetchOptions, RequestGate } from "./core/fetch.js";
 import {
@@ -66,7 +66,7 @@ export interface HostedCallEnd {
 export interface HostedCall {
   /** The server's limits on this call's requests; the address rules and site refusals come first. */
   gate?: RequestGate;
-  /** Told once, when the call's answer is ready. What it throws is ignored: the answer stands. */
+  /** Told once, when the call's answer is ready. What it throws is reported, and the answer stands. */
   end?: (end: HostedCallEnd) => void;
 }
 
@@ -77,8 +77,9 @@ export interface HostedProfile {
   /** Signs each request the tools send (Web Bot Auth, issue #41); without it they go unsigned. */
   sign?: FetchOptions["sign"];
   /**
-   * Starts a tool call. Throws to refuse it (a limit reached, the server paused), and the error's
-   * message is the tool error the caller gets.
+   * Starts a tool call. Throws a CallLimitError to refuse it (a limit reached, the server paused),
+   * whose message is the tool error the caller gets. Anything else it throws is the server's own
+   * failure, such as its Durable Object's (issue #93).
    */
   startCall: (call: HostedCallInfo) => Promise<HostedCall>;
 }
@@ -424,11 +425,14 @@ const runCall = async (
     call = await profile.startCall(info);
   } catch (error) {
     // A limit, or the server paused: the server's refusal, not the site's.
-    noteCall({
-      reason: error instanceof CallLimitError ? error.reason : undefined,
-    });
+    if (error instanceof CallLimitError) {
+      noteCall({ reason: error.reason });
 
-    return fail(error, "rate_limited");
+      return fail(error, "rate_limited");
+    }
+
+    // The server could not tell whether the call may start: its own failure, not a limit.
+    return fail(error);
   }
 
   const { result, end, audit } = await settle(() =>
@@ -448,9 +452,10 @@ const runCall = async (
 
   try {
     call.end?.(end);
-  } catch {
+  } catch (error) {
     // The record of a call is the server's to keep; failing to keep it never costs the caller
-    // the answer.
+    // the answer, and error tracking hears it with the call (issue #93).
+    caughtError(error, { task: "call_record" });
   }
 
   return result;
@@ -464,6 +469,22 @@ const auditOptions = (
   ...toOptions(input),
   fetch: { ...fetch, timeoutMs: input.timeoutMs },
 });
+
+/**
+ * A tool's callback that answers what it throws as the server's own failure (issue #93). The SDK
+ * would answer it with the bare message, and the analytics would read that as arguments the schema
+ * refused: the SDK checks the arguments before the callback runs, so what the callback throws is
+ * never the caller's. Every hosted tool runs in one.
+ */
+export const guarded =
+  <Input>(answer: (input: Input) => CallToolResult | Promise<CallToolResult>) =>
+  async (input: Input): Promise<CallToolResult> => {
+    try {
+      return await answer(input);
+    } catch (error) {
+      return fail(error);
+    }
+  };
 
 const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
   server.registerTool(
@@ -486,7 +507,7 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
         idempotentHint: true,
       },
     },
-    (input) => {
+    guarded((input) => {
       noteOptions(input);
 
       const { html: source, url: target } = input;
@@ -530,7 +551,7 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
           };
         }
       );
-    }
+    })
   );
 };
 
@@ -552,7 +573,7 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
         openWorldHint: true,
       },
     },
-    (input) => {
+    guarded((input) => {
       noteOptions(input, input.pageDetail);
 
       let host: string;
@@ -591,7 +612,7 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
           };
         }
       );
-    }
+    })
   );
 };
 
@@ -616,7 +637,7 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
         openWorldHint: true,
       },
     },
-    (input) => {
+    guarded((input) => {
       noteOptions(
         input,
         input.url !== undefined && input.crawl ? input.pageDetail : undefined
@@ -672,7 +693,7 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
           };
         }
       );
-    }
+    })
   );
 };
 
@@ -701,11 +722,12 @@ export const registerHostedTools = (
   server.registerTool(
     "seo_list_rules",
     { ...LIST_RULES, inputSchema: LIST_RULES_INPUT },
-    (input) =>
+    guarded((input) =>
       runCall(
         profile,
         { tool: "seo_list_rules", fetches: false, crawl: false, host: null },
         () => ({ result: listRules(input), pages: 0 })
       )
+    )
   );
 };

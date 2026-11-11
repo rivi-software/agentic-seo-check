@@ -13,6 +13,7 @@ import type {
   HostedProfile,
 } from "../../src/mcp.js";
 import { VERSION } from "../../src/version.js";
+import type { ReportTask } from "./analytics.js";
 import type { Caller } from "./callers.js";
 import { requestSigner } from "./signing.js";
 import { globalState } from "./state.js";
@@ -273,7 +274,10 @@ const admit = async (
   }
 };
 
-/** How a call ended, for its record: a limit kept it out ("limited"), or `HostedCallEnd.outcome`. */
+/**
+ * How a call ended, for its record: a limit kept it out ("limited"), or `HostedCallEnd.outcome`. A
+ * call the limits could not judge, as when the Durable Object fails, is an "error" (issue #93).
+ */
 export type Outcome = HostedCallEnd["outcome"] | "limited";
 
 /** A call's record as the analytics hear it (analytics.ts): no hostname, which is for abuse reports only. */
@@ -295,14 +299,15 @@ export const MAX_INDEX_BYTES = 96;
  * One record per tool call in Analytics Engine, which keeps it for three months: the tool, the
  * outcome, the duration, the requests sent and pages audited, and the target hostname, so that an
  * abuse report about a site can be checked against what was sent to it. Never a path, a query, the
- * caller's address or anything the caller sent. A record that cannot be written is logged, and
- * never fails the call it is about.
+ * caller's address or anything the caller sent. A record that cannot be written is logged and
+ * reported, and never fails the call it is about.
  */
 const record = (
   env: LimitsEnv,
   call: HostedCallInfo,
   outcome: Outcome,
-  numbers: { durationMs: number; requests: number; pages: number }
+  numbers: { durationMs: number; requests: number; pages: number },
+  report: ReportTask | undefined
 ): void => {
   try {
     env.CALLS.writeDataPoint({
@@ -314,6 +319,7 @@ const record = (
     console.error(
       `Could not record a ${call.tool} call: ${error instanceof Error ? error.message : String(error)}`
     );
+    report?.(error, "call_record");
   }
 };
 
@@ -329,17 +335,33 @@ interface Sent {
   counted: number;
 }
 
-/** Adds what `sent` has not counted yet to the day's count. */
+/**
+ * Adds what `sent` has not counted yet to the day's count, after the answer. A count that fails is
+ * logged and reported (issue #93): the daily limit then counts fewer requests than went out.
+ */
 const countSent = (
   env: LimitsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
-  sent: Sent
+  sent: Sent,
+  report: ReportTask | undefined
 ): void => {
   const uncounted = sent.requests - sent.counted;
 
   if (uncounted > 0) {
     sent.counted = sent.requests;
-    ctx.waitUntil(countRequests(env, uncounted));
+
+    const count = async (): Promise<void> => {
+      try {
+        await countRequests(env, uncounted);
+      } catch (error) {
+        console.error(
+          `Could not count ${uncounted} requests: ${error instanceof Error ? error.message : String(error)}`
+        );
+        report?.(error, "request_count");
+      }
+    };
+
+    ctx.waitUntil(count());
   }
 };
 
@@ -378,6 +400,7 @@ const siteGate = (
   env: LimitsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
   sent: Sent,
+  report: ReportTask | undefined,
   reaches?: { caller: Caller; site: (hostname: string) => Promise<boolean> }
 ): RequestGate => ({
   beforeRequest: async (url) => {
@@ -402,27 +425,35 @@ const siteGate = (
     sent.requests += 1;
 
     if (sent.requests - sent.counted >= COUNT_BATCH) {
-      countSent(env, ctx, sent);
+      countSent(env, ctx, sent, report);
     }
   },
 });
 
-/**
- * The hosted profile of one request to /mcp: its caller's limits, and the Worker's bindings.
- * `observe` hears each call's record as it is written.
- */
+/** Who hears what a profile's calls do, beside Analytics Engine. */
+export interface ProfileListeners {
+  /** Hears each call's record as it is written. */
+  observe?: (record: CallRecord) => void;
+  /**
+   * Hears the errors of the work around the calls (issue #93): a day's count or a record that
+   * failed, and signing keys that do not parse.
+   */
+  report?: ReportTask;
+}
+
+/** The hosted profile of one request to /mcp: its caller's limits, and the Worker's bindings. */
 export const hostedProfile = (
   env: LimitsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
   caller: Caller,
-  observe?: (record: CallRecord) => void
+  { observe, report }: ProfileListeners = {}
 ): HostedProfile => {
   const keep = (
     call: HostedCallInfo,
     outcome: Outcome,
     numbers: { durationMs: number; requests: number; pages: number }
   ): void => {
-    record(env, call, outcome, numbers);
+    record(env, call, outcome, numbers, report);
     observe?.({
       tool: call.tool,
       outcome,
@@ -433,14 +464,19 @@ export const hostedProfile = (
 
   return {
     userAgent: USER_AGENT,
-    sign: requestSigner(env.WEB_BOT_AUTH_KEYS, ORIGIN),
+    sign: requestSigner(
+      env.WEB_BOT_AUTH_KEYS,
+      ORIGIN,
+      report && ((error) => report(error, "signing_keys"))
+    ),
     startCall: async (call) => {
       const started = Date.now();
 
       try {
         await admit(env, caller, call);
       } catch (error) {
-        keep(call, "limited", {
+        // A limit, or the limits' own failure, which is no limit (issue #93).
+        keep(call, error instanceof CallLimitError ? "limited" : "error", {
           durationMs: Date.now() - started,
           requests: 0,
           pages: 0,
@@ -456,6 +492,7 @@ export const hostedProfile = (
           env,
           ctx,
           sent,
+          report,
           call.host && !call.crawl
             ? { caller, site: pageSites(env, caller, call.host) }
             : undefined
@@ -467,7 +504,7 @@ export const hostedProfile = (
             pages,
           });
 
-          countSent(env, ctx, sent);
+          countSent(env, ctx, sent, report);
         },
       };
     },

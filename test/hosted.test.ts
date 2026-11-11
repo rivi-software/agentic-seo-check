@@ -2,6 +2,7 @@ import { gzipSync } from "node:zlib";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import {
   afterEach,
@@ -16,6 +17,7 @@ import { z } from "zod";
 
 import { REPOSITORY_URL, WEBSITE_URL } from "../src/brand.js";
 import { sleep } from "../src/core/concurrency.js";
+import { onCaughtError } from "../src/core/errors.js";
 import type { RequestGate } from "../src/core/fetch.js";
 import {
   HOSTED_LIMITS,
@@ -23,14 +25,14 @@ import {
   hostedUrlProblem,
   siteRefusal,
 } from "../src/core/hosted.js";
-import { CallLimitError, HOSTED_TOOLS } from "../src/mcp-hosted.js";
+import { CallLimitError, guarded, HOSTED_TOOLS } from "../src/mcp-hosted.js";
 import { createMcpServer } from "../src/mcp.js";
 import type {
   HostedCallEnd,
   HostedCallInfo,
   HostedProfile,
 } from "../src/mcp.js";
-import { instrumentTransport } from "../src/telemetry/mcp.js";
+import { instrumentTransport, noteCaughtInCall } from "../src/telemetry/mcp.js";
 import type { McpToolCall } from "../src/telemetry/mcp.js";
 
 const USER_AGENT =
@@ -107,7 +109,7 @@ const profileWith = (
         calls.push(call);
 
         if (options.refuse) {
-          throw new Error(options.refuse);
+          throw new CallLimitError(options.refuse, "caller_calls");
         }
 
         return { gate: options.gate, end: (end) => ends.push(end) };
@@ -591,6 +593,80 @@ describe("the hosted server", () => {
       ]);
     });
 
+    it("tells its analytics a failure of its own state from a limit (issue #93)", async () => {
+      const { client, calls } = await connectWatched({
+        userAgent: USER_AGENT,
+        // oxlint-disable-next-line eslint/require-await -- the Worker's startCall awaits its limits
+        startCall: async () => {
+          throw new Error("Durable Object reset because its code was updated.");
+        },
+      });
+
+      const result = await client.callTool({
+        name: "seo_list_rules",
+        arguments: { rule: "title.missing" },
+      });
+
+      expect(textOf(result)).toBe(
+        "Agentic SEO Check error: Durable Object reset because its code was updated."
+      );
+      expect(
+        calls.map((c) => [c.errorType, c.properties?.reason, c.error])
+      ).toStrictEqual([["internal", undefined, expect.any(Error)]]);
+    });
+
+    it("answers a tool that throws as the server's failure, and arguments the schema refuses as the caller's (issue #93)", async () => {
+      // A tool in the guard every hosted tool runs in, whose work throws as a bug would.
+      const server = new McpServer({ name: "guard-test", version: "1.0.0" });
+
+      server.registerTool(
+        "seo_list_rules",
+        { inputSchema: { rule: z.string() } },
+        guarded(() => {
+          throw new RangeError("Invalid array length");
+        })
+      );
+
+      const calls: McpToolCall[] = [];
+      const client = new Client({ name: "test-client", version: "0.0.0" });
+
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+
+      await server.connect(serverTransport);
+      instrumentTransport(
+        serverTransport,
+        {
+          toolCall: (call) => calls.push(call),
+          initialize: () => {
+            // The test reads the calls only.
+          },
+        },
+        HOSTED_TOOLS
+      );
+      await client.connect(clientTransport);
+
+      const thrown = await client.callTool({
+        name: "seo_list_rules",
+        arguments: { rule: "title.missing" },
+      });
+
+      await client.callTool({
+        name: "seo_list_rules",
+        arguments: { rule: 42 },
+      });
+
+      expect(textOf(thrown)).toBe(
+        "Agentic SEO Check error: Invalid array length"
+      );
+      expect(calls.map((c) => [c.isError, c.errorType, c.error])).toStrictEqual(
+        [
+          [true, "internal", expect.any(RangeError)],
+          [true, "validation", undefined],
+        ]
+      );
+    });
+
     it("answers a call whose end the server could not record, and tells it the end once", async () => {
       serve({
         "https://shop.example.com/": {
@@ -600,7 +676,11 @@ describe("the hosted server", () => {
 
       const ends: HostedCallEnd[] = [];
 
-      const client = await connect({
+      // Error tracking hears the record it lost, with the call (issue #93).
+      onCaughtError(noteCaughtInCall);
+      onTestFinished(() => onCaughtError(undefined));
+
+      const { client, calls } = await connectWatched({
         userAgent: USER_AGENT,
         // oxlint-disable-next-line eslint/require-await -- the Worker's startCall awaits its limits
         startCall: async () => ({
@@ -621,6 +701,9 @@ describe("the hosted server", () => {
         Findings.parse(result.structuredContent).findings
       ).not.toHaveLength(0);
       expect(ends).toStrictEqual([{ outcome: "ok", pages: 1 }]);
+      expect(calls[0]?.caught).toStrictEqual([
+        { task: "call_record", error: expect.any(TypeError) },
+      ]);
     });
 
     it("refuses a URL it may not request before the call starts", async () => {

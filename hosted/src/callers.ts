@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 
+import type { ReportTask } from "./analytics.js";
 import { globalState } from "./state.js";
 import type { StateEnv } from "./state.js";
 
@@ -72,17 +73,21 @@ const RANGES_FOR_MS = 3_600_000;
  * object without ranges, as a new one is until the Cron Trigger's first run at 03:17 UTC, gets them
  * fetched once, after the answer, rather than count ChatGPT's calls as calls from addresses until
  * then. The empty list is kept for the hour as any other, so a fetch that fails waits an hour
- * before the next.
+ * before the next. A fetch that fails is logged, and `report` hears it (issue #93).
  */
 export const openAiRangesReader = (): ((
   env: RangesEnv,
-  ctx: Pick<ExecutionContext, "waitUntil">
+  ctx: Pick<ExecutionContext, "waitUntil">,
+  report?: ReportTask
 ) => Promise<string[]>) => {
   let kept: { ranges: string[]; readAt: number } | null = null;
   let fetching = false;
 
   /** Fetches the list for an object that has none, and uses it here from then on. */
-  const fetchMissing = async (env: RangesEnv): Promise<void> => {
+  const fetchMissing = async (
+    env: RangesEnv,
+    report: ReportTask | undefined
+  ): Promise<void> => {
     fetching = true;
 
     try {
@@ -95,12 +100,13 @@ export const openAiRangesReader = (): ((
       console.error(
         `Could not fetch OpenAI's ranges: ${error instanceof Error ? error.message : String(error)}`
       );
+      report?.(error, "openai_ranges");
     } finally {
       fetching = false;
     }
   };
 
-  return async (env, ctx) => {
+  return async (env, ctx, report) => {
     if (kept && Date.now() - kept.readAt < RANGES_FOR_MS) {
       return kept.ranges;
     }
@@ -109,7 +115,7 @@ export const openAiRangesReader = (): ((
     kept = { ranges, readAt: Date.now() };
 
     if (ranges.length === 0 && !fetching) {
-      ctx.waitUntil(fetchMissing(env));
+      ctx.waitUntil(fetchMissing(env, report));
     }
 
     return ranges;

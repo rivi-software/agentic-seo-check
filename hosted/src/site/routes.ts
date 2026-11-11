@@ -121,7 +121,7 @@ const audit = async (
       await rest(write);
     } catch (error) {
       // The report could not be drawn (issue #60): the page still ends as a page does.
-      reportError(env, ctx, error, "website:/audit");
+      void reportError(env, ctx, error, "website:/audit");
     }
 
     write(html.slice(slot + REPORT_SLOT.length));

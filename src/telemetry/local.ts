@@ -21,17 +21,13 @@ import type { OutputFormat } from "../terminal.js";
 import { exceptionEvents } from "./exceptions.js";
 import type { FrameMapper, ReportedError } from "./exceptions.js";
 import {
+  caughtErrors,
   currentTool,
   initializeEvent,
   noteCaughtInCall,
   toolCallEvent,
 } from "./mcp.js";
-import type {
-  CaughtInCall,
-  McpAnalytics,
-  McpEventContext,
-  McpToolCall,
-} from "./mcp.js";
+import type { McpAnalytics, McpEventContext, McpToolCall } from "./mcp.js";
 import { BASE_PROPERTIES, sendEvents, uuidv7 } from "./posthog.js";
 import type { PostHogEvent } from "./posthog.js";
 import type { RunReport } from "./report.js";
@@ -517,13 +513,6 @@ const localErrorEvents = (
     mapFrame: sourceFrames(),
     properties: { $mcp_tool_name: tool, ...where.properties },
   });
-
-const caughtErrors = (caught: readonly CaughtInCall[] = []): ReportedError[] =>
-  caught.map(({ error, rule }) => ({
-    error,
-    handled: true,
-    properties: { rule },
-  }));
 
 /**
  * The local MCP server's analytics. A stdio connection is one client, so its calls share a

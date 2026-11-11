@@ -16,11 +16,26 @@
  * What a call did comes from the tools (issue #84, src/mcp-hosted.ts): the score, the counts and
  * the rules of its audit, a re-check's result, the options it ran with, why it stopped, the names
  * of the arguments it gave, and the agent's `context`, cleaned, as `$mcp_intent`.
+ *
+ * Issue #93 lets the Worker hear the errors the core catches (`hearCaughtError`) and the ones its
+ * own work after an answer meets (`reportTask`), sends a call's errors in the call's request, one
+ * event per bug, and gives each what its call's event says of the client and the options.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { z } from "zod";
 
-import { exceptionEvent } from "../../src/telemetry/exceptions.js";
-import { initializeEvent, toolCallEvent } from "../../src/telemetry/mcp.js";
+import type { CaughtErrorContext } from "../../src/core/errors.js";
+import {
+  exceptionEvent,
+  exceptionEvents,
+} from "../../src/telemetry/exceptions.js";
+import {
+  caughtErrors,
+  initializeEvent,
+  noteCaughtInCall,
+  toolCallEvent,
+} from "../../src/telemetry/mcp.js";
 import type {
   McpAnalytics,
   McpCaller,
@@ -140,30 +155,42 @@ const withSession = <T extends McpCaller>(
 
 /**
  * Where in the Worker an error happened: the hostname's part (`server` or `website`) and the
- * route, from a fixed list, never the request's address.
+ * route, from a fixed list, never the request's address. `server:cron` is the Cron Trigger.
  */
 export type ErrorRoute = `${"server" | "website"}:${string}`;
 
-/** An error's event, in `sessionId`'s session, and where it happened. */
-const errorEvent = (
-  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
-  error: unknown,
-  sessionId: string,
-  handled: boolean,
-  properties: Record<string, PropertyValue | undefined>
-): PostHogEvent | undefined =>
-  exceptionEvent(error, {
-    distinctId: sessionId,
-    sessionId,
-    handled,
-    surface: "hosted",
-    properties,
-  });
+/**
+ * What the Worker was doing after an answer, or apart from one, when an error came (issue #93):
+ * counting the day's requests, keeping a call's record, reading OpenAI's ranges, reading the
+ * signing keys, or signing a request.
+ */
+export type ErrorTask =
+  | "request_count"
+  | "call_record"
+  | "openai_ranges"
+  | "signing_keys"
+  | "request_signature";
+
+/** Hears an error of `task`, for its event; it never throws. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+export type ReportTask = (error: unknown, task: ErrorTask) => void;
+
+/** How `reportError` sends an error. */
+export interface ReportOptions {
+  /** False for the Worker's last resort, the 500. */
+  handled?: boolean;
+  /**
+   * The request's `Mcp-Session-Id`: the error then sits in the session its token names, with the
+   * client it names. Any other value gives the error a session of its own.
+   */
+  session?: string | null;
+  properties?: Record<string, PropertyValue | undefined>;
+}
 
 /**
  * Sends the `$exception` event of an error the Worker met, with `ctx.waitUntil`, unless the
- * analytics are off or the error is no bug. `handled` is false for the Worker's last resort, the
- * 500.
+ * analytics are off or the error is no bug. Resolves once it is sent, or false when nothing was,
+ * for a Cron Trigger that fails after it.
  */
 export const reportError = (
   env: AnalyticsEnv,
@@ -171,23 +198,126 @@ export const reportError = (
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- as above
   error: unknown,
   route: ErrorRoute,
-  handled = true
-): void => {
+  { handled = true, session, properties }: ReportOptions = {}
+): Promise<boolean> => {
   if (!env.POSTHOG_HOST) {
+    return Promise.resolve(false);
+  }
+
+  const token = readSessionToken(session);
+  const sessionId = token?.session ?? `ses_${uuidv7()}`;
+
+  const event = exceptionEvent(error, {
+    distinctId: sessionId,
+    sessionId,
+    handled,
+    surface: "hosted",
+    properties: {
+      route,
+      $mcp_client_name: token?.client,
+      $mcp_client_version: token?.version,
+      $mcp_protocol_version: token?.protocol,
+      ...properties,
+    },
+  });
+
+  if (!event) {
+    return Promise.resolve(false);
+  }
+
+  const sent = sendEvents([event], {
+    host: env.POSTHOG_HOST,
+    timeoutMs: SEND_TIMEOUT_MS,
+  });
+
+  ctx.waitUntil(sent);
+
+  return sent;
+};
+
+/** `ReportTask` for the errors of `route`'s work after its answer. */
+export const reportTask =
+  (
+    env: AnalyticsEnv,
+    ctx: Pick<ExecutionContext, "waitUntil">,
+    route: ErrorRoute
+  ): ReportTask =>
+  (error, task) => {
+    try {
+      void reportError(env, ctx, error, route, { properties: { task } });
+    } catch {
+      // Error tracking never costs the request its answer.
+    }
+  };
+
+/** The request a Worker is answering, for an error the core catches outside a tool call. */
+interface RequestScope {
+  env: AnalyticsEnv;
+  ctx: Pick<ExecutionContext, "waitUntil">;
+  route: ErrorRoute;
+}
+
+const requests = new AsyncLocalStorage<RequestScope>();
+
+/** Runs `work`, the answer to a request to `route`, so that the errors it meets know where they were. */
+export const inRequest = <T>(scope: RequestScope, work: () => T): T =>
+  requests.run(scope, work);
+
+/**
+ * Hears an error the core caught and turned into a finding (issue #93): a rule that throws, a page
+ * a crawl leaves out, a request it could not sign. Within a tool call, the call's events carry it.
+ * Outside one, it is sent on its own, in the request it happened in. A Worker sets it once, with
+ * `onCaughtError`.
+ */
+export const hearCaughtError = (
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- as above
+  error: unknown,
+  context: CaughtErrorContext
+): void => {
+  if (noteCaughtInCall(error, context)) {
     return;
   }
 
-  const event = errorEvent(error, `ses_${uuidv7()}`, handled, { route });
+  const scope = requests.getStore();
 
-  if (event) {
-    ctx.waitUntil(
-      sendEvents([event], {
-        host: env.POSTHOG_HOST,
-        timeoutMs: SEND_TIMEOUT_MS,
-      })
-    );
+  if (scope) {
+    void reportError(scope.env, scope.ctx, error, scope.route, {
+      properties: { ...context },
+    });
   }
 };
+
+/**
+ * What a call's `$exception` repeats of its `$mcp_tool_call` (issue #93): the client, the arguments
+ * it gave, the options, and how far it got. Not the agent's intent, the one property in free text,
+ * nor what the audit found.
+ */
+const CALL_PROPERTIES = [
+  "$mcp_tool_name",
+  "$mcp_client_name",
+  "$mcp_client_version",
+  "$mcp_protocol_version",
+  "$mcp_client_user_agent",
+  "$mcp_vendor_client",
+  "$mcp_duration_ms",
+  "arguments",
+  "format",
+  "detail",
+  "page_detail",
+  "recheck",
+  "target",
+  "platform",
+  "outcome",
+  "requests",
+  "pages",
+] as const;
+
+const callProperties = (
+  event: PostHogEvent
+): Record<string, PropertyValue | undefined> =>
+  Object.fromEntries(
+    CALL_PROPERTIES.map((name) => [name, event.properties[name]])
+  );
 
 /**
  * The analytics of one request to /mcp, or undefined while they are off. `sessionHeader` is the
@@ -211,9 +341,9 @@ export const hostedAnalytics = (
   // follows it belong together.
   const records = new Map<string, CallRecord>();
 
-  const send = (event: PostHogEvent): void => {
+  const send = (events: PostHogEvent[]): void => {
     ctx.waitUntil(
-      sendEvents([event], {
+      sendEvents(events, {
         host: env.POSTHOG_HOST,
         timeoutMs: SEND_TIMEOUT_MS,
       })
@@ -250,28 +380,32 @@ export const hostedAnalytics = (
           protocol: client.protocolVersion,
         });
 
-        send(initializeEvent(client, context(sessionId)));
+        send([initializeEvent(client, context(sessionId))]);
       },
       toolCall: (call) => {
         const record = records.get(call.tool);
         records.delete(call.tool);
 
         const where = context(session?.session ?? `ses_${uuidv7()}`, record);
-        send(toolCallEvent(withSession(call, session), where));
+        const event = toolCallEvent(withSession(call, session), where);
 
-        // The error behind an internal failure, in the call's session.
-        const event =
-          call.error === undefined
-            ? undefined
-            : errorEvent(call.error, where.sessionId, true, {
-                route: "server:/mcp",
-                $mcp_tool_name: call.tool,
-                platform: where.properties?.platform,
-              });
+        // The errors the core caught within the call, and the one behind an internal failure: one
+        // event per bug, in the call's session and the call's request (issue #93).
+        const errors = caughtErrors(call.caught);
 
-        if (event) {
-          send(event);
+        if (call.error !== undefined) {
+          errors.push({ error: call.error, handled: true });
         }
+
+        send([
+          event,
+          ...exceptionEvents(errors, {
+            distinctId: where.sessionId,
+            sessionId: where.sessionId,
+            surface: "hosted",
+            properties: { route: "server:/mcp", ...callProperties(event) },
+          }),
+        ]);
       },
     },
   };

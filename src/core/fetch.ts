@@ -1,5 +1,5 @@
 import { VERSION } from "../version.js";
-import { ExpectedError } from "./errors.js";
+import { caughtError, ExpectedError } from "./errors.js";
 import type { RedirectHop, ResponseInfo } from "./types.js";
 
 /**
@@ -295,6 +295,22 @@ interface RedirectWalk {
 /** One request of a redirect chain: the final result, or the URL the redirect points to next. */
 type HopOutcome = { done: FetchResult } | { next: string };
 
+/**
+ * The headers that sign a request to `current`. A signature that fails is the tool's own failure,
+ * not the site's (issue #93): error tracking hears it, and the request then fails as any other.
+ */
+const signatureFor = async (
+  sign: NonNullable<FetchOptions["sign"]>,
+  current: string
+): Promise<Record<string, string>> => {
+  try {
+    return await sign(new URL(current));
+  } catch (error) {
+    caughtError(error, { task: "request_signature" });
+    throw error;
+  }
+};
+
 /** Asks the gate before a request, and throws its refusal. */
 const askGate = async (
   gate: RequestGate | undefined,
@@ -384,7 +400,7 @@ const fetchHop = async (
     // A request that cannot be signed is not sent: it fails as any other request does.
     const signature =
       options.sign && URL.canParse(current)
-        ? await options.sign(new URL(current))
+        ? await signatureFor(options.sign, current)
         : {};
 
     const res = await fetch(current, {
