@@ -554,6 +554,45 @@ describe("fixes for the AEO site rules", () => {
     ).toMatchObject({ Googlebot: true, Bingbot: true, GPTBot: true });
   });
 
+  it("read a YandexAdditionalBot group as YandexAdditional's own when it lets the bot in", () => {
+    // Its own group under the second name, and a group it shares with AhrefsBot.
+    const text = [
+      "User-agent: *",
+      "Disallow: /admin/",
+      "",
+      "User-agent: YandexAdditionalBot",
+      "Disallow: /",
+      "",
+      "User-agent: YandexAdditionalBot",
+      "User-agent: AhrefsBot",
+      "Disallow: /guides/",
+    ].join("\n");
+
+    const fix = robotsFixOf(text, "aeo.robots-blocks-answer-bot");
+
+    // The group of its own keeps a user-agent line; only the shared group loses the bot.
+    expect(fix).toMatchObject([
+      {
+        at: "User-agent: YandexAdditionalBot",
+        current: "Disallow: /",
+        code: "Allow: /",
+      },
+      {
+        current: "User-agent: YandexAdditionalBot\nUser-agent: AhrefsBot",
+        code: "User-agent: AhrefsBot",
+      },
+    ]);
+
+    const applied = applyRobots(text, fix);
+
+    expect(applied.skipped).toStrictEqual([]);
+    expect(applied.text).toContain("User-agent: AhrefsBot\nDisallow: /guides/");
+    expect(allowedBots(applied.text)).toMatchObject({
+      YandexAdditional: true,
+      Googlebot: true,
+    });
+  });
+
   it("say a training bot block is the owner's choice", () => {
     const training = fixOf(findings, "aeo.robots-blocks-training-bot") ?? [];
 

@@ -12,6 +12,7 @@ import type {
 } from "../types.js";
 import {
   AI_BOTS,
+  botTokens,
   invalidSignals,
   robotsBlocksOf,
   signalSourceOf,
@@ -49,6 +50,12 @@ const meta = (
   return rule;
 };
 
+/** The bots of one purpose, named as robots.txt names them, for a rule's description. */
+const botNames = (purpose: AiBotPurpose): string =>
+  AI_BOTS.filter((b) => b.purpose === purpose)
+    .map((b) => b.name)
+    .join(", ");
+
 /** Rules about the site as a whole, which the AEO audit checks once per origin. */
 export const AEO_SITE_RULES: RuleMeta[] = [
   meta(
@@ -68,14 +75,14 @@ export const AEO_SITE_RULES: RuleMeta[] = [
   meta(
     "aeo.robots-blocks-answer-bot",
     "warning",
-    "robots.txt blocks a bot that fetches pages for AI answers or an AI search index (OAI-SearchBot, ChatGPT-User, Claude-SearchBot, Claude-User, PerplexityBot, Perplexity-User, Google-Extended, DuckAssistBot, MistralAI-User).",
+    `robots.txt blocks a bot that fetches pages for AI answers or an AI search index (${botNames("answer")}).`,
     "Allow the bots listed in evidence if the site should be cited in those answer engines: add a group for each with `Allow: /`, or remove the Disallow lines that match them. Keep a block that is deliberate, and disable this rule.",
     GOOGLE_DOCS.robotsTxt
   ),
   meta(
     "aeo.robots-blocks-training-bot",
     "info",
-    "robots.txt blocks a crawler that collects text to train AI models (GPTBot, ClaudeBot, Applebot-Extended, CCBot, meta-externalagent).",
+    `robots.txt blocks a crawler that collects text to train AI models (${botNames("training")}).`,
     "Nothing to change if you mean to opt out of model training: these bots do not decide whether answer engines cite the site. Allow them if you want the content in future models.",
     GOOGLE_DOCS.robotsTxt
   ),
@@ -197,10 +204,6 @@ const ROBOTS_WRITE: Record<AiBotPurpose, string> = {
   training:
     "Blocking AI training bots is the site owner's choice and does not keep the site out of AI answers. Apply this only if the owner wants the content used to train models; otherwise keep the block and disable this rule.",
 };
-
-/** The product token of a user agent: lower-cased, without a version. */
-const tokenOf = (agent: string): string =>
-  agent.split("/")[0]?.trim().toLowerCase() ?? "";
 
 /** The user-agent lines and rules of a group of its own for some bots. */
 interface NewGroup {
@@ -368,7 +371,8 @@ const robotsFixes = (
 ): FixEdit[] => {
   const url = crawlers.robotsTxt;
   const blocks = robotsBlocksOf(crawlers);
-  const tokens = new Set(blocked.map((b) => tokenOf(b.name)));
+  // A bot's aliases count as the bot: a group naming YandexAdditionalBot is YandexAdditional's own.
+  const tokens = new Set(blocked.flatMap((b) => botTokens(b.name)));
   const letsGooglebotIn = blocked.some((b) => b.name === "Googlebot");
   const edits = new Map<string, FixEdit>();
   const groups = new Map<string, NewGroup>();
@@ -377,7 +381,7 @@ const robotsFixes = (
   const reported = new Set(
     crawlers.bots
       .filter((b) => !b.allowed || b.blockedPages > 0)
-      .map((b) => tokenOf(b.name))
+      .flatMap((b) => botTokens(b.name))
   );
 
   // The bots of this finding that leave each shared group, by the group's user-agent lines.
@@ -407,7 +411,8 @@ const robotsFixes = (
         elsewhere: false,
       };
 
-      entry.tokens.add(tokenOf(bot.name));
+      entry.tokens = new Set([...entry.tokens, ...botTokens(bot.name)]);
+
       // The bot is named in another group too: its user-agent line alone does not say which.
       entry.elsewhere ||=
         block?.rules.some((r) => r.agentLines !== line.agentLines) ?? false;
@@ -600,8 +605,8 @@ const signalFindings = (crawlers: AiCrawlerReport): Finding[] => {
   const out: Finding[] = [];
 
   const answerAgents = new Set(
-    AI_BOTS.filter((b) => b.purpose !== "training").map((b) =>
-      b.name.toLowerCase()
+    AI_BOTS.filter((b) => b.purpose !== "training").flatMap((b) =>
+      botTokens(b.name)
     )
   );
 
