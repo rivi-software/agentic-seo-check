@@ -68,12 +68,18 @@ export const cleanMessage = (message: string): string => {
     .replaceAll(/'(?<inner>[^']*)'/gu, (quoted, inner: string) =>
       IDENTIFIER.test(inner) ? quoted : "<text>"
     )
-    .replaceAll(/[\w.+-]{1,64}@[^\s@]{1,255}/gu, "<email>")
+    .replaceAll(/[\p{L}\p{N}_.%+-]{1,64}@[^\s@]{1,255}/gu, "<email>")
     .replaceAll(/\b\d{1,3}(?:\.\d{1,3}){3}\b/gu, "<ip>")
-    // Anything that reads as a hostname. It takes `a.map` in "a.map is not a function" too: the
-    // frame says where that was.
+    // An IPv6 address: in full, or with `::` for its zeros.
     .replaceAll(
-      /\b(?:[\da-z](?:[\da-z-]{0,61}[\da-z])?\.)+[a-z]{2,63}\b/giu,
+      /(?<![\w:])(?:(?:[\da-f]{1,4}:){3,7}[\da-f]{1,4}|(?:[\da-f]{1,4}(?::[\da-f]{1,4}){0,6})?::(?:[\da-f]{1,4}(?::[\da-f]{1,4}){0,6})?)(?![\w:])/giu,
+      "<ip>"
+    )
+    // Anything that reads as a hostname, in any script: text an agent writes names a site as a
+    // person does, `bäckerei-müller.de`, where a URL's hostname is punycode. It takes `a.map` in
+    // "a.map is not a function" too: the frame says where that was.
+    .replaceAll(
+      /(?<![\p{L}\p{N}_-])(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+\p{L}{2,63}(?![\p{L}\p{N}_-])/gu,
       "<host>"
     );
 

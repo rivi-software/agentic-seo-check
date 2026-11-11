@@ -21,7 +21,11 @@ import {
   telemetryCommand,
   telemetryStatus,
 } from "../src/telemetry/local.js";
-import { clientToken, instrumentTransport } from "../src/telemetry/mcp.js";
+import {
+  clientToken,
+  instrumentTransport,
+  intentOf,
+} from "../src/telemetry/mcp.js";
 import type {
   McpAnalytics,
   McpCaller,
@@ -398,6 +402,22 @@ describe("telemetry", () => {
         undefined,
         undefined,
       ]);
+    });
+
+    it("keeps the tool's rule ids in an intent, and nothing that names a site (issue #84)", () => {
+      expect(
+        intentOf(
+          "  fixed title.missing and img.alt-missing on shop.example.com, not title.missing.com  "
+        )
+      ).toBe("fixed title.missing and img.alt-missing on <host>, not <host>");
+      // The text cannot write the mark a kept rule id waits behind.
+      expect(intentOf("\uE0000\uE001 on shop.example.com")).toBe("0 on <host>");
+      expect(intentOf("   ")).toBeUndefined();
+
+      const long = intentOf("title.missing ".repeat(100));
+
+      expect(long).toHaveLength(300);
+      expect(long).not.toMatch(/[\uE000\uE001]/u);
     });
 
     it("keeps only the product token of a client's header", () => {

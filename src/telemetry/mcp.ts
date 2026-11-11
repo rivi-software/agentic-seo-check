@@ -32,6 +32,7 @@ import type {
 import { z } from "zod";
 
 import { MCP_SERVER_NAME } from "../brand.js";
+import { ALL_RULES } from "../core/rules/index.js";
 import { VERSION } from "../version.js";
 import { cleanMessage } from "./exceptions.js";
 import { BASE_PROPERTIES, short } from "./posthog.js";
@@ -171,14 +172,51 @@ export type CountedTools =
   | ReadonlySet<string>
   | ReadonlyMap<string, ReadonlySet<string>>;
 
+/** The ids of the tool's own rules: an agent names the ones it fixed, and they say nothing of the user. */
+const RULE_IDS: ReadonlySet<string> = new Set(ALL_RULES.map((rule) => rule.id));
+
+/** A word shaped as a rule id, such as `meta-description.missing`, which reads as a hostname too. */
+const RULE_ID_WORD =
+  /(?<![\w.-])[a-z][\da-z-]{0,40}(?:\.[\da-z-]{1,60}){1,3}(?![\w-])/gu;
+
+/**
+ * The marks a kept rule id waits behind while the rest is cleaned: characters of the Unicode
+ * private use area, which no pattern of `cleanMessage` takes, and which are taken out of the text
+ * first, so it cannot write a mark of its own.
+ */
+const MARK_CHARS = /[\uE000\uE001]/gu;
+const MARK = /\uE000(?<index>\d+)\uE001/gu;
+
+/** As long as an intent may be: as an error's message. */
+const MAX_INTENT = 300;
+
 /**
  * The agent's `context`, as the event carries it: cleaned as an error message is, so a URL, a
- * path, quoted text, an email, an IP address or a hostname in it never leaves, and cut short.
+ * path, quoted text, an email, an IP address or a hostname in it never leaves, and cut short. The
+ * ids of the tool's own rules stay, though they read as hostnames.
  */
 export const intentOf = (context: string): string | undefined => {
-  const intent = cleanMessage(context.trim());
+  const kept: string[] = [];
 
-  return intent === "" ? undefined : intent;
+  const marked = context
+    .replaceAll(MARK_CHARS, "")
+    .trim()
+    .replaceAll(RULE_ID_WORD, (word) =>
+      RULE_IDS.has(word) ? `\uE000${kept.push(word) - 1}\uE001` : word
+    );
+
+  const intent = cleanMessage(marked)
+    .replaceAll(MARK, (_, index: string) => kept[Number(index)] ?? "")
+    // A mark the cut split in two.
+    .replaceAll(/[\uE000\uE001]\d*/gu, "");
+
+  if (intent === "") {
+    return undefined;
+  }
+
+  return intent.length > MAX_INTENT
+    ? `${intent.slice(0, MAX_INTENT - 1)}…`
+    : intent;
 };
 
 /** A call's `context`: only text is read, whatever else a caller sends in its place. */

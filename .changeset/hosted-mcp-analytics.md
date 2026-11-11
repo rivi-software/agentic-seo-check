@@ -2,7 +2,7 @@
 "@rivi-software/agentic-seo-check": minor
 ---
 
-The hosted server's tools take an optional `context`: a few words from the agent on what the call is for, such as "re-check the title fixes" (issue #84). No tool reads it, and the audit is the same with or without it. It goes to the hosted server's usage analytics in PostHog, as `$mcp_intent`, with every URL, path, quoted text, hostname, email and IP address replaced, cut to 300 characters. A `context` longer than 1,000 characters is refused, as every capped input is.
+The hosted server's tools take an optional `context`: a few words from the agent on what the call is for, such as "re-check the title fixes" (issue #84). No tool reads it, and the audit is the same with or without it. It goes to the hosted server's usage analytics in PostHog, as `$mcp_intent`, with every URL, path, quoted text, hostname, email and IP address replaced, cut to 300 characters. The tool's own rule ids stay. The same cleaning now also takes out hostnames in any script, such as `bäckerei-müller.de`, emails with non-ASCII characters, and IPv6 addresses. It applies to the messages of error reports too. A `context` longer than 1,000 characters is refused, as every capped input is.
 
 The hosted server's `$mcp_tool_call` event now also says what the call did:
 

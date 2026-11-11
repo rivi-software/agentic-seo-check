@@ -376,7 +376,7 @@ describe("the hosted server", () => {
           keyword: "blue widgets",
           format: "markdown",
           context:
-            'Check https://shop.example.com/ for the "Acme" launch, then mail jo@example.org',
+            'Check https://shop.example.com/ and café.fr for the "Acme" launch, fix meta-description.missing on bäckerei-müller.de, then mail jo@example.org',
           unknownOption: "https://shop.example.com/secret",
         },
       });
@@ -387,7 +387,8 @@ describe("the hosted server", () => {
           tool: "seo_audit_page",
           isError: false,
           arguments: ["context", "format", "keyword", "url"],
-          intent: "Check <url> for the <text> launch, then mail <email>",
+          intent:
+            "Check <url> and <host> for the <text> launch, fix meta-description.missing on <host>, then mail <email>",
           properties: {
             target: "url",
             score: expect.any(Number),
@@ -407,6 +408,9 @@ describe("the hosted server", () => {
 
       for (const value of [
         "shop.example.com",
+        "café",
+        "bäckerei",
+        "müller",
         "blue widgets",
         "jo@example.org",
         "unknownOption",
