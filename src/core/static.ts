@@ -12,6 +12,7 @@ import { imageSourcesOf } from "./site-probes.js";
 import type { LinkCheck, PageRecord } from "./site-rules.js";
 import {
   emptySitemapProblems,
+  isAbsoluteHttpUrl,
   inspectSitemap,
   parseSitemap,
   SITEMAP_MAX_BYTES,
@@ -347,9 +348,13 @@ const readSitemaps = async (
     problems: emptySitemapProblems(),
   };
 
+  // A Sitemap: line or index entry that is not a full URL is one search engines drop; the
+  // robots.txt and sitemap rules report it, and the audit drops it as they do.
   const candidates = [
     ...new Set([...robots.info.sitemaps, new URL("/sitemap.xml", base).href]),
-  ].map((url) => ({ url, fromIndex: false }));
+  ].flatMap((url) =>
+    isAbsoluteHttpUrl(url) ? [{ url, fromIndex: false }] : []
+  );
 
   const seen = new Set<string>();
   const urls = new Set<string>();
@@ -450,12 +455,12 @@ const readSitemaps = async (
       now,
     });
 
+    const locs = parsed.locs.filter(isAbsoluteHttpUrl);
+
     if (parsed.kind === "sitemapindex") {
-      candidates.push(
-        ...parsed.locs.map((loc) => ({ url: loc, fromIndex: true }))
-      );
+      candidates.push(...locs.map((loc) => ({ url: loc, fromIndex: true })));
     } else {
-      for (const loc of parsed.locs) {
+      for (const loc of locs) {
         urls.add(loc);
       }
     }

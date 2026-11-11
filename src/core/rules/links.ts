@@ -44,6 +44,48 @@ const withoutNofollow = (link: LinkInfo): FixEdit => {
     : setAttributeEdit(null, at, "rel", "", write);
 };
 
+/**
+ * The route a link's fragment holds, as a hash router writes it ("#/products", "#!/products"), or
+ * null for an ordinary fragment ("#reviews") and a bare "#/" or "#!", which open nothing.
+ */
+export const hashRoute = (href: string): string | null => {
+  const at = href.indexOf("#");
+
+  if (at === -1) {
+    return null;
+  }
+
+  const fragment = href.slice(at + 1).trim();
+  const route = fragment.startsWith("!") ? fragment.slice(1) : fragment;
+
+  return route.length > 1 && route.startsWith("/") ? route : null;
+};
+
+/**
+ * The path a hash route becomes under the History API: the route below the app's directory, which
+ * is the path before the "#" or else the page's own ("/shop/#/cart" and "#/cart" on /shop/ are
+ * both /shop/cart).
+ */
+const historyPath = (href: string, route: string, pageUrl: string): string => {
+  const before = href.slice(0, href.indexOf("#")).trim();
+  let base = "/";
+
+  try {
+    const url = new URL(before || pageUrl, pageUrl);
+
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      base = url.pathname.slice(0, url.pathname.lastIndexOf("/") + 1);
+    }
+  } catch {
+    // An href or page URL that does not parse keeps the site root.
+  }
+
+  return `${base}${route.slice(1)}`;
+};
+
+const HASH_ROUTE_WRITE =
+  "Switch the app's router to the History API (React Router's createBrowserRouter, Vue Router's createWebHistory, Angular's PathLocationStrategy) so each view has a path, have the server answer every such path with the app or, better, the view's own HTML, and write links as paths.";
+
 export const linkRules = [
   defineRule(
     {
@@ -178,6 +220,62 @@ export const linkRules = [
             },
           })
         : null;
+    }
+  ),
+  defineRule(
+    {
+      id: "links.hash-route",
+      category: "links",
+      severity: "warning",
+      description:
+        'Internal links whose fragment is a route ("#/products", "#!/products"). Google ignores the fragment, so it cannot reach these views as pages of their own.',
+      recommendation:
+        "Route with the History API instead of fragments, so each view has a path (/products) the server answers, and link to those paths.",
+      docs: GOOGLE_DOCS.javascript,
+    },
+    ({ page }, make) => {
+      const routed = page.links.flatMap((l) => {
+        // A same-page href ("#/cart") resolves to no URL of its own, so it is not marked internal.
+        const samePage = l.href.trim().startsWith("#");
+        const route = l.internal || samePage ? hashRoute(l.href) : null;
+
+        return route ? [{ link: l, route }] : [];
+      });
+
+      if (routed.length === 0) {
+        return null;
+      }
+
+      // One edit per link as written; a menu repeats the same link in the header and the footer.
+      const tags = new Set<string>();
+
+      const fix = routed.flatMap(({ link, route }) => {
+        if (tags.has(link.tag)) {
+          return [];
+        }
+
+        tags.add(link.tag);
+
+        return [
+          setAttributeEdit(
+            link.tag,
+            linkAt(link),
+            "href",
+            escapeAttribute(historyPath(link.href, route, page.url)),
+            HASH_ROUTE_WRITE
+          ),
+        ];
+      });
+
+      const hrefs = [...new Set(routed.map(({ link }) => link.href))];
+
+      return make(
+        `${routed.length} internal link(s) use the URL fragment as a route: ${cap(hrefs, 5).join(", ")}.`,
+        {
+          fix,
+          evidence: { count: routed.length, examples: cap(hrefs) },
+        }
+      );
     }
   ),
   defineRule(

@@ -469,6 +469,52 @@ describe("fixes for the robots.txt and sitemap of a build directory", () => {
     ]);
   });
 
+  it("rewrites robots.txt lines and sitemap entries search engines drop, on the production host", async () => {
+    const site = path.join(dir, "dropped");
+    const stamp = "2026-11-09T14:03:12+01:00";
+
+    const entries = Array.from(
+      { length: 10 },
+      (_, i) =>
+        `<url><loc>${ORIGIN}/post-${i}.html</loc><lastmod>${stamp}</lastmod></url>`
+    ).join("\n");
+
+    await writeSite(site, {
+      "index.html": html("Home page of a build with slips", "<p>x</p>"),
+      "robots.txt": `User-agent: *\nDisallow: private/\nDisallow: ${ORIGIN}/drafts/?preview=1\nSitemap: /sitemap.xml\n`,
+      "sitemap.xml": `<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries}\n<url><loc>/about.html</loc><lastmod>${stamp}</lastmod></url>\n</urlset>`,
+    });
+
+    const audit = await auditDirectory(site, { baseUrl: ORIGIN });
+    expectFixes(audit);
+
+    expect(
+      fixOf(audit.siteFindings, "site.robots-txt-invalid-rule")?.map((e) => [
+        e.current,
+        e.code,
+      ])
+    ).toStrictEqual([
+      ["Disallow: private/", "Disallow: /private/"],
+      [`Disallow: ${ORIGIN}/drafts/?preview=1`, "Disallow: /drafts/?preview=1"],
+      ["Sitemap: /sitemap.xml", `Sitemap: ${ORIGIN}/sitemap.xml`],
+    ]);
+    expect(fixOf(audit.siteFindings, "site.sitemap-invalid-url")).toMatchObject(
+      [
+        {
+          in: "sitemap",
+          action: "replace",
+          url: `${ORIGIN}/sitemap.xml`,
+          current: "<loc>/about.html</loc>",
+          code: `<loc>${ORIGIN}/about.html</loc>`,
+        },
+      ]
+    );
+    // Eleven entries, one of them dropped, all with the build's time: still the build's time.
+    expect(
+      fixOf(audit.siteFindings, "site.sitemap-lastmod-uniform")
+    ).toHaveLength(3);
+  });
+
   it("rewrites a sitemap that does not parse", async () => {
     const site = path.join(dir, "garbage");
     await writeSite(site, {

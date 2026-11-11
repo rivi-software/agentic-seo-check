@@ -7,6 +7,7 @@ import type { Finding, RuleMeta } from "../types.js";
 import { aeoRules } from "./aeo.js";
 import { canonicalRules } from "./canonical.js";
 import { contentRules } from "./content.js";
+import { discoverRules } from "./discover.js";
 import { documentRules } from "./document.js";
 import { headRules } from "./head.js";
 import { headingRules } from "./headings.js";
@@ -20,6 +21,7 @@ import { metaRules } from "./meta.js";
 import { responseRules } from "./response.js";
 import type { PageContext, Rule } from "./rule.js";
 import { socialRules } from "./social.js";
+import { structuredDataEligibilityRules } from "./structured-data-eligibility.js";
 import { structuredDataValueRules } from "./structured-data-values.js";
 import { structuredDataRules } from "./structured-data.js";
 import { titleRules } from "./title.js";
@@ -34,6 +36,7 @@ export const PAGE_RULES: Rule[] = [
   ...headingRules,
   ...canonicalRules,
   ...indexingRules,
+  ...discoverRules,
   ...documentRules,
   ...headRules,
   ...socialRules,
@@ -44,6 +47,7 @@ export const PAGE_RULES: Rule[] = [
   ...hreflangRules,
   ...structuredDataRules,
   ...structuredDataValueRules,
+  ...structuredDataEligibilityRules,
   ...contentRules,
   ...keywordRules,
   ...responseRules,

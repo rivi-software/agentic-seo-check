@@ -9,9 +9,16 @@ import { auditDirectory, auditSite } from "../src/core/audit.js";
 import { DEFAULT_USER_AGENT } from "../src/core/fetch.js";
 import { buildRobots } from "../src/core/robots.js";
 import {
+  invalidLocFix,
+  invalidRobotsLines,
+  robotsInvalidFix,
+} from "../src/core/site-fixes.js";
+import {
   emptySitemapProblems,
   inspectSitemap,
+  parseSitemap,
   SITEMAP_MAX_URLS,
+  sitemapEntryProblems,
   sitemapText,
 } from "../src/core/sitemap.js";
 import type { Finding } from "../src/core/types.js";
@@ -144,6 +151,331 @@ describe("robots.txt and sitemaps of a crawled site", () => {
   });
 });
 
+describe("robots.txt lines crawlers cannot use, and sitemap entries search engines drop", () => {
+  let server: FixtureServer;
+  let findings: Finding[];
+  let sitemapUrls: string[];
+
+  /** Ten posts that share the time the sitemap was built. */
+  const posts = Array.from(
+    { length: 10 },
+    (_, i) =>
+      `<url><loc>__ORIGIN__/post-${i}</loc><lastmod>2026-11-09T14:03:12+00:00</lastmod></url>`
+  ).join("");
+
+  const longLoc = `__ORIGIN__/search?q=${"widget".repeat(350)}`;
+
+  beforeAll(async () => {
+    const routes: Routes = {
+      "/": page("Home", "", '<a href="/about">About</a>'),
+      "/about": page("About", "", '<a href="/">Home</a>'),
+      "/robots.txt": {
+        headers: { "content-type": "text/plain" },
+        body: "Disallow: /early/\nDisallow: /\n# The rules for everyone\nUser-agent: *\nDisallow: wp-admin/\nDisallow: ?sort=\nDisallow: __ORIGIN__/private/ # old\nDisallow: https://other.example/x/\nDisallow: *.pdf\nDisallow:\nAllow: /\nSitemap: /sitemap.xml\n",
+      },
+      "/sitemap.xml": {
+        headers: { "content-type": "application/xml" },
+        body: '<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>__ORIGIN__/pages.xml</loc></sitemap><sitemap><loc>__ORIGIN__/posts.xml</loc></sitemap><sitemap><loc>/more.xml</loc></sitemap></sitemapindex>',
+      },
+      "/pages.xml": {
+        headers: { "content-type": "application/xml" },
+        body: urlset(
+          `<url><loc>__ORIGIN__/</loc></url><url><loc>/about</loc></url><url><loc>${longLoc}</loc></url>`
+        ),
+      },
+      "/posts.xml": {
+        headers: { "content-type": "application/xml" },
+        body: urlset(posts),
+      },
+    };
+
+    server = await startFixtureServer(routes);
+
+    const site = await auditSite(server.origin, { maxPages: 5 });
+    findings = site.siteFindings;
+    sitemapUrls = site.sitemaps.urls;
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  it("site.robots-txt-invalid-rule names each line and why crawlers cannot use it", () => {
+    const f = find(findings, "site.robots-txt-invalid-rule");
+
+    expect(f?.severity).toBe("warning");
+    expect(f?.message).toBe(
+      "robots.txt has 4 Allow or Disallow line(s) whose path matches no URL; 2 rule(s) above the first User-agent line, which crawlers ignore; 1 Sitemap line(s) that are not a full URL."
+    );
+    expect(f?.evidence).toStrictEqual({
+      url: `${server.origin}/robots.txt`,
+      count: 7,
+      lines: [
+        "line 1: Disallow: /early/ (above the first User-agent line, so it belongs to no group and crawlers ignore it)",
+        "line 2: Disallow: / (above the first User-agent line, so it belongs to no group and crawlers ignore it)",
+        "line 5: Disallow: wp-admin/ (the path starts with neither / nor *, so it matches no URL)",
+        "line 6: Disallow: ?sort= (the path starts with neither / nor *, so it matches no URL)",
+        `line 7: Disallow: ${server.origin}/private/ (a full URL where a path belongs, so it matches no URL)`,
+        "line 8: Disallow: https://other.example/x/ (a full URL where a path belongs, so it matches no URL)",
+        "line 12: Sitemap: /sitemap.xml (not a full URL, so search engines ignore it)",
+      ],
+    });
+  });
+
+  it("puts rules above every group in one, rewrites paths, and leaves a whole-site Disallow out", () => {
+    const robotsUrl = `${server.origin}/robots.txt`;
+
+    expect(find(findings, "site.robots-txt-invalid-rule")?.fix).toMatchObject([
+      {
+        in: "robots.txt",
+        action: "add",
+        url: robotsUrl,
+        at: "start of file",
+        code: "User-agent: *",
+      },
+      { action: "remove", current: "Disallow: /" },
+      {
+        action: "replace",
+        at: "User-agent: *",
+        current: "Disallow: wp-admin/",
+        code: "Disallow: /wp-admin/",
+      },
+      { current: "Disallow: ?sort=", code: "Disallow: /*?sort=" },
+      {
+        current: `Disallow: ${server.origin}/private/`,
+        code: "Disallow: /private/",
+      },
+      {
+        action: "remove",
+        current: "Disallow: https://other.example/x/",
+        write: expect.stringContaining("robots.txt of https://other.example"),
+      },
+      {
+        action: "replace",
+        current: "Sitemap: /sitemap.xml",
+        code: "Sitemap: {{the site's origin, such as https://www.example.com}}/sitemap.xml",
+      },
+    ]);
+  });
+
+  it("site.sitemap-invalid-url lists relative and over-long locs, and the crawl drops them", () => {
+    const f = find(findings, "site.sitemap-invalid-url");
+
+    expect(f?.evidence).toStrictEqual({
+      count: 3,
+      examples: [
+        `/more.xml (in ${server.origin}/sitemap.xml)`,
+        `/about (in ${server.origin}/pages.xml)`,
+        `${longLoc.replace("__ORIGIN__", server.origin).slice(0, 200)} (${longLoc.replace("__ORIGIN__", server.origin).length} characters) (in ${server.origin}/pages.xml)`,
+      ],
+    });
+    expect(f?.fix?.[1]).toMatchObject({
+      in: "sitemap",
+      action: "replace",
+      url: `${server.origin}/pages.xml`,
+      current: "<loc>/about</loc>",
+      code: "<loc>{{the site's origin, such as https://www.example.com}}/about</loc>",
+    });
+    expect(f?.fix?.[2]?.current).toMatch(/…$/u);
+  });
+
+  it("drops relative locs as search engines do, without another finding for them", () => {
+    expect(sitemapUrls).not.toContain("/about");
+    expect(findings.map((x) => x.rule)).not.toContain("site.sitemap-error");
+    expect(findings.map((x) => x.rule)).not.toContain(
+      "site.sitemap-other-host"
+    );
+  });
+
+  it("site.sitemap-lastmod-missing and site.sitemap-lastmod-uniform name their sitemaps", () => {
+    expect(
+      find(findings, "site.sitemap-lastmod-missing")?.evidence
+    ).toStrictEqual({
+      sitemaps: [{ sitemap: `${server.origin}/pages.xml`, urls: 3 }],
+    });
+    expect(
+      find(findings, "site.sitemap-lastmod-uniform")?.evidence
+    ).toStrictEqual({
+      sitemaps: [
+        {
+          sitemap: `${server.origin}/posts.xml`,
+          urls: 10,
+          lastmod: "2026-11-09T14:03:12+00:00",
+        },
+      ],
+    });
+
+    expect(
+      find(findings, "site.sitemap-lastmod-uniform")?.fix?.[0]
+    ).toMatchObject({
+      in: "sitemap",
+      action: "replace",
+      url: `${server.origin}/posts.xml`,
+      at: `<loc>${server.origin}/post-0</loc>`,
+      current: "<lastmod>2026-11-09T14:03:12+00:00</lastmod>",
+      code: "<lastmod>{{date the page last changed}}</lastmod>",
+    });
+    expect(
+      find(findings, "site.sitemap-lastmod-missing")?.fix?.[0]
+    ).toMatchObject({
+      in: "sitemap",
+      action: "add",
+      url: `${server.origin}/pages.xml`,
+      at: `<loc>${server.origin}/</loc>`,
+      code: "<lastmod>{{date the page last changed}}</lastmod>",
+    });
+  });
+});
+
+const ten = (value: string | null) => Array.from({ length: 10 }, () => value);
+
+const newsSitemap = (entry: string) =>
+  `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">${entry}</urlset>`;
+
+describe("lastmod values that tell crawlers nothing", () => {
+  const SITEMAP = "https://www.example.com/sitemap.xml";
+
+  const inspect = (lastmods: (string | null)[]) => {
+    const problems = emptySitemapProblems();
+    const locs = lastmods.map((_, i) => `https://www.example.com/p/${i}`);
+
+    inspectSitemap(
+      problems,
+      SITEMAP,
+      { kind: "urlset", locs, lastmods },
+      1000,
+      { fromIndex: false, siteHost: "www.example.com", now: Date.now() }
+    );
+
+    const { missingLastmod, uniformLastmod } = sitemapEntryProblems(problems);
+
+    return {
+      missing: missingLastmod.map((g) => g.urls),
+      uniform: uniformLastmod.map((g) => g.lastmod),
+    };
+  };
+
+  it("reports a sitemap whose ten URLs share one date and time", () => {
+    expect(inspect(ten("2026-11-09T14:03:12Z"))).toStrictEqual({
+      missing: [],
+      uniform: ["2026-11-09T14:03:12Z"],
+    });
+  });
+
+  it.each([
+    ["one date, as a site launched in a day has", ten("2026-11-09")],
+    ["midnight, a date written out", ten("2026-11-09T00:00:00+01:00")],
+    ["nine URLs", ten("2026-11-09T14:03:12Z").slice(1)],
+    [
+      "one URL with a date of its own",
+      [...ten("2026-11-09T14:03:12Z").slice(1), "2026-10-01T08:00:00Z"],
+    ],
+    [
+      "one URL without a lastmod",
+      [...ten("2026-11-09T14:03:12Z").slice(1), null],
+    ],
+  ])("leaves out %s", (_, lastmods) => {
+    expect(inspect(lastmods).uniform).toStrictEqual([]);
+  });
+
+  it("reports a sitemap with no lastmod at all, and not one with some", () => {
+    expect(inspect([null, null, null]).missing).toStrictEqual([3]);
+    expect(inspect([null, "2026-11-01", null]).missing).toStrictEqual([]);
+    expect(inspect([]).missing).toStrictEqual([]);
+  });
+
+  it("leaves out a Google News sitemap, which dates its entries with news:publication_date", () => {
+    const withEntry = parseSitemap(
+      newsSitemap(
+        "<url><loc>https://www.example.com/a</loc><news:news><news:publication_date>2026-11-09</news:publication_date></news:news></url>"
+      )
+    );
+
+    // A news sitemap that lists a URL without its news:news element, as some plugins write it.
+    const bare = parseSitemap(
+      newsSitemap("<url><loc>https://www.example.com/</loc></url>")
+    );
+
+    for (const parsed of [withEntry, bare]) {
+      const problems = emptySitemapProblems();
+
+      inspectSitemap(problems, SITEMAP, parsed, 1000, {
+        fromIndex: false,
+        siteHost: "www.example.com",
+        now: Date.now(),
+      });
+
+      expect(parsed.news).toBeTruthy();
+      expect(sitemapEntryProblems(problems).missingLastmod).toStrictEqual([]);
+    }
+  });
+});
+
+describe(robotsInvalidFix, () => {
+  const ROBOTS = "https://www.example.com/robots.txt";
+
+  const fixOf = (text: string) =>
+    robotsInvalidFix(ROBOTS, text, invalidRobotsLines(text));
+
+  it("writes a relative Sitemap as a full URL, and a www host without its protocol", () => {
+    expect(
+      fixOf(
+        "User-agent: *\nDisallow:\nSitemap: sitemap.xml\nSitemap: www.example.com/news.xml\n"
+      ).map((e) => e.code)
+    ).toStrictEqual([
+      "Sitemap: https://www.example.com/sitemap.xml",
+      "Sitemap: https://www.example.com/news.xml",
+    ]);
+  });
+
+  it("finds nothing wrong in the rules crawlers read", () => {
+    expect(
+      invalidRobotsLines(
+        "# rules\nSitemap: https://www.example.com/sitemap.xml\nUser-agent: *\nDisallow: *.pdf$\nDisallow: /*?sort=\nDisallow:\nAllow: /\nCrawl-delay: 5\n"
+      )
+    ).toStrictEqual([]);
+  });
+
+  it("reads a long robots.txt of bad paths quickly and stops at 10 edits", () => {
+    const text = `User-agent: *\n${"Disallow: wp-admin/\n".repeat(25_000)}`;
+    const started = performance.now();
+    const edits = fixOf(text);
+
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(edits).toHaveLength(10);
+  });
+});
+
+describe(invalidLocFix, () => {
+  it("writes a relative loc out on the sitemap's host", () => {
+    expect(
+      invalidLocFix([
+        {
+          sitemap: "https://www.example.com/sitemaps/pages.xml",
+          loc: "/about/?a=1&b=2",
+          length: 15,
+          reason: "relative",
+        },
+        {
+          sitemap: "https://www.example.com/sitemaps/pages.xml",
+          loc: "team.html",
+          length: 9,
+          reason: "relative",
+        },
+      ]).map((e) => [e.current, e.code])
+    ).toStrictEqual([
+      [
+        "<loc>/about/?a=1&amp;b=2</loc>",
+        "<loc>https://www.example.com/about/?a=1&amp;b=2</loc>",
+      ],
+      [
+        "<loc>team.html</loc>",
+        "<loc>https://www.example.com/sitemaps/team.html</loc>",
+      ],
+    ]);
+  });
+});
+
 const SITE_RULES_HERE = new Set([
   "site.robots-txt-too-large",
   "site.robots-txt-unsupported-rule",
@@ -155,6 +487,10 @@ const SITE_RULES_HERE = new Set([
   "site.sitemap-other-host",
   "site.sitemap-error",
   "site.sitemap-missing",
+  "site.robots-txt-invalid-rule",
+  "site.sitemap-invalid-url",
+  "site.sitemap-lastmod-missing",
+  "site.sitemap-lastmod-uniform",
 ]);
 
 /** A urlset with every lastmod form that passes: a date, a time with a zone, a time without one. */
@@ -163,7 +499,9 @@ const validUrlset = (origin: string) =>
     `<url><loc>${origin}/</loc><lastmod>2026-11-01</lastmod></url><url><loc>${origin}/about</loc><lastmod>2026-11-02T09:30:00+01:00</lastmod></url><url><loc>${origin}/team</loc><lastmod>2026-11-03T09:30:00</lastmod></url>`
   );
 
-const QUIET_ROBOTS = "User-agent: *\nDisallow: /private/\nAllow: /\n";
+// Paths crawlers match: a wildcard first, an empty Disallow, and Allow: / beside a Disallow.
+const QUIET_ROBOTS =
+  "User-agent: *\nDisallow: /private/\nDisallow: *.pdf$\nAllow: /\n\nUser-agent: Bingbot\nDisallow:\n";
 
 describe("a valid site gives none of the robots.txt and sitemap findings", () => {
   let server: FixtureServer;

@@ -91,11 +91,11 @@ const hrefFor = (
 };
 
 /** This page's own URL, for a self-referencing canonical: no fragment, no tracking parameters. */
-const selfUrl = (page: ExtractedPage): string =>
+export const selfUrl = (page: ExtractedPage): string =>
   normalizeUrl(page.url) ?? page.url;
 
 /** The edit that points the canonical <link> the page reads at `url`. */
-const pointCanonical = (
+export const pointCanonical = (
   page: ExtractedPage,
   url: string,
   write?: string
@@ -149,6 +149,89 @@ const linkHeaderEdit = (
         at: "Link",
         write,
       });
+};
+
+const PAGINATION_DOCS =
+  "https://developers.google.com/search/docs/specialty/ecommerce/pagination-and-incremental-page-loading";
+
+/** Query parameters that number the pages of a series: ?page=2, ?p=2, ?pg=2, WordPress's ?paged=2. */
+const PAGE_PARAMS = new Set(["page", "p", "pg", "paged"]);
+
+/** A path that ends in a page number, as WordPress and many blogs write it: /blog/page/2/. */
+const PAGE_SEGMENT = /\/page\/(?<n>\d{1,6})\/?$/u;
+
+/** Page 2 or later of a series: its number and the URL of the series' first page. */
+interface LaterPage {
+  n: number;
+  first: string;
+}
+
+const laterPageOf = (url: string): LaterPage | null => {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+
+  for (const [key, value] of parsed.searchParams) {
+    if (
+      PAGE_PARAMS.has(key.toLowerCase()) &&
+      /^\d{1,6}$/u.test(value) &&
+      Number(value) >= 2
+    ) {
+      const first = new URL(parsed.href);
+      first.searchParams.delete(key);
+
+      return { n: Number(value), first: first.href };
+    }
+  }
+
+  const match = PAGE_SEGMENT.exec(parsed.pathname);
+  const n = Number(match?.groups?.n);
+
+  if (match && n >= 2) {
+    parsed.pathname = `${parsed.pathname.slice(0, match.index)}/`;
+
+    return { n, first: parsed.href };
+  }
+
+  return null;
+};
+
+/**
+ * A URL to compare as the first page of a series: no fragment or tracking parameters, no trailing
+ * slash, and no `page=1`, which names the first page too. Paths only for a file or a local server,
+ * whose host is not the live one.
+ */
+const firstPageKey = (url: string, pathOnly: boolean): string | null => {
+  const normalized = normalizeUrl(url);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = new URL(normalized);
+
+  const firstPage = [...parsed.searchParams].filter(
+    ([key, value]) => PAGE_PARAMS.has(key.toLowerCase()) && value === "1"
+  );
+
+  for (const [key] of firstPage) {
+    parsed.searchParams.delete(key);
+  }
+
+  const { pathname } = parsed;
+
+  const path =
+    pathname.length > 1 && pathname.endsWith("/")
+      ? pathname.slice(0, -1)
+      : pathname;
+
+  return pathOnly
+    ? `${path}${parsed.search}`
+    : `${parsed.origin}${path}${parsed.search}`;
 };
 
 export const canonicalRules = [
@@ -430,6 +513,49 @@ export const canonicalRules = [
               comparedBy: pathOnly ? "path" : "url",
             },
           });
+    }
+  ),
+  defineRule(
+    {
+      id: "canonical.paginated-to-first",
+      category: "canonical",
+      severity: "warning",
+      description:
+        "Page 2 or later of a paginated series (?page=2, /page/2/) names the first page as its canonical, so search engines may drop it and miss the items only it links to.",
+      recommendation:
+        "Give each page of the series a canonical that names its own URL (?page=2 names ?page=2), and link the pages to each other with plain <a href> links. Google advises against making the first page the canonical of the series.",
+      docs: PAGINATION_DOCS,
+    },
+    ({ page, source }, make) => {
+      const later = page.canonical ? laterPageOf(page.url) : null;
+
+      if (!later || !page.canonical) {
+        return null;
+      }
+
+      const pathOnly = source !== "url" || isLocalHost(page.url);
+      const first = firstPageKey(later.first, pathOnly);
+
+      return first !== null && firstPageKey(page.canonical, pathOnly) === first
+        ? make(
+            `Page ${later.n} of a series names the first page, ${page.canonical}, as canonical.`,
+            {
+              fix: [
+                pointCanonical(
+                  page,
+                  selfUrl(page),
+                  "Each page of the series names its own URL; the first page keeps its own canonical."
+                ),
+              ],
+              selector: SELECTOR,
+              evidence: {
+                page: page.url,
+                pageNumber: later.n,
+                canonical: page.canonical,
+              },
+            }
+          )
+        : null;
     }
   ),
 ];

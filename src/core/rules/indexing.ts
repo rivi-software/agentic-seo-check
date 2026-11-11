@@ -1,6 +1,6 @@
 import { quote } from "../html/dom.js";
 import type { ExtractedPage, FixEdit, ResponseInfo } from "../types.js";
-import { removeEdit, replaceEdit, setAttributeEdit } from "./fix.js";
+import { removeEdit, replaceEdit, setAttributeEdit, slot } from "./fix.js";
 import { readAttributes, withAttributeSelector } from "./quoted-tags.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
 
@@ -365,6 +365,177 @@ const dropping =
     return d;
   };
 
+const UNAVAILABLE_AFTER = "unavailable_after";
+
+/** Where an unavailable_after directive sits in a robots value, and the date it gives. */
+interface UnavailableAfter {
+  /** The date as written, trimmed; empty when the directive has none. */
+  date: string;
+  /** Offsets of the whole directive, from its name to the end of its date. */
+  start: number;
+  end: number;
+}
+
+/**
+ * The unavailable_after directive of a robots meta content or X-Robots-Tag value. RFC 822 and 850
+ * dates hold a comma after the weekday ("Fri, 25 Jun 2010"), so a comma ends the date only when a
+ * letter follows it, which starts the next directive; a date's next part starts with a digit.
+ */
+const findUnavailableAfter = (value: string): UnavailableAfter | null => {
+  const text = value.slice(0, 2000);
+  const start = text.toLowerCase().indexOf(UNAVAILABLE_AFTER);
+
+  if (start === -1) {
+    return null;
+  }
+
+  const afterName = start + UNAVAILABLE_AFTER.length;
+  const colon = /^\s*:/u.exec(text.slice(afterName, afterName + 40));
+
+  if (!colon) {
+    return { date: "", start, end: afterName };
+  }
+
+  const dateStart = afterName + colon[0].length;
+  let end = text.length;
+
+  for (
+    let comma = text.indexOf(",", dateStart);
+    comma !== -1;
+    comma = text.indexOf(",", comma + 1)
+  ) {
+    if (/^\s*[a-z]/iu.test(text.slice(comma + 1, comma + 40))) {
+      end = comma;
+      break;
+    }
+  }
+
+  return { date: text.slice(dateStart, end).trim(), start, end };
+};
+
+/**
+ * `value` without the directive `found` locates and the comma that joined it to the others. An
+ * agent prefix ("googlebot:") left with nothing after it goes too.
+ */
+const withoutDirective = (value: string, found: UnavailableAfter): string => {
+  let before = value
+    .slice(0, found.start)
+    .trimEnd()
+    .replace(/,$/u, "")
+    .trimEnd();
+
+  let after = value.slice(found.end).trimStart().replace(/^,/u, "").trimStart();
+
+  const lastPiece = before.slice(before.lastIndexOf(",") + 1).trim();
+
+  if (/^[a-z0-9_-]+\s*:$/iu.test(lastPiece)) {
+    // The agent prefix belongs to what follows the directive, or goes with it.
+    before = before
+      .slice(0, before.length - lastPiece.length)
+      .trimEnd()
+      .replace(/,$/u, "")
+      .trimEnd();
+    after = after ? `${lastPiece} ${after}` : after;
+  }
+
+  return before && after ? `${before}, ${after}` : before || after;
+};
+
+/** `value` with the directive `found` locates written with `date`. */
+const withDate = (
+  value: string,
+  found: UnavailableAfter,
+  date: string
+): string =>
+  `${value.slice(0, found.start)}${UNAVAILABLE_AFTER}: ${date}${value.slice(found.end)}`;
+
+/** An unavailable_after directive Google reads, where it is written, and the edits that change it. */
+interface SourcedUnavailableAfter {
+  source: string;
+  date: string;
+  time: number;
+  /** The edits that drop the directive, or write `date` in its place. */
+  edit: (date: string | null, write: string) => FixEdit;
+}
+
+const unavailableAfterDirectives = (
+  page: ExtractedPage,
+  response?: ResponseInfo
+): SourcedUnavailableAfter[] => {
+  const out: SourcedUnavailableAfter[] = [];
+
+  for (const tag of page.markup.metaRobots) {
+    const attributes = readAttributes(tag);
+    const name = attributes?.get("name")?.trim() ?? "";
+    const content = attributes?.get("content") ?? "";
+    const found = findUnavailableAfter(content);
+
+    if (!found || !GOOGLE_NAMES.has(name.toLowerCase())) {
+      continue;
+    }
+
+    const at = withAttributeSelector("meta", "name", name);
+
+    out.push({
+      source: `<meta name="${name.toLowerCase()}">`,
+      date: found.date,
+      time: Date.parse(found.date),
+      edit: (date, write) => {
+        const next =
+          date === null
+            ? withoutDirective(content, found)
+            : withDate(content, found, date);
+
+        return next
+          ? setAttributeEdit(
+              tag,
+              at,
+              "content",
+              next.replaceAll('"', "&quot;"),
+              write
+            )
+          : removeEdit("html", tag, { at, write });
+      },
+    });
+  }
+
+  const header = response?.headers["x-robots-tag"];
+  const found = header ? findUnavailableAfter(header) : null;
+
+  const agent = header
+    ? parseRobotsHeader(header).find((d) =>
+        d.directive.startsWith(UNAVAILABLE_AFTER)
+      )?.agent
+    : undefined;
+
+  if (header && found && (agent === null || agent === "googlebot")) {
+    const current = quote(`X-Robots-Tag: ${header}`);
+
+    out.push({
+      source: "X-Robots-Tag",
+      date: found.date,
+      time: Date.parse(found.date),
+      edit: (date, write) => {
+        const next =
+          date === null
+            ? withoutDirective(header, found)
+            : withDate(header, found, date);
+
+        const text = `${write} Set in the server, CDN or host config (a headers file or rule) that sends it.`;
+
+        return next
+          ? replaceEdit("http", current, `X-Robots-Tag: ${next}`, {
+              at: "X-Robots-Tag",
+              write: text,
+            })
+          : removeEdit("http", current, { at: "X-Robots-Tag", write: text });
+      },
+    });
+  }
+
+  return out;
+};
+
 export const indexingRules = [
   defineRule(
     {
@@ -545,6 +716,69 @@ export const indexingRules = [
                 meant: m.meant,
               }))
             ),
+          },
+        }
+      );
+    }
+  ),
+  defineRule(
+    {
+      id: "robots.unavailable-after",
+      category: "indexing",
+      severity: "warning",
+      description:
+        "The page sets unavailable_after (meta robots or X-Robots-Tag) to a date that has passed, so Google no longer shows it in search results (warning), or to a date Google cannot read, so it ignores the rule (info).",
+      recommendation:
+        "Remove unavailable_after if the page should show in search again; a template or plugin often leaves an old date in place. To have a page drop out later, write the date in ISO 8601 (2026-12-31), RFC 822 or RFC 850.",
+      docs: GOOGLE_DOCS.robotsMeta,
+    },
+    ({ page, response }, make) => {
+      const directives = unavailableAfterDirectives(page, response);
+      const now = Date.now();
+      const passed = directives.filter((d) => d.time <= now);
+      const unread = directives.filter((d) => Number.isNaN(d.time));
+
+      if (passed.length > 0) {
+        const where = passed.map((d) => `${d.source} (${d.date})`);
+
+        return make(
+          `unavailable_after in ${where.join(" and ")} has passed, so Google no longer shows this page in search results.`,
+          {
+            fix: passed.map((d) =>
+              d.edit(
+                null,
+                "Only if the page should show in search again. Keep it if the page was meant to drop out after that date (an offer or event that is over)."
+              )
+            ),
+            evidence: {
+              directives: passed.map((d) => ({
+                source: d.source,
+                date: d.date,
+              })),
+            },
+          }
+        );
+      }
+
+      if (unread.length === 0) {
+        return null;
+      }
+
+      return make(
+        `unavailable_after in ${unread.map((d) => `${d.source} ("${d.date.slice(0, 60)}")`).join(" and ")} has a date this audit cannot read, and Google ignores the rule when it cannot read the date.`,
+        {
+          severity: "info",
+          fix: unread.map((d) =>
+            d.edit(
+              slot("date in ISO 8601, e.g. 2026-12-31"),
+              "The date after which the page should drop out of search, in ISO 8601 (2026-12-31 or 2026-12-31T23:59:59+01:00). If the page should stay in search, remove the directive instead."
+            )
+          ),
+          evidence: {
+            directives: unread.map((d) => ({
+              source: d.source,
+              date: d.date.slice(0, 200),
+            })),
           },
         }
       );

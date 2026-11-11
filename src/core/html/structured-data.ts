@@ -97,6 +97,77 @@ export const typesOf = (value: JsonValue | undefined): string[] => {
   return [];
 };
 
+/**
+ * A selector of one class and nothing else (`.paywall`), the only kind Google reads in a paywalled
+ * section's `cssSelector`. One character class after a fixed start, so it cannot backtrack.
+ */
+export const isClassSelector = (value: string): boolean =>
+  /^\.-?[_a-z -￿][-\w -￿]*$/iu.test(value.trim());
+
+/** The `cssSelector` values a structured data value names, one per string, arrays included. */
+export const cssSelectorValues = (value: JsonValue | undefined): string[] => {
+  if (isString(value)) {
+    return [value.trim()];
+  }
+
+  return Array.isArray(value)
+    ? value.filter(isString).map((v) => v.trim())
+    : [];
+};
+
+/** How many distinct `cssSelector` classes the extractor looks up in the HTML. */
+export const MAX_CSS_SELECTORS = 20;
+
+/**
+ * The distinct `.class` selectors the page's structured data names in `cssSelector`, the first
+ * `MAX_CSS_SELECTORS`, so the extractor can look each up in the HTML once.
+ */
+export const classSelectorsOf = (items: StructuredDataItem[]): string[] => {
+  const found = new Set<string>();
+  const seen = new Set<JsonValue>();
+  let visited = 0;
+
+  const walk = (value: JsonValue | undefined, depth: number): void => {
+    if (depth > 8 || visited >= 5000 || found.size >= MAX_CSS_SELECTORS) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        walk(v, depth);
+      }
+
+      return;
+    }
+
+    if (!isJsonObject(value) || seen.has(value)) {
+      return;
+    }
+
+    seen.add(value);
+    visited += 1;
+
+    for (const [key, v] of Object.entries(value)) {
+      if (key === "cssSelector") {
+        for (const selector of cssSelectorValues(v)) {
+          if (isClassSelector(selector) && found.size < MAX_CSS_SELECTORS) {
+            found.add(selector);
+          }
+        }
+      } else {
+        walk(v, depth + 1);
+      }
+    }
+  };
+
+  for (const item of items) {
+    // SAFETY: extractStructuredData builds every item's data from JSON.parse or from microdata, and both hold JSON values alone.
+    walk(item.data as JsonObject, 0);
+  }
+
+  return [...found];
+};
+
 const flattenJsonLd = (
   node: JsonValue,
   inheritedContext: string | null,

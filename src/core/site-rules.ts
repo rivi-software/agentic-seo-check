@@ -29,7 +29,6 @@ import {
   returnLinkEdit,
   reheadEdit,
   relinkEdit,
-  linesOf,
   retitleEdit,
   statusLine,
   removeFromSitemap,
@@ -39,13 +38,25 @@ import {
   robotsMissingFix,
   robotsTooLargeFix,
   robotsUnsupportedFix,
+  robotsInvalidFix,
+  invalidRobotsLines,
+  robotsFields,
+  invalidLocFix,
+  missingLastmodFix,
+  uniformLastmodFix,
   MAX_EDITS,
   sitemapErrorFix,
   sitemapMissingFix,
   splitSitemapFix,
 } from "./site-fixes.js";
+import type { InvalidRobotsLine, RobotsLineProblem } from "./site-fixes.js";
 import { MIN_COMPARABLE_WORDS, SAME_TEXT } from "./site-probes.js";
-import { megabytes, sitemapLayout, sitemapReading } from "./sitemap.js";
+import {
+  megabytes,
+  sitemapEntryProblems,
+  sitemapLayout,
+  sitemapReading,
+} from "./sitemap.js";
 import type {
   ExtractedPage,
   Finding,
@@ -56,6 +67,7 @@ import type {
   RobotsTxtInfo,
   RuleMeta,
   SitemapInfo,
+  SitemapProblems,
   Thresholds,
   CrawlStats,
 } from "./types.js";
@@ -121,6 +133,13 @@ export const SITE_RULES: RuleMeta[] = [
     "https://developers.google.com/crawling/docs/robots-txt/robots-txt-spec"
   ),
   meta(
+    "site.robots-txt-invalid-rule",
+    "warning",
+    "robots.txt has lines crawlers cannot use: an Allow or Disallow path that starts with neither / nor * (a full URL included), which matches no URL; an Allow or Disallow above the first User-agent line, which belongs to no group; or a Sitemap that is not a full URL, which search engines ignore.",
+    "Start every Allow and Disallow path with / (Disallow: /wp-admin/, not wp-admin/ or https://example.com/wp-admin/), put every rule under a User-agent line, and write each Sitemap line as a full URL (Sitemap: https://example.com/sitemap.xml).",
+    "https://developers.google.com/crawling/docs/robots-txt/robots-txt-spec"
+  ),
+  meta(
     "site.robots-blocks-resources",
     "warning",
     "robots.txt keeps Googlebot from scripts or stylesheets the pages load, so Google renders the pages without them.",
@@ -156,6 +175,13 @@ export const SITE_RULES: RuleMeta[] = [
     "https://developers.google.com/search/docs/crawling-indexing/sitemaps/large-sitemaps"
   ),
   meta(
+    "site.sitemap-invalid-url",
+    "warning",
+    "Sitemap <loc> values that are not full http(s) URLs, or are 2,048 characters or longer. Search engines crawl sitemap URLs exactly as listed and drop these, so the pages they name are not submitted.",
+    "Write every <loc> as a full URL with protocol and host (https://www.example.com/about/, not /about/), under 2,048 characters, generated from the production site URL.",
+    "https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap"
+  ),
+  meta(
     "site.sitemap-lastmod-invalid",
     "warning",
     "Sitemap <lastmod> values are not in W3C Datetime format, so search engines ignore them.",
@@ -168,6 +194,20 @@ export const SITE_RULES: RuleMeta[] = [
     "Sitemap <lastmod> values lie in the future. Google uses lastmod only when it is consistently accurate.",
     "Set <lastmod> to when the page's content last changed, not to the build time plus an offset or a publish date to come.",
     "https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap"
+  ),
+  meta(
+    "site.sitemap-lastmod-missing",
+    "info",
+    "A sitemap lists URLs but gives none of them a <lastmod>, so search engines cannot tell which pages changed. Bing calls lastmod a key signal for what to crawl again; Google uses it when it is consistently accurate.",
+    "Give each <url> a <lastmod> with the date its content last changed in substance (2026-11-09 or 2026-11-09T10:00:00+01:00), taken from the content, never the time the sitemap is built.",
+    "https://blogs.bing.com/webmaster/July-2025/Keeping-Content-Discoverable-with-Sitemaps-in-AI-Powered-Search"
+  ),
+  meta(
+    "site.sitemap-lastmod-uniform",
+    "info",
+    "Every URL of a sitemap of 10 or more has the same <lastmod> date and time, which is the time the sitemap was built rather than when each page changed. Bing asks sites not to set lastmod to the sitemap's build time, and Google ignores lastmod values that are not accurate.",
+    "Set each <lastmod> to when that page's content last changed (the CMS's modified date, the content file's last commit or its front matter), not to the build time.",
+    "https://blogs.bing.com/webmaster/July-2025/Keeping-Content-Discoverable-with-Sitemaps-in-AI-Powered-Search"
   ),
   meta(
     "site.sitemap-other-host",
@@ -822,24 +862,48 @@ const unsupportedRobotsLines = (text: string): UnsupportedRobotsLines => {
   const retired: string[] = [];
   const crawlDelay: string[] = [];
 
-  for (const [i, raw] of linesOf(text).slice(0, 50_000).entries()) {
-    const line = raw.replace(/#.*$/u, "").trim();
-
-    const field = /^(?<field>[a-z-]+)\s*:/iu
-      .exec(line)
-      ?.groups?.field?.toLowerCase();
-
+  for (const { index, line, field } of robotsFields(text)) {
     if (field === "noindex" || field === "nofollow") {
-      retired.push(`line ${i + 1}: ${line.slice(0, 120)}`);
+      retired.push(`line ${index + 1}: ${line.slice(0, 120)}`);
     } else if (field === "crawl-delay") {
-      crawlDelay.push(`line ${i + 1}: ${line.slice(0, 120)}`);
+      crawlDelay.push(`line ${index + 1}: ${line.slice(0, 120)}`);
     }
   }
 
   return { retired, crawlDelay };
 };
 
-/** robots.txt's size and the rules in it Google does not support. */
+/** What each kind of robots.txt line crawlers cannot use does, for the evidence. */
+const ROBOTS_LINE_PROBLEMS: Record<RobotsLineProblem, string> = {
+  path: "the path starts with neither / nor *, so it matches no URL",
+  url: "a full URL where a path belongs, so it matches no URL",
+  "outside-group":
+    "above the first User-agent line, so it belongs to no group and crawlers ignore it",
+  sitemap: "not a full URL, so search engines ignore it",
+};
+
+const invalidRobotsMessage = (invalid: InvalidRobotsLine[]): string => {
+  const count = (...problems: RobotsLineProblem[]): number =>
+    invalid.filter((f) => problems.includes(f.problem)).length;
+
+  const parts = [
+    [
+      count("path", "url"),
+      "Allow or Disallow line(s) whose path matches no URL",
+    ],
+    [
+      count("outside-group"),
+      "rule(s) above the first User-agent line, which crawlers ignore",
+    ],
+    [count("sitemap"), "Sitemap line(s) that are not a full URL"],
+  ] as const;
+
+  return `robots.txt has ${parts
+    .flatMap(([n, label]) => (n > 0 ? [`${n} ${label}`] : []))
+    .join("; ")}.`;
+};
+
+/** robots.txt's size, the rules in it Google does not support, and the lines crawlers cannot use. */
 const robotsContentFindings = (ctx: SiteContext): Finding[] => {
   const out: Finding[] = [];
   const bytes = ctx.robots?.bytes ?? 0;
@@ -881,6 +945,28 @@ const robotsContentFindings = (ctx: SiteContext): Finding[] => {
             url: ctx.robots?.url,
             retired: cap(retired),
             crawlDelay: cap(crawlDelay),
+          },
+        }
+      )
+    );
+  }
+
+  const invalid = invalidRobotsLines(text);
+
+  if (invalid.length > 0) {
+    out.push(
+      finding(
+        m("site.robots-txt-invalid-rule"),
+        invalidRobotsMessage(invalid),
+        {
+          fix: robotsInvalidFix(robotsUrl, text, invalid),
+          evidence: {
+            url: ctx.robots?.url,
+            count: invalid.length,
+            lines: cap(invalid).map(
+              (f) =>
+                `line ${f.index + 1}: ${f.line.slice(0, 120)} (${ROBOTS_LINE_PROBLEMS[f.problem]})`
+            ),
           },
         }
       )
@@ -967,6 +1053,77 @@ const blockedResourceFindings = ({
         ),
       ]
     : [];
+};
+
+/** <loc> values search engines drop, and lastmods that tell them nothing. */
+const sitemapEntryFindings = (problems: SitemapProblems): Finding[] => {
+  const { invalidLocs, missingLastmod, uniformLastmod } =
+    sitemapEntryProblems(problems);
+
+  const out: Finding[] = [];
+
+  if (invalidLocs.count > 0) {
+    const relative = invalidLocs.examples.every((e) => e.reason === "relative");
+
+    out.push(
+      finding(
+        m("site.sitemap-invalid-url"),
+        relative
+          ? `${invalidLocs.count} sitemap <loc> value(s) are not full URLs, so search engines drop them.`
+          : `${invalidLocs.count} sitemap <loc> value(s) are not full URLs or are 2,048 characters or longer, so search engines drop them.`,
+        {
+          fix: invalidLocFix(invalidLocs.examples),
+          evidence: {
+            count: invalidLocs.count,
+            examples: invalidLocs.examples.map(
+              (e) =>
+                `${e.loc.slice(0, 200)}${e.reason === "too-long" ? ` (${e.length} characters)` : ""} (in ${e.sitemap})`
+            ),
+          },
+        }
+      )
+    );
+  }
+
+  if (missingLastmod.length > 0) {
+    out.push(
+      finding(
+        m("site.sitemap-lastmod-missing"),
+        `${missingLastmod.length} sitemap(s) list URLs without any <lastmod>.`,
+        {
+          fix: missingLastmodFix(missingLastmod),
+          evidence: {
+            sitemaps: cap(
+              missingLastmod.map((g) => ({ sitemap: g.sitemap, urls: g.urls }))
+            ),
+          },
+        }
+      )
+    );
+  }
+
+  if (uniformLastmod.length > 0) {
+    out.push(
+      finding(
+        m("site.sitemap-lastmod-uniform"),
+        `${uniformLastmod.length} sitemap(s) give every URL the same <lastmod>, ${uniformLastmod[0]?.lastmod ?? ""}.`,
+        {
+          fix: uniformLastmodFix(uniformLastmod),
+          evidence: {
+            sitemaps: cap(
+              uniformLastmod.map((g) => ({
+                sitemap: g.sitemap,
+                urls: g.urls,
+                lastmod: g.lastmod,
+              }))
+            ),
+          },
+        }
+      )
+    );
+  }
+
+  return out;
 };
 
 /** Sitemaps over the protocol's limits, nested indexes, bad lastmod values and other hosts. */
@@ -1086,7 +1243,7 @@ const sitemapProtocolFindings = (ctx: SiteContext): Finding[] => {
     }
   }
 
-  return out;
+  return [...out, ...sitemapEntryFindings(problems)];
 };
 
 /** The sitemap URL a robots.txt should name: the one found, else /sitemap.xml. */

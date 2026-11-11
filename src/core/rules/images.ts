@@ -1,6 +1,8 @@
 import type { FixEdit, ImageInfo } from "../types.js";
 import {
   addHtml,
+  escapeAttribute,
+  rebuildEdit,
   replaceHtml,
   setAttributeEdit,
   slot,
@@ -23,6 +25,50 @@ const LAZY_SRC = ["data-src", "data-lazy-src", "data-original"];
 
 const FILENAME_ALT =
   /^(?:img|image|dsc|dscn|dcim|photo|screenshot|screen shot|untitled)[-_ ]?\d*|\.(?:jpe?g|png|gif|webp|avif|svg)$/iu;
+
+/**
+ * File types an <img src> may name that Google Images does not index: it supports BMP, GIF, JPEG,
+ * PNG, WebP, SVG and AVIF. Phones save HEIC, scanners and design tools TIFF or PSD.
+ */
+const UNSUPPORTED_FORMATS = new Set([
+  "heic",
+  "heif",
+  "tif",
+  "tiff",
+  "jxl",
+  "jp2",
+  "psd",
+]);
+
+/** Where the file name of an image URL as written ends, before its query or fragment. */
+const pathEnd = (src: string): number => {
+  const query = src.indexOf("?");
+  const hash = src.indexOf("#");
+  const ends = [query, hash].filter((i) => i !== -1);
+
+  return ends.length > 0 ? Math.min(...ends) : src.length;
+};
+
+/** The extension of an image URL as written, lower-cased, or null when its file name has none. */
+const extensionOf = (src: string): string | null => {
+  if (src.startsWith("data:")) {
+    return null;
+  }
+
+  const path = src.slice(0, pathEnd(src));
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  const dot = name.lastIndexOf(".");
+
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : null;
+};
+
+/** `src` with its extension swapped for `.webp`, query and fragment kept. */
+const asWebp = (src: string): string => {
+  const end = pathEnd(src);
+  const dot = src.lastIndexOf(".", end);
+
+  return `${src.slice(0, dot)}.webp${src.slice(end)}`;
+};
 
 export const imageRules = [
   defineRule(
@@ -207,6 +253,72 @@ export const imageRules = [
             evidence: { count: missing.length },
           })
         : null;
+    }
+  ),
+  defineRule(
+    {
+      id: "img.unsupported-format",
+      category: "images",
+      severity: "info",
+      description:
+        "Images in a format Google Images does not index (HEIC, HEIF, TIFF, JPEG XL, JPEG 2000, PSD). Most browsers cannot show them either.",
+      recommendation:
+        "Convert these images to WebP, AVIF, JPEG or PNG, and point the <img src> at the converted file. Google Images indexes BMP, GIF, JPEG, PNG, WebP, SVG and AVIF.",
+      docs: GOOGLE_DOCS.images,
+    },
+    ({ page }, make) => {
+      const unsupported = page.images.flatMap((i) => {
+        const format = i.src ? extensionOf(i.src) : null;
+
+        return i.src && format && UNSUPPORTED_FORMATS.has(format)
+          ? [{ image: i, src: i.src, format }]
+          : [];
+      });
+
+      if (unsupported.length === 0) {
+        return null;
+      }
+
+      const fix = unsupported.flatMap(({ image, src, format }) => {
+        const webp = asWebp(src);
+        let url: string | undefined;
+
+        try {
+          url = new URL(src, page.url).href;
+        } catch {
+          url = undefined;
+        }
+
+        return [
+          rebuildEdit(
+            url,
+            "the image as WebP",
+            `Convert ${src.slice(0, 120)} from ${format.toUpperCase()} to WebP (or AVIF, JPEG or PNG) and save it as ${webp.slice(0, 120)}.`
+          ),
+          setAttributeEdit(
+            image.tag,
+            imageAt(image, "img[src]"),
+            "src",
+            escapeAttribute(webp)
+          ),
+        ];
+      });
+
+      return make(
+        `${unsupported.length} image(s) are in a format Google Images does not index: ${cap(
+          unsupported.map((u) => u.src),
+          5
+        ).join(", ")}.`,
+        {
+          fix,
+          evidence: {
+            count: unsupported.length,
+            examples: cap(
+              unsupported.map(({ src, format }) => ({ src, format }))
+            ),
+          },
+        }
+      );
     }
   ),
 ];

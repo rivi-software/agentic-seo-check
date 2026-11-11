@@ -42,7 +42,15 @@ export interface ParsedSitemap {
   locs: string[];
   /** The <lastmod> of each entry in `locs`, or null where it has none. */
   lastmods: (string | null)[];
+  /**
+   * A Google News sitemap: its entries date themselves with <news:publication_date>, so a
+   * missing or shared <lastmod> says nothing about them.
+   */
+  news?: boolean;
 }
+
+/** The namespace of Google News sitemaps. */
+const NEWS_NAMESPACE = "www.google.com/schemas/sitemap-news/0.9";
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -150,11 +158,20 @@ export const parseSitemap = (
 
   if (doc.urlset !== undefined) {
     const entries = doc.urlset === "" ? undefined : doc.urlset.url;
+    const list = Array.isArray(entries) ? entries : [];
 
-    return {
-      kind: "urlset",
-      ...entriesOf(Array.isArray(entries) ? entries : []),
-    };
+    // The parser drops attributes, so the namespace is read from the opening tags as written.
+    const news =
+      trimmed.slice(0, 4096).includes(NEWS_NAMESPACE) ||
+      list.some((e) => isEntry(e) && "news:news" in e);
+
+    const parsed: ParsedSitemap = { kind: "urlset", ...entriesOf(list) };
+
+    if (news) {
+      parsed.news = true;
+    }
+
+    return parsed;
   }
 
   return { kind: "unknown", locs: [], lastmods: [] };
@@ -286,6 +303,127 @@ export const emptySitemapProblems = (): SitemapProblems => ({
   otherHost: { count: 0, examples: [] },
 });
 
+/** The sitemap protocol wants every <loc> "less than 2,048 characters". */
+export const MAX_LOC_LENGTH = 2048;
+
+/**
+ * Whether a <loc> (or a robots.txt Sitemap: value) is a URL search engines read: absolute, with
+ * http or https. Google crawls a sitemap's URLs "exactly as listed", so it drops "/about/".
+ */
+export const isAbsoluteHttpUrl = (value: string): boolean => {
+  if (!/^https?:\/\//iu.test(value)) {
+    return false;
+  }
+
+  try {
+    return Boolean(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+};
+
+/** A <loc> search engines drop, and the sitemap that lists it. */
+export interface InvalidLoc {
+  sitemap: string;
+  /** The value as the sitemap writes it, cut at 600 characters. */
+  loc: string;
+  length: number;
+  /** `relative`: no protocol and host; `too-long`: 2,048 characters or more. */
+  reason: "relative" | "too-long";
+}
+
+/** A sitemap whose <lastmod> values tell crawlers nothing about which pages changed. */
+export interface LastmodGap {
+  sitemap: string;
+  /** How many URLs it lists. */
+  urls: number;
+  /** Its first few URLs, for a fix to name entries by. */
+  locs: string[];
+  /** The one value every entry has, for a sitemap that gives them all the same. */
+  lastmod?: string;
+}
+
+/**
+ * What a sitemap's entries say beyond `SitemapProblems`. Kept beside the audit's `problems`, like
+ * the layout, so the JSON stays as it is.
+ */
+export interface SitemapEntryProblems {
+  invalidLocs: { count: number; examples: InvalidLoc[] };
+  /** Sitemaps (<urlset>) that list URLs and give none of them a <lastmod>. */
+  missingLastmod: LastmodGap[];
+  /** Sitemaps of `UNIFORM_LASTMOD_MIN_URLS` or more URLs that give each the same date and time. */
+  uniformLastmod: LastmodGap[];
+}
+
+const entryProblems = new WeakMap<SitemapProblems, SitemapEntryProblems>();
+
+/** The entry problems `inspectSitemap` recorded for the sitemaps behind `problems`. */
+export const sitemapEntryProblems = (
+  problems: SitemapProblems
+): SitemapEntryProblems => {
+  let entries = entryProblems.get(problems);
+
+  if (!entries) {
+    entries = {
+      invalidLocs: { count: 0, examples: [] },
+      missingLastmod: [],
+      uniformLastmod: [],
+    };
+    entryProblems.set(problems, entries);
+  }
+
+  return entries;
+};
+
+/**
+ * A sitemap this small may have gone live in one go, every page on the same day; past it, one
+ * time on every URL is the build's.
+ */
+export const UNIFORM_LASTMOD_MIN_URLS = 10;
+
+/** URLs a lastmod gap keeps for its fix. */
+const GAP_LOCS = 3;
+
+/** Why search engines drop a <loc>, or null when they read it. */
+const locProblem = (loc: string): InvalidLoc["reason"] | null => {
+  if (!isAbsoluteHttpUrl(loc)) {
+    return "relative";
+  }
+
+  return loc.length >= MAX_LOC_LENGTH ? "too-long" : null;
+};
+
+const noteLoc = (
+  entries: SitemapEntryProblems,
+  sitemap: string,
+  loc: string,
+  reason: InvalidLoc["reason"]
+): void => {
+  entries.invalidLocs.count += 1;
+
+  if (entries.invalidLocs.examples.length < 10) {
+    entries.invalidLocs.examples.push({
+      sitemap,
+      loc: loc.slice(0, 600),
+      length: loc.length,
+      reason,
+    });
+  }
+};
+
+/**
+ * A lastmod with a time of day: what a build writes when it stamps its own clock. Midnight is a
+ * date written out in full, which a site that went live in one day may share across its pages.
+ */
+const hasTimeOfDay = (value: string): boolean => {
+  const t = value.indexOf("T");
+
+  return (
+    t !== -1 &&
+    !/^T00:00(?::00(?:\.0+)?)?(?:Z|[+-]\d{2}:\d{2})?$/u.test(value.slice(t))
+  );
+};
+
 /*
  * W3C Datetime: a year, a month, a day, then a time with an optional time zone. A time without a
  * zone breaks the format but is common, and search engines read it, so it passes.
@@ -313,6 +451,69 @@ export interface InspectOptions {
   now: number;
 }
 
+/**
+ * Notes a urlset's lastmod values that are not W3C Datetime or lie in the future, and a urlset
+ * whose lastmods tell crawlers nothing: none at all, or one date and time on every URL. A Google
+ * News sitemap dates its entries another way, so only its invalid and future values count.
+ */
+const inspectLastmods = (
+  problems: SitemapProblems,
+  sitemap: string,
+  parsed: ParsedSitemap,
+  now: number
+): void => {
+  let dated = 0;
+  // The one valid date and time every entry so far has, or null once two differ or one has none.
+  let shared: string | null | undefined;
+
+  for (const [i, loc] of parsed.locs.entries()) {
+    const lastmod = parsed.lastmods[i];
+
+    if (!lastmod) {
+      shared = null;
+      continue;
+    }
+
+    dated += 1;
+    const value = lastmod.slice(0, 64);
+
+    if (!W3C_DATETIME.test(value)) {
+      note(problems.invalidLastmod, `${loc} (${value})`);
+      shared = null;
+    } else if (Date.parse(value) > now + FUTURE_SLACK_MS) {
+      note(problems.futureLastmod, `${loc} (${value})`);
+      shared = null;
+    } else if (shared === undefined) {
+      shared = value;
+    } else if (shared !== value) {
+      shared = null;
+    }
+  }
+
+  if (parsed.news) {
+    return;
+  }
+
+  const entries = sitemapEntryProblems(problems);
+
+  const gap: LastmodGap = {
+    sitemap,
+    urls: parsed.locs.length,
+    locs: parsed.locs.slice(0, GAP_LOCS),
+  };
+
+  if (parsed.locs.length > 0 && dated === 0) {
+    entries.missingLastmod.push(gap);
+  } else if (
+    parsed.locs.length >= UNIFORM_LASTMOD_MIN_URLS &&
+    shared &&
+    hasTimeOfDay(shared)
+  ) {
+    gap.lastmod = shared;
+    entries.uniformLastmod.push(gap);
+  }
+};
+
 /** Record where one parsed sitemap file breaks the protocol. */
 export const inspectSitemap = (
   problems: SitemapProblems,
@@ -336,26 +537,31 @@ export const inspectSitemap = (
     });
   }
 
+  const entries = sitemapEntryProblems(problems);
+
+  for (const loc of parsed.locs) {
+    const reason = locProblem(loc);
+
+    if (reason) {
+      noteLoc(entries, sitemap, loc, reason);
+    }
+  }
+
   if (parsed.kind !== "urlset") {
     return;
   }
 
+  inspectLastmods(problems, sitemap, parsed, options.now);
+
   const { siteHost } = options;
 
-  for (const [i, loc] of parsed.locs.entries()) {
-    const lastmod = parsed.lastmods[i];
-
-    if (lastmod) {
-      const value = lastmod.slice(0, 64);
-
-      if (!W3C_DATETIME.test(value)) {
-        note(problems.invalidLastmod, `${loc} (${value})`);
-      } else if (Date.parse(value) > options.now + FUTURE_SLACK_MS) {
-        note(problems.futureLastmod, `${loc} (${value})`);
-      }
-    }
-
-    if (siteHost && !isSameSite(loc, siteHost, options.includeSubdomains)) {
+  for (const loc of parsed.locs) {
+    // A relative <loc> is reported as one search engines drop, not as a URL on another host.
+    if (
+      siteHost &&
+      isAbsoluteHttpUrl(loc) &&
+      !isSameSite(loc, siteHost, options.includeSubdomains)
+    ) {
       note(problems.otherHost, `${loc} (in ${sitemap})`);
     }
   }
@@ -458,10 +664,11 @@ export const loadSitemaps = async (
   const reading: SitemapReading = { maxBytes, refused: [] };
   readings.set(info.problems, reading);
 
-  const queue = [...new Set(candidates)].map((url) => ({
-    url,
-    fromIndex: false,
-  }));
+  // A Sitemap: line or index entry that is not a full URL is one search engines drop; the
+  // robots.txt and sitemap rules report it, and the audit drops it as they do.
+  const queue = [...new Set(candidates)].flatMap((url) =>
+    isAbsoluteHttpUrl(url) ? [{ url, fromIndex: false }] : []
+  );
 
   const seen = new Set<string>();
   const urls = new Set<string>();
@@ -518,10 +725,12 @@ export const loadSitemaps = async (
       now,
     });
 
+    const locs = parsed.locs.filter(isAbsoluteHttpUrl);
+
     if (parsed.kind === "sitemapindex") {
-      queue.push(...parsed.locs.map((loc) => ({ url: loc, fromIndex: true })));
+      queue.push(...locs.map((loc) => ({ url: loc, fromIndex: true })));
     } else {
-      for (const loc of parsed.locs) {
+      for (const loc of locs) {
         if (urls.size < maxUrls) {
           urls.add(loc);
         }

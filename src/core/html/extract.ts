@@ -29,7 +29,7 @@ import {
   extractResources,
   upgradesInsecureRequests,
 } from "./resources.js";
-import { extractStructuredData } from "./structured-data.js";
+import { classSelectorsOf, extractStructuredData } from "./structured-data.js";
 import { collapseWhitespace, wordCount } from "./text.js";
 
 export interface ExtractOptions {
@@ -313,6 +313,15 @@ export const extractPage = (
 
   const structured = extractStructuredData(doc);
 
+  // A paywalled section's class, looked up while the DOM is open; rules never see the DOM.
+  const cssSelectors = classSelectorsOf(structured.items).map((selector) => {
+    try {
+      return { selector, found: queryOne(doc, selector) !== null };
+    } catch {
+      return { selector, found: false };
+    }
+  });
+
   const bodyText = body ? visibleText(body) : "";
 
   const htmlEl = queryOne(doc, "html");
@@ -366,6 +375,7 @@ export const extractPage = (
     missingFragments: extractMissingFragments(doc),
     structuredData: structured.items,
     structuredDataErrors: structured.errors,
+    cssSelectors,
     text: bodyText,
     wordCount: wordCount(bodyText),
     htmlBytes: Buffer.byteLength(html, "utf-8"),

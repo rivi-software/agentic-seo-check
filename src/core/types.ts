@@ -422,6 +422,11 @@ export interface ExtractedPage {
   missingFragments: string[];
   structuredData: StructuredDataItem[];
   structuredDataErrors: StructuredDataError[];
+  /**
+   * The `.class` selectors the structured data names in `cssSelector` (a paywalled section), the
+   * first 20, each with whether an element of the HTML has that class.
+   */
+  cssSelectors: { selector: string; found: boolean }[];
   /** Visible text of <body> with scripts/styles removed and whitespace collapsed. */
   text: string;
   wordCount: number;
