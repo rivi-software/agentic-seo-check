@@ -1,7 +1,7 @@
 /** What the local MCP server (mcp.ts) and the hosted one (mcp-hosted.ts) share: options and answers. */
 import { z } from "zod";
 
-import { REPOSITORY_URL, WEBSITE_URL } from "./brand.js";
+import { PRODUCT_NAME, REPOSITORY_URL, WEBSITE_URL } from "./brand.js";
 import { compactAeoAudit } from "./core/aeo/audit.js";
 import { compactAudit } from "./core/audit.js";
 import type { CrawlOptions } from "./core/audit.js";
@@ -184,7 +184,7 @@ export const fail = (error: unknown) => {
   return {
     isError: true,
     content: [
-      { type: "text" as const, text: `agentic-seo-check error: ${message}` },
+      { type: "text" as const, text: `${PRODUCT_NAME} error: ${message}` },
     ],
   };
 };

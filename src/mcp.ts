@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { MAKER, MCP_ICONS, REPOSITORY_URL } from "./brand.js";
+import { MAKER, MCP_ICONS, PRODUCT_NAME, REPOSITORY_URL } from "./brand.js";
 import {
   auditAeoDirectory,
   auditAeoHtml,
@@ -106,7 +106,7 @@ export const createMcpServer = (
 ): McpServer => {
   const server = new McpServer({
     name: MCP_SERVER_NAME,
-    title: `agentic-seo-check by ${MAKER}`,
+    title: `${PRODUCT_NAME} by ${MAKER}`,
     version: MCP_SERVER_VERSION,
     description:
       "SEO and AEO audits for coding agents: pages, sites, build output and raw HTML, checked for search engines and AI answer engines, with findings an agent can act on.",

@@ -4,7 +4,12 @@
  * pages (pages.ts) differ in their origin and the header's button; the navigation and the footer
  * link the two hostnames, so they read as one site.
  */
-import { MAKER, MAKER_URL, REPOSITORY_URL } from "../../../src/brand.js";
+import {
+  MAKER,
+  MAKER_URL,
+  PRODUCT_NAME,
+  REPOSITORY_URL,
+} from "../../../src/brand.js";
 import type { JsonObject } from "../../../src/core/html/structured-data.js";
 import { ORIGIN as MCP_ORIGIN, SITE_ORIGIN } from "../limits.js";
 import { esc, scriptSafe } from "../site/html.js";
@@ -98,7 +103,7 @@ const footer = (host: Host): string => `<footer class="site-footer">
 <div class="wrap">
 <div class="footer-grid">
 <div class="footer-brand">
-<a class="site-logo" href="${linkFrom(host.origin, `${SITE_ORIGIN}/`)}">${MARK}<span>RIVI agentic-seo-check</span></a>
+<a class="site-logo" href="${linkFrom(host.origin, `${SITE_ORIGIN}/`)}">${MARK}<span>RIVI ${PRODUCT_NAME}</span></a>
 <p>SEO and AEO audits for coding agents, with the exact fix for every finding. Open source under the MIT License.</p>
 <a class="btn btn-secondary btn-sm" href="${REPOSITORY_URL}">${GITHUB_MARK}Star it on GitHub</a>
 </div>
@@ -113,7 +118,7 @@ ${FOOTER.map(
 ).join("\n")}
 </div>
 <div class="footer-bottom">
-<p>agentic-seo-check is open source (MIT) and made by <a href="${MAKER_URL}">${MAKER}</a>. If this site or the hosted server has requested your site, <a href="${linkFrom(host.origin, `${MCP_ORIGIN}/crawler`)}">the page for site owners</a> says what the requests are and how to stop them. Report abuse through <a href="${ABUSE_URL}">help.rivi.software/contact</a>.</p>
+<p>${PRODUCT_NAME} is open source (MIT) and made by <a href="${MAKER_URL}">${MAKER}</a>. If this site or the hosted server has requested your site, <a href="${linkFrom(host.origin, `${MCP_ORIGIN}/crawler`)}">the page for site owners</a> says what the requests are and how to stop them. Report abuse through <a href="${ABUSE_URL}">help.rivi.software/contact</a>.</p>
 <a href="${MAKER_URL}">rivi.software</a>
 </div>
 </div>
@@ -144,7 +149,7 @@ export const frame = (host: Host, page: FramePage): string => {
 <link rel="preload" href="${FONT_PATHS.sans}" as="font" type="font/woff2" crossorigin>
 <meta name="theme-color" content="#08090a">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="agentic-seo-check">
+<meta property="og:site_name" content="${PRODUCT_NAME}">
 <meta property="og:title" content="${esc(page.title)}">
 <meta property="og:description" content="${esc(page.description)}">
 <meta property="og:url" content="${url}">
@@ -171,7 +176,7 @@ export const frame = (host: Host, page: FramePage): string => {
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
 <div class="wrap header-inner">
-<a class="site-logo" href="${linkFrom(host.origin, `${SITE_ORIGIN}/`)}">${MARK}<span>RIVI agentic-seo-check</span></a>
+<a class="site-logo" href="${linkFrom(host.origin, `${SITE_ORIGIN}/`)}">${MARK}<span>RIVI ${PRODUCT_NAME}</span></a>
 <nav class="nav" aria-label="Site">${links(host, url, NAV)}</nav>
 <div class="header-actions">
 <a class="btn btn-secondary btn-sm header-github" href="${REPOSITORY_URL}">${GITHUB_MARK}GitHub</a>

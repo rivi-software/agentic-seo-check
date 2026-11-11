@@ -2,7 +2,7 @@
   <a href="https://rivi.software">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rivi-software/agentic-seo-check/main/assets/rivi-agentic-seo-check-on-dark.svg">
-      <img src="https://raw.githubusercontent.com/rivi-software/agentic-seo-check/main/assets/rivi-agentic-seo-check.svg" alt="RIVI agentic-seo-check" width="545">
+      <img src="https://raw.githubusercontent.com/rivi-software/agentic-seo-check/main/assets/rivi-agentic-seo-check.svg" alt="RIVI Agentic SEO Check" width="553">
     </picture>
   </a>
 </p>
@@ -39,7 +39,7 @@
 
 <br>
 
-agentic-seo-check is one core with two interfaces:
+Agentic SEO Check is one core with two interfaces:
 
 - **CLI** `agentic-seo-check` with JSON (default when piped) or Markdown output and CI-friendly exit codes.
 - **MCP server** exposing six tools for Claude Code, Cursor, Codex and any other MCP client. A [hosted server](#hosted-server) serves four of them at `https://mcp.agentic-seo.rivi.software/mcp`, free and without an install, for claude.ai, ChatGPT and any client that connects over HTTP.
@@ -355,5 +355,5 @@ Licensed under the [MIT License](https://github.com/rivi-software/agentic-seo-ch
 </p>
 
 <p align="center">
-  <sub>RIVI agentic-seo-check is made by <a href="https://rivi.software">RIVI Software</a>, which builds software for radio stations. Created in <a href="https://t3.codes">T3 Code</a>.</sub>
+  <sub>RIVI Agentic SEO Check is made by <a href="https://rivi.software">RIVI Software</a>, which builds software for radio stations. Created in <a href="https://t3.codes">T3 Code</a>.</sub>
 </p>

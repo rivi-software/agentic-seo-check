@@ -5,7 +5,7 @@
  * The pages state the limits from wrangler.jsonc, so they cannot drift from what the Worker
  * enforces, and they pass the server's own audit.
  */
-import { MAKER, REPOSITORY_URL } from "../../src/brand.js";
+import { MAKER, PRODUCT_NAME, REPOSITORY_URL } from "../../src/brand.js";
 import { LOCAL_PRODUCT_TOKEN } from "../../src/core/fetch.js";
 import { HOSTED_LIMITS, LOCAL_SERVER } from "../../src/core/hosted.js";
 import { ORIGIN, rateLimit, SITE_ORIGIN, USER_AGENT } from "./limits.js";
@@ -170,12 +170,12 @@ const mark = (yes: boolean): string =>
 export const landingPage = (dailyRequests: number): string =>
   layout({
     path: "/",
-    title: "agentic-seo-check hosted MCP server | RIVI Software",
+    title: `${PRODUCT_NAME} hosted MCP server | ${MAKER}`,
     description:
       "A free hosted MCP server that audits pages and sites for search engines and AI answer engines. Add it to Claude, ChatGPT, Cursor or VS Code, no account needed.",
     data: {
       "@type": "WebApplication",
-      name: "agentic-seo-check hosted MCP server",
+      name: `${PRODUCT_NAME} hosted MCP server`,
       url: `${ORIGIN}/`,
       applicationCategory: "DeveloperApplication",
       operatingSystem: "Any",
@@ -187,7 +187,7 @@ export const landingPage = (dailyRequests: number): string =>
 <div class="hero-copy">
 <p class="pill rise"><span class="dot" aria-hidden="true"></span>Free, with no account and no key</p>
 <h1 class="hero-title rise" id="hero-title" style="--d:60ms">SEO and AEO audits <span class="hero-accent">for your AI assistant, hosted.</span></h1>
-<p class="lede rise" style="--d:120ms">agentic-seo-check audits pages and sites for search engines and AI answer engines, and gives every finding the exact fix. This is its MCP server, hosted by ${MAKER}: free to use, with no account and no key.</p>
+<p class="lede rise" style="--d:120ms">${PRODUCT_NAME} audits pages and sites for search engines and AI answer engines, and gives every finding the exact fix. This is its MCP server, hosted by ${MAKER}: free to use, with no account and no key.</p>
 </div>
 <div class="endpoint rise" style="--d:180ms">
 <p class="endpoint-label">The server's address</p>
@@ -202,7 +202,7 @@ ${CHAT}
 <div class="section-head">
 <p class="kicker">Set up</p>
 <h2 id="add-title">Add it to your assistant.</h2>
-<p>One address for every client, with no sign-in. To audit a page or a whole site yourself, with no assistant, use the form on <a href="${SITE_ORIGIN}/">the agentic-seo-check website</a>, which also lists <a href="${SITE_ORIGIN}/rules">every rule</a>.</p>
+<p>One address for every client, with no sign-in. To audit a page or a whole site yourself, with no assistant, use the form on <a href="${SITE_ORIGIN}/">the ${PRODUCT_NAME} website</a>, which also lists <a href="${SITE_ORIGIN}/rules">every rule</a>.</p>
 </div>
 <ul class="cards clients">${CLIENTS.map(([name, how, code]) => `<li class="card"><h3>${name}</h3><p>${how}</p>${code}</li>`).join("")}</ul>
 </div>
@@ -290,12 +290,11 @@ const RECOGNISE: [iconName: IconName, title: string, text: string][] = [
 export const crawlerPage = (): string =>
   layout({
     path: "/crawler",
-    title: "agentic-seo-check requests to your site | RIVI Software",
-    description:
-      "What the agentic-seo-check requests to your site are, how to recognise them, what limits they keep and how to block them or report abuse.",
+    title: `${PRODUCT_NAME} requests to your site | ${MAKER}`,
+    description: `What the ${PRODUCT_NAME} requests to your site are, how to recognise them, what limits they keep and how to block them or report abuse.`,
     data: {
       "@type": "WebPage",
-      name: "agentic-seo-check requests to your site",
+      name: `${PRODUCT_NAME} requests to your site`,
       url: `${ORIGIN}/crawler`,
       publisher,
     },
@@ -303,9 +302,9 @@ export const crawlerPage = (): string =>
 <div class="wrap">
 <div class="hero-copy">
 <p class="pill rise"><span class="dot" aria-hidden="true"></span>For site owners</p>
-<h1 class="hero-title rise" id="crawler-title" style="--d:60ms"><span class="nowrap">agentic-seo-check</span> requests to your site</h1>
+<h1 class="hero-title rise" id="crawler-title" style="--d:60ms"><span class="nowrap">${PRODUCT_NAME}</span> requests to your site</h1>
 </div>
-<p class="lede rise" style="--d:120ms">Someone asked their AI assistant to audit your site for search engines or AI answer engines, or entered one of its pages, or its homepage, in the form on <a href="${SITE_ORIGIN}/">the agentic-seo-check website</a>. Both use the hosted agentic-seo-check server, run by ${MAKER}. Every request is part of an audit a person started; the server does not crawl the web on its own.</p>
+<p class="lede rise" style="--d:120ms">Someone asked their AI assistant to audit your site for search engines or AI answer engines, or entered one of its pages, or its homepage, in the form on <a href="${SITE_ORIGIN}/">the ${PRODUCT_NAME} website</a>. Both use the hosted ${PRODUCT_NAME} server, run by ${MAKER}. Every request is part of an audit a person started; the server does not crawl the web on its own.</p>
 </div>
 </section>
 <section class="section section-tight" aria-label="The requests at a glance">
@@ -334,7 +333,7 @@ Disallow: /</code></pre><p>Add a <code>User-agent: ${LOCAL_PRODUCT_TOKEN}</code>
 </div></div>
 <div class="row" id="abuse"><h2>Report abuse</h2><div class="row-body">
 <p>If the server sends your site more requests than it should, or requests you did not expect, tell us through <a href="${ABUSE_URL}">help.rivi.software/contact</a>, with the hostname and the time, in UTC. The server records the hostname of every audit for three months, so we can check what it sent.</p>
-<p>agentic-seo-check is open source: read <a href="${REPOSITORY_URL}">its code on GitHub</a>, or see <a href="/">the hosted server's page</a>.</p>
+<p>${PRODUCT_NAME} is open source: read <a href="${REPOSITORY_URL}">its code on GitHub</a>, or see <a href="/">the hosted server's page</a>.</p>
 </div></div>
 </div>
 </div>
@@ -344,16 +343,15 @@ Disallow: /</code></pre><p>Add a <code>User-agent: ${LOCAL_PRODUCT_TOKEN}</code>
 export const notFoundPage = (): string =>
   layout({
     path: "/404",
-    title: "Not found | agentic-seo-check hosted MCP server",
-    description:
-      "This address is not part of the agentic-seo-check hosted MCP server.",
+    title: `Not found | ${PRODUCT_NAME} hosted MCP server`,
+    description: `This address is not part of the ${PRODUCT_NAME} hosted MCP server.`,
     data: { "@type": "WebPage", name: "Not found" },
     body: `<section class="hero hero-glow notfound" aria-labelledby="notfound-title">
 <div class="wrap">
 <div class="hero-copy">
 <p class="notfound-code">404</p>
 <h1 id="notfound-title">Not found.</h1>
-<p class="lede">This address is not part of the agentic-seo-check hosted MCP server. The server itself is at <code>${MCP_URL}</code>; <a href="/">its page</a> says how to use it.</p>
+<p class="lede">This address is not part of the ${PRODUCT_NAME} hosted MCP server. The server itself is at <code>${MCP_URL}</code>; <a href="/">its page</a> says how to use it.</p>
 </div>
 </div>
 </section>`,

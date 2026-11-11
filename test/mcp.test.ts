@@ -49,7 +49,7 @@ describe("MCP server", () => {
 
     expect(info).toMatchObject({
       name: "agentic-seo-check",
-      title: "agentic-seo-check by RIVI Software",
+      title: "Agentic SEO Check by RIVI Software",
       version: VERSION,
       websiteUrl: "https://github.com/rivi-software/agentic-seo-check",
     });

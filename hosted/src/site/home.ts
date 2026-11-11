@@ -1,9 +1,9 @@
 /**
- * The website's homepage: what agentic-seo-check is, the page audit to run in the browser, what it
+ * The website's homepage: what Agentic SEO Check is, the page audit to run in the browser, what it
  * checks and how to give it to a coding agent. An answer of the audit form is this page again,
  * with the report, or the reason there is none, in place of the example report.
  */
-import { MAKER, REPOSITORY_URL } from "../../../src/brand.js";
+import { MAKER, PRODUCT_NAME, REPOSITORY_URL } from "../../../src/brand.js";
 import { AI_BOTS } from "../../../src/core/aeo/bots.js";
 import { HOSTED_LIMITS, LOCAL_SERVER } from "../../../src/core/hosted.js";
 import { AEO_RULES, SEO_RULES } from "../../../src/core/rules/index.js";
@@ -372,19 +372,18 @@ const KEEPS: [iconName: IconName, title: string, text: string][] = [
   ],
 ];
 
-const DESCRIPTION =
-  "Audit a page or a whole site for search engines and AI answer engines, free. agentic-seo-check gives each finding the exact fix, for you or your coding agent.";
+const DESCRIPTION = `Audit a page or a whole site for search engines and AI answer engines, free. ${PRODUCT_NAME} gives each finding the exact fix, for you or your coding agent.`;
 
 /** The homepage, with the audit form and what `state` puts under it. */
 export const homePage = (state: HomeState): string =>
   layout({
     path: "/",
-    title: "agentic-seo-check: SEO and AEO audits | RIVI Software",
+    title: `${PRODUCT_NAME}: SEO and AEO audits | ${MAKER}`,
     description: DESCRIPTION,
     turnstile: state.open,
     data: {
       "@type": "WebApplication",
-      name: "agentic-seo-check",
+      name: PRODUCT_NAME,
       url: `${SITE_ORIGIN}/`,
       description: DESCRIPTION,
       applicationCategory: "DeveloperApplication",
@@ -398,7 +397,7 @@ export const homePage = (state: HomeState): string =>
 <div class="hero-copy">
 <p class="pill rise"><span class="dot" aria-hidden="true"></span>Free and open source, by ${MAKER}</p>
 <h1 class="hero-title rise" id="hero-title" style="--d:60ms">SEO and AEO audits <span class="hero-accent">with the fix for every finding.</span></h1>
-<p class="lede rise" style="--d:120ms">agentic-seo-check audits a page for search engines and for AI answer engines such as ChatGPT search, Claude, Perplexity and Google AI Overviews. Every finding names the rule, the place in the HTML and the exact edit that fixes it, so you or your coding agent can act on it.</p>
+<p class="lede rise" style="--d:120ms">${PRODUCT_NAME} audits a page for search engines and for AI answer engines such as ChatGPT search, Claude, Perplexity and Google AI Overviews. Every finding names the rule, the place in the HTML and the exact edit that fixes it, so you or your coding agent can act on it.</p>
 </div>
 ${auditForm(state)}
 </div>
@@ -493,8 +492,8 @@ ${botChips()}
 export const notFoundPage = (): string =>
   layout({
     path: "/404",
-    title: "Not found | agentic-seo-check",
-    description: "This address is not a page of the agentic-seo-check website.",
+    title: `Not found | ${PRODUCT_NAME}`,
+    description: `This address is not a page of the ${PRODUCT_NAME} website.`,
     data: { "@type": "WebPage", name: "Not found" },
     body: `<section class="hero hero-glow notfound" aria-labelledby="notfound-title">
 <div class="wrap">

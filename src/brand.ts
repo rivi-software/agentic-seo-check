@@ -1,9 +1,15 @@
 /**
- * RIVI Software's name, site and mark as the CLI, the MCP server and the Markdown report show
+ * The tool's name, and RIVI Software's name, site and mark, as the CLI, the MCP server and the Markdown report show
  * them. The marks are copies of assets/rivi-mark.svg and assets/rivi-mark-on-dark.svg, inlined
  * because npm ships dist/ without assets/.
  */
 import type { Icon } from "@modelcontextprotocol/sdk/types.js";
+
+/**
+ * The tool's name in text: titles, prose, the lockup. Identifiers keep `agentic-seo-check`: the
+ * package, the commands, the MCP server's name, the User-Agent tokens and the repository.
+ */
+export const PRODUCT_NAME = "Agentic SEO Check";
 
 export const MAKER = "RIVI Software";
 export const MAKER_URL = "https://rivi.software";

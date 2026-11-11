@@ -1,6 +1,6 @@
 # The hosted MCP server and the website
 
-The MCP server of agentic-seo-check as a Cloudflare Worker, at `https://mcp.agentic-seo.rivi.software/mcp`, run by RIVI Software and free to use ([issue #35](https://github.com/rivi-software/agentic-seo-check/issues/35)). The same Worker serves the project's website at `https://agentic-seo.rivi.software`, with a page and site audit to run in the browser ([issue #39](https://github.com/rivi-software/agentic-seo-check/issues/39), [issue #45](https://github.com/rivi-software/agentic-seo-check/issues/45)). The README's [Hosted server](../README.md#hosted-server) section is for its users; this page is for running it. It is not part of the npm package: `hosted/` is outside `files`.
+The MCP server of Agentic SEO Check as a Cloudflare Worker, at `https://mcp.agentic-seo.rivi.software/mcp`, run by RIVI Software and free to use ([issue #35](https://github.com/rivi-software/agentic-seo-check/issues/35)). The same Worker serves the project's website at `https://agentic-seo.rivi.software`, with a page and site audit to run in the browser ([issue #39](https://github.com/rivi-software/agentic-seo-check/issues/39), [issue #45](https://github.com/rivi-software/agentic-seo-check/issues/45)). The README's [Hosted server](../README.md#hosted-server) section is for its users; this page is for running it. It is not part of the npm package: `hosted/` is outside `files`.
 
 ## How it works
 

@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 import { chromium } from "playwright";
 
+import { PRODUCT_NAME } from "../../src/brand.ts";
 import { esc } from "../src/site/html.ts";
 import { MARK } from "../src/ui/icons.ts";
 import { OG_IMAGE, SERVER_CARD, SITE_CARD } from "../src/ui/og.ts";
@@ -72,7 +73,7 @@ h1 span{display:block;color:#8a8f98}
 </style>
 </head>
 <body>
-<div class="lockup">${MARK}<span>RIVI agentic-seo-check</span></div>
+<div class="lockup">${MARK}<span>RIVI ${PRODUCT_NAME}</span></div>
 <p class="pill"><span class="dot"></span>${esc(card.pill)}</p>
 <h1>${esc(card.title)}<span>${esc(card.accent)}</span></h1>
 <div class="bars">${BARS}</div>

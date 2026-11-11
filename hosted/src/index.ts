@@ -1,5 +1,5 @@
 /**
- * The hosted MCP server of agentic-seo-check (issue #35): a stateless Worker that answers MCP over
+ * The hosted MCP server of Agentic SEO Check (issue #35): a stateless Worker that answers MCP over
  * Streamable HTTP at /mcp with the hosted tools of `createMcpServer`, and serves the pages that say
  * how to use it and what its requests are. On its second hostname it serves the project's website,
  * with a page audit to run in the browser (issue #39, src/site/).

@@ -2,6 +2,7 @@
  * The website's files besides its pages: robots.txt, the sitemap, llms.txt and the pages' script,
  * which the hosted server's pages load too.
  */
+import { PRODUCT_NAME } from "../../../src/brand.js";
 import { HOSTED_LIMITS, LOCAL_SERVER } from "../../../src/core/hosted.js";
 import { ORIGIN as MCP_ORIGIN } from "../limits.js";
 import { icon } from "../ui/icons.js";
@@ -17,7 +18,7 @@ export const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>
 </urlset>
 `;
 
-export const LLMS_TXT = `# agentic-seo-check
+export const LLMS_TXT = `# ${PRODUCT_NAME}
 
 > An open source SEO and AEO audit for coding agents, by RIVI Software. It audits a URL, a crawl of a site, a directory of built HTML or an HTML string, and returns findings with a rule id, a severity, a recommendation and the exact edits that fix them.
 

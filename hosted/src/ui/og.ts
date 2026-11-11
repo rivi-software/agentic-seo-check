@@ -4,6 +4,7 @@
  * a pill, a two-tone heading, the mark's level bars and the domain) into assets/, and each
  * hostname serves its card at OG_IMAGE.path. The words are here so the frame can describe them.
  */
+import { PRODUCT_NAME } from "../../../src/brand.js";
 import { ORIGIN as MCP_ORIGIN, SITE_ORIGIN } from "../limits.js";
 
 export const OG_IMAGE = { path: "/og.png", width: 1200, height: 630 } as const;
@@ -42,4 +43,4 @@ export const SERVER_CARD: ShareCard = {
 
 /** What a card says, as its og:image:alt. */
 export const cardAlt = (card: ShareCard): string =>
-  `RIVI agentic-seo-check: ${card.title} ${card.accent} ${card.domain}`;
+  `RIVI ${PRODUCT_NAME}: ${card.title} ${card.accent} ${card.domain}`;

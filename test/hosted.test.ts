@@ -353,7 +353,7 @@ describe("the hosted server", () => {
 
       expect(result.isError).toBeTruthy();
       expect(textOf(result)).toBe(
-        "agentic-seo-check error: This address has started 30 tool calls."
+        "Agentic SEO Check error: This address has started 30 tool calls."
       );
     });
 
@@ -741,7 +741,7 @@ describe("the hosted server", () => {
       expect(kept.isError).toBeTruthy();
       // The site's reason and nothing more: no way around robots.txt.
       expect(textOf(kept)).toBe(
-        "agentic-seo-check error: https://other.example.com/robots.txt asks agentic-seo-check not to crawl https://other.example.com/ (in a User-agent: agentic-seo-check group), so there is nothing to crawl."
+        "Agentic SEO Check error: https://other.example.com/robots.txt asks agentic-seo-check not to crawl https://other.example.com/ (in a User-agent: agentic-seo-check group), so there is nothing to crawl."
       );
       expect(requests.map((r) => r.url)).not.toContain(
         "https://other.example.com/"
@@ -907,8 +907,8 @@ describe("the hosted server", () => {
       );
 
       expect(texts).toStrictEqual([
-        'agentic-seo-check error: https://shop.example.com/robots.txt keeps agentic-seo-check from https://shop.example.com/private/report (line 5: "Disallow: /private/"), so the hosted server did not request it.',
-        'agentic-seo-check error: https://shop.example.com/robots.txt keeps agentic-seo-check from https://shop.example.com/private/report (line 5: "Disallow: /private/"), so the hosted server did not request it.',
+        'Agentic SEO Check error: https://shop.example.com/robots.txt keeps agentic-seo-check from https://shop.example.com/private/report (line 5: "Disallow: /private/"), so the hosted server did not request it.',
+        'Agentic SEO Check error: https://shop.example.com/robots.txt keeps agentic-seo-check from https://shop.example.com/private/report (line 5: "Disallow: /private/"), so the hosted server did not request it.',
       ]);
       expect(ends.map((e) => e.outcome)).toStrictEqual(["refused", "refused"]);
       expect(requests.map((r) => r.url)).not.toContain(
@@ -961,7 +961,7 @@ describe("the hosted server", () => {
       });
 
       expect(textOf(result)).toBe(
-        "agentic-seo-check error: https://shop.example.com/robots.txt answered HTTP 503, and a crawler that cannot read robots.txt takes it to disallow everything (RFC 9309), so the hosted server did not request https://shop.example.com/."
+        "Agentic SEO Check error: https://shop.example.com/robots.txt answered HTTP 503, and a crawler that cannot read robots.txt takes it to disallow everything (RFC 9309), so the hosted server did not request https://shop.example.com/."
       );
       expect(requests.map((r) => r.url)).toStrictEqual([
         "https://shop.example.com/robots.txt",
