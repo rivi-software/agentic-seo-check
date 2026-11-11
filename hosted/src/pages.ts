@@ -12,7 +12,13 @@ import { ORIGIN, rateLimit, SITE_ORIGIN, USER_AGENT } from "./limits.js";
 import { DIRECTORY_PATH } from "./signing.js";
 import { esc } from "./site/html.js";
 import { scoreRing, severityChip } from "./site/report.js";
-import { ABUSE_URL, frame, publisher } from "./ui/frame.js";
+import {
+  ABUSE_URL,
+  CLAUDE_DIRECTORY_URL,
+  directoryBadge,
+  frame,
+  publisher,
+} from "./ui/frame.js";
 import type { FramePage } from "./ui/frame.js";
 import { icon } from "./ui/icons.js";
 import type { IconName } from "./ui/icons.js";
@@ -94,7 +100,7 @@ const CLIENTS: [name: string, how: string, code: string][] = [
   ],
   [
     "claude.ai, Cowork and the Claude apps",
-    "In claude.ai, open Settings, then Connectors, and add a custom connector with this address. It needs no sign-in.",
+    `Connect it from <a href="${CLAUDE_DIRECTORY_URL}">its listing in the Claude Directory</a>, or in claude.ai open Settings, then Connectors, and add a custom connector with this address. Either way it needs no sign-in.`,
     install(MCP_URL),
   ],
   [
@@ -193,6 +199,7 @@ export const landingPage = (dailyRequests: number): string =>
 <p class="endpoint-label">The server's address</p>
 ${install(MCP_URL)}
 <ul class="endpoint-facts"><li class="chip">${icon("check")}MCP over Streamable HTTP</li><li class="chip">${icon("check")}Read-only tools</li><li class="chip">${icon("check")}Obeys robots.txt</li></ul>
+${directoryBadge()}
 </div>
 </div>
 ${CHAT}
