@@ -11,8 +11,8 @@ import {
   trimFinding,
 } from "../audit.js";
 import type { CrawlOptions, ProgressEvent } from "../audit.js";
-import { crawlSite } from "../crawl.js";
-import type { CrawlResult } from "../crawl.js";
+import { crawlSite, failedPageFindings, userPatterns } from "../crawl.js";
+import type { CrawlResult, FailedPage } from "../crawl.js";
 import {
   DEFAULT_USER_AGENT,
   fetchPage,
@@ -108,6 +108,8 @@ interface Collected {
   live: boolean;
   /** Why the crawl stopped requesting the site before it was done (the hosted server's gate). */
   stopped?: string;
+  /** Pages the audit failed on, and so left out of the crawl (issue #85). */
+  failedPages?: FailedPage[];
 }
 
 /**
@@ -219,6 +221,7 @@ const collectCrawled = async (
       : request()),
     live: true,
     stopped: result.stopped?.message,
+    failedPages: result.failedPages,
   };
 };
 
@@ -237,10 +240,8 @@ const collectSite = async (
     // The AEO audit reads pages; broken links, sitemaps and redirect probes are the SEO crawl's job.
     maxLinkChecks: 0,
     siteChecks: false,
-    // oxlint-disable-next-line eslint/require-unicode-regexp -- the user's own patterns, in JavaScript's default syntax; the u flag would reject some of them
-    includePatterns: (options.includePatterns ?? []).map((p) => new RegExp(p)),
-    // oxlint-disable-next-line eslint/require-unicode-regexp -- the user's own patterns, in JavaScript's default syntax; the u flag would reject some of them
-    excludePatterns: (options.excludePatterns ?? []).map((p) => new RegExp(p)),
+    includePatterns: userPatterns(options.includePatterns, "include"),
+    excludePatterns: userPatterns(options.excludePatterns, "exclude"),
     fetch: { ...options.fetch, userAgent: userAgentOf(options) },
     onProgress: options.onProgress,
   });
@@ -532,14 +533,17 @@ const buildAudit = async (
   const hiddenSite: Finding[] = [];
 
   const siteFindings = selected(
-    aeoSiteFindings({
-      crawlers,
-      llmsTxt: c.llmsTxt,
-      pages: listablePages(c.records),
-      pageCount: pages.length,
-      probeSkipped,
-      crawlStopped: c.stopped,
-    }),
+    [
+      ...aeoSiteFindings({
+        crawlers,
+        llmsTxt: c.llmsTxt,
+        pages: listablePages(c.records),
+        pageCount: pages.length,
+        probeSkipped,
+        crawlStopped: c.stopped,
+      }),
+      ...failedPageFindings(c.failedPages),
+    ],
     options,
     hiddenSite
   );
@@ -711,6 +715,7 @@ export const auditSiteBoth = async (
       source: "url",
       records: [startRecord],
       stopped: undefined,
+      failedPages: undefined,
     },
     { ...aeoOptions, pageDetail: "full" }
   );

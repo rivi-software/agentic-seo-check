@@ -4,20 +4,35 @@
  * cannot be linked, and an event carries no URL, hostname, path or anything from a page. Only
  * cli.ts and mcp-bin.ts import this module; the library and the hosted server never send.
  */
+import { readFileSync, statSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { SourceMap } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
 import { PRODUCT_NAME, REPOSITORY_URL } from "../brand.js";
 import { resolveTarget } from "../core/audit.js";
 import { onCaughtError } from "../core/errors.js";
+import type { CaughtErrorContext } from "../core/errors.js";
 import type { AeoAudit, Audit, SeverityCounts } from "../core/types.js";
 import type { OutputFormat } from "../terminal.js";
-import { exceptionEvent } from "./exceptions.js";
-import { currentTool, initializeEvent, toolCallEvent } from "./mcp.js";
-import type { McpAnalytics, McpEventContext, McpToolCall } from "./mcp.js";
+import { exceptionEvents } from "./exceptions.js";
+import type { FrameMapper, ReportedError } from "./exceptions.js";
+import {
+  currentTool,
+  initializeEvent,
+  noteCaughtInCall,
+  toolCallEvent,
+} from "./mcp.js";
+import type {
+  CaughtInCall,
+  McpAnalytics,
+  McpEventContext,
+  McpToolCall,
+} from "./mcp.js";
 import { BASE_PROPERTIES, sendEvents, uuidv7 } from "./posthog.js";
 import type { PostHogEvent } from "./posthog.js";
 
@@ -293,6 +308,8 @@ interface RunError {
   error: unknown;
   /** False when only the CLI's last resort caught it. */
   handled: boolean;
+  /** The rule whose check threw, when one did (issue #85). */
+  rule?: string;
 }
 
 /** One run of a CLI command, as its events tell it. */
@@ -323,14 +340,20 @@ export const startCliRun = (
   errors: [],
 });
 
+/** The most errors a run keeps for its events: a rule that throws on every page of a crawl is one bug. */
+const MAX_RUN_ERRORS = 1000;
+
 /** Notes an error of `run`, for its `$exception` event; `sendCliRun` leaves out what is no bug. */
 export const noteCliError = (
   run: CliRun,
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
   error: unknown,
-  handled: boolean
+  handled: boolean,
+  context: CaughtErrorContext = {}
 ): void => {
-  run.errors.push({ error, handled });
+  if (run.errors.length < MAX_RUN_ERRORS) {
+    run.errors.push({ error, handled, rule: context.rule });
+  }
 };
 
 /** A run's `cli_command` event, with the run's id: no two runs can be linked. */
@@ -359,16 +382,120 @@ export const cliEvent = (run: CliRun, exitCode: number): PostHogEvent => ({
 /** The longest a run waits for its event to be sent, after its output is written. */
 export const CLI_SEND_TIMEOUT_MS = 1000;
 
-/** The `$exception` events of a run's errors, beside its `cli_command`. */
-export const cliErrorEvents = (run: CliRun): PostHogEvent[] =>
-  run.errors.flatMap(
-    ({ error, handled }) =>
-      exceptionEvent(error, {
-        distinctId: run.id,
-        handled,
-        surface: "cli",
-        properties: { command: run.command, ...environment() },
-      }) ?? []
+/** The package's directory, from this module's place in it (src/telemetry/ or dist/telemetry/). */
+const packageDirectory = (): string | undefined => {
+  try {
+    return fileURLToPath(new URL("../../", import.meta.url));
+  } catch {
+    return undefined;
+  }
+};
+
+/** The most of a source map that is read: tsc's largest in dist/ is a tenth of it. */
+export const MAX_SOURCE_MAP_BYTES = 1_000_000;
+
+/** A file of the build, by its place in the package: `dist/`, then plain names, never `..`. */
+const BUILT_FILE = /^dist\/(?:[\w-]+\/)*[\w.-]+\.js$/u;
+
+/** A file of the source, as a map of the build names it. */
+const SOURCE_FILE = /^src\/(?:[\w-]+\/)*[\w.-]+\.ts$/u;
+
+/** The source maps read in this process, by file; null for one that is missing or unreadable. */
+const sourceMaps = new Map<string, SourceMap | null>();
+
+const sourceMapOf = (root: string, file: string): SourceMap | null => {
+  const where = path.join(root, `${file}.map`);
+  const known = sourceMaps.get(where);
+
+  if (known !== undefined) {
+    return known;
+  }
+
+  let map: SourceMap | null = null;
+
+  try {
+    if (statSync(where).size <= MAX_SOURCE_MAP_BYTES) {
+      map = new SourceMap(JSON.parse(readFileSync(where, "utf-8")));
+    }
+  } catch {
+    // No map, or one that is no source map: the frame keeps its place in the build.
+  }
+
+  sourceMaps.set(where, map);
+
+  return map;
+};
+
+/**
+ * Names a frame of the build by its TypeScript source, through the `.map` file tsc wrote beside it
+ * (issue #85): `dist/core/audit.js:331:13` becomes the line in `src/core/audit.ts` that the release's
+ * tag holds. Only the package's own files are read, and only their maps; a frame without a map, or
+ * whose map names a file outside `src/`, keeps its place in the build.
+ */
+export const sourceFrames =
+  (root: string | undefined = packageDirectory()): FrameMapper =>
+  (frame) => {
+    if (
+      !(root && frame.in_app && BUILT_FILE.test(frame.filename)) ||
+      frame.lineno === undefined ||
+      frame.colno === undefined
+    ) {
+      return frame;
+    }
+
+    try {
+      const origin = sourceMapOf(root, frame.filename)?.findOrigin(
+        frame.lineno,
+        frame.colno
+      );
+
+      if (!(origin && "fileName" in origin)) {
+        return frame;
+      }
+
+      const source = path.posix.normalize(
+        path.posix.join(path.posix.dirname(frame.filename), origin.fileName)
+      );
+
+      return SOURCE_FILE.test(source)
+        ? {
+            ...frame,
+            filename: source,
+            lineno: origin.lineNumber,
+            colno: origin.columnNumber,
+          }
+        : frame;
+    } catch {
+      return frame;
+    }
+  };
+
+/**
+ * The `$exception` events of a run's errors, beside its `cli_command`: one per bug, with what the
+ * run was (issue #85). `cli_command` carries the same flags, target and format.
+ */
+export const cliErrorEvents = (
+  run: CliRun,
+  mapFrame: FrameMapper = sourceFrames()
+): PostHogEvent[] =>
+  exceptionEvents(
+    run.errors.map(({ error, handled, rule }) => ({
+      error,
+      handled,
+      properties: { rule },
+    })),
+    {
+      distinctId: run.id,
+      surface: "cli",
+      mapFrame,
+      properties: {
+        command: run.command,
+        flags: run.flags,
+        target: run.target,
+        format: run.format,
+        ...environment(),
+      },
+    }
   );
 
 /** Sends a run's event and its errors' in one request. */
@@ -409,40 +536,49 @@ const IDLE_MS = 30 * 60_000;
 
 /** The local MCP server's analytics, and its error tracking (issue #60). */
 export interface LocalMcpAnalytics extends McpAnalytics {
-  /** An error the core caught and turned into a finding, in the call it happened in. */
-  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
-  caught: (error: unknown) => void;
+  /** An error the core caught and turned into a finding: sent with the call it happened in. */
+  caught: (
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+    error: unknown,
+    context: CaughtErrorContext
+  ) => void;
   /** An error nothing caught: resolves once its event is sent, or given up after a second. */
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- as above
   crashed: (error: unknown) => Promise<void>;
 }
 
-/** An error's event on the local MCP server, in the session and the call it happened in. */
-const localErrorEvent = (
-  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
-  error: unknown,
-  handled: boolean,
+/** Errors' events on the local MCP server, one per bug, in the session and the call they happened in. */
+const localErrorEvents = (
+  errors: ReportedError[],
   where: McpEventContext,
   tool: string | undefined
-): PostHogEvent | undefined =>
-  exceptionEvent(error, {
+): PostHogEvent[] =>
+  exceptionEvents(errors, {
     distinctId: where.sessionId,
     sessionId: where.sessionId,
-    handled,
     surface: "local",
+    mapFrame: sourceFrames(),
     properties: { $mcp_tool_name: tool, ...where.properties },
   });
+
+const caughtErrors = (caught: readonly CaughtInCall[] = []): ReportedError[] =>
+  caught.map(({ error, rule }) => ({
+    error,
+    handled: true,
+    properties: { rule },
+  }));
 
 /**
  * The local MCP server's analytics. A stdio connection is one client, so its calls share a
  * session, until a call comes after half an hour without one: a long-running server serves many
- * chats. `send` is for the tests; it gets how long the send may take.
+ * chats. A call's errors go in one request with its event. `send` is for the tests; it gets how
+ * long the send may take.
  */
 export const localMcpAnalytics = (
-  send: (event: PostHogEvent, timeoutMs: number) => Promise<boolean> = (
-    event,
+  send: (events: PostHogEvent[], timeoutMs: number) => Promise<boolean> = (
+    events,
     timeoutMs
-  ) => sendEvents([event], { timeoutMs })
+  ) => sendEvents(events, { timeoutMs })
 ): LocalMcpAnalytics => {
   let sessionId = `ses_${uuidv7()}`;
   let last = Date.now();
@@ -459,31 +595,50 @@ export const localMcpAnalytics = (
     return { sessionId, surface: "local", properties: environment() };
   };
 
-  // The server keeps running: an event is sent alongside the next call, never in its way.
-  const later = (event: PostHogEvent | undefined): void => {
-    if (event) {
-      void send(event, 5000);
+  // The server keeps running: events are sent alongside the next call, never in its way.
+  const later = (events: PostHogEvent[]): void => {
+    if (events.length > 0) {
+      void send(events, 5000);
     }
   };
 
   return {
-    initialize: (caller) => later(initializeEvent(caller, context())),
+    initialize: (caller) => later([initializeEvent(caller, context())]),
     toolCall: (call: McpToolCall) => {
       const where = context();
 
-      later(toolCallEvent(call, where));
+      const errors = caughtErrors(call.caught);
 
       if (call.error !== undefined) {
-        later(localErrorEvent(call.error, true, where, call.tool));
+        errors.push({ error: call.error, handled: true });
+      }
+
+      later([
+        toolCallEvent(call, where),
+        ...localErrorEvents(errors, where, call.tool),
+      ]);
+    },
+    caught: (error, caughtContext) => {
+      // Within a call, it waits for the call's event; outside one, it has no call to wait for.
+      if (!noteCaughtInCall(error, caughtContext)) {
+        later(
+          localErrorEvents(
+            caughtErrors([{ ...caughtContext, error }]),
+            context(),
+            currentTool()
+          )
+        );
       }
     },
-    caught: (error) =>
-      later(localErrorEvent(error, true, context(), currentTool())),
     crashed: async (error) => {
-      const event = localErrorEvent(error, false, context(), currentTool());
+      const events = localErrorEvents(
+        [{ error, handled: false }],
+        context(),
+        currentTool()
+      );
 
-      if (event) {
-        await send(event, CLI_SEND_TIMEOUT_MS);
+      if (events.length > 0) {
+        await send(events, CLI_SEND_TIMEOUT_MS);
       }
     },
   };

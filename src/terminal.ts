@@ -136,6 +136,23 @@ export const textOptionsFor = (
   nextSteps: true,
 });
 
+/**
+ * Lets a reader that stops early, such as `| head`, end the CLI's output without crashing it (issue
+ * #85). Writing on after the pipe closed fails with `EPIPE`, which Node throws as an uncaught error
+ * when nothing listens for it. The rest of the output is not wanted: the run goes on to its own
+ * exit code, and error tracking hears nothing, since it is no bug. Any other error is thrown as
+ * before.
+ */
+export const endQuietlyOnClosedPipe = (
+  stream: Pick<NodeJS.WriteStream, "on">
+): void => {
+  stream.on("error", (error: Error) => {
+    if (!("code" in error && error.code === "EPIPE")) {
+      throw error;
+    }
+  });
+};
+
 /** A line on a terminal that each `show` rewrites in place, for progress. */
 export interface StatusLine {
   show: (text: string) => void;

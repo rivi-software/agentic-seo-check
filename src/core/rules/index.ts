@@ -1,5 +1,5 @@
 import { AEO_SITE_RULES } from "../aeo/site-rules.js";
-import { ExpectedError } from "../errors.js";
+import { caughtError, ExpectedError } from "../errors.js";
 import { PERFORMANCE_RULES } from "../performance-rules.js";
 import { RENDER_RULES } from "../render-rules.js";
 import { SITE_RULES } from "../site-rules.js";
@@ -111,6 +111,10 @@ export const runPageRules = (
         findings.push(f);
       }
     } catch (error) {
+      // A bug of the rule's, on a page it did not expect: the CLI's and the local MCP server's
+      // error tracking hears it, with the rule's id (issue #85).
+      caughtError(error, { rule: rule.meta.id });
+
       findings.push({
         rule: "tool.rule-error",
         severity: "info",
