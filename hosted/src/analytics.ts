@@ -389,13 +389,15 @@ export const hostedAnalytics = (
         const where = context(session?.session ?? `ses_${uuidv7()}`, record);
         const event = toolCallEvent(withSession(call, session), where);
 
-        // The errors the core caught within the call, and the one behind an internal failure: one
-        // event per bug, in the call's session and the call's request (issue #93).
-        const errors = caughtErrors(call.caught);
-
-        if (call.error !== undefined) {
-          errors.push({ error: call.error, handled: true });
-        }
+        // The error behind an internal failure, then the ones the core caught within the call: one
+        // event per bug, in the call's session and the call's request (issue #93). The failure
+        // comes first, so the cap on bugs never drops it.
+        const errors = [
+          ...(call.error === undefined
+            ? []
+            : [{ error: call.error, handled: true }]),
+          ...caughtErrors(call.caught),
+        ];
 
         send([
           event,

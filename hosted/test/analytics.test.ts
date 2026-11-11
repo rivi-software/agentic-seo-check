@@ -263,6 +263,38 @@ describe("the hosted server's error tracking", () => {
     }
   });
 
+  it("keeps the error that failed a call when its caught errors fill the cap on bugs", async () => {
+    const { events, ctx, settled } = capture();
+
+    const tracking = hostedAnalytics(
+      { POSTHOG_HOST: POSTHOG },
+      ctx,
+      callerOf("203.0.113.5", [])
+    );
+
+    tracking?.analytics.toolCall({
+      tool: "seo_crawl_site",
+      startedAt: new Date(),
+      durationMs: 9000,
+      isError: true,
+      errorType: "internal",
+      error: new SyntaxError("Unexpected end of input"),
+      // Twelve different bugs: more than one call sends.
+      caught: Array.from({ length: 12 }, (_, index) => ({
+        error: new RangeError("Invalid time value"),
+        rule: `test.rule-${index}`,
+      })),
+    });
+    await settled();
+
+    const errors = events.filter((event) => event.event === "$exception");
+
+    expect(errors).toHaveLength(10);
+    expect(errors[0]?.properties).toMatchObject({
+      $exception_list: [{ type: "SyntaxError" }],
+    });
+  });
+
   it("hears an error the core caught within a tool call, and sends it with the call (issue #93)", async () => {
     const { batches, ctx, settled } = capture();
 

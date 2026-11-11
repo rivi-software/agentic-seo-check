@@ -553,11 +553,13 @@ export const localMcpAnalytics = (
     toolCall: (call: McpToolCall) => {
       const where = context();
 
-      const errors = caughtErrors(call.caught);
-
-      if (call.error !== undefined) {
-        errors.push({ error: call.error, handled: true });
-      }
+      // The call's own failure first, so the cap on bugs never drops it.
+      const errors = [
+        ...(call.error === undefined
+          ? []
+          : [{ error: call.error, handled: true }]),
+        ...caughtErrors(call.caught),
+      ];
 
       later([
         toolCallEvent(call, where),
