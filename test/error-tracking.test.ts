@@ -859,6 +859,32 @@ describe("error tracking", () => {
       });
     });
 
+    it("keeps the error that failed a call when its caught errors fill the cap on bugs", async () => {
+      const { analytics, batches, client } = await connect(
+        oneTool(() => {
+          // Twelve different bugs: more than one call sends.
+          for (let rule = 0; rule < 12; rule += 1) {
+            caughtError(new RangeError("Invalid time value"), {
+              rule: `test.rule-${rule}`,
+            });
+          }
+
+          return fail(new SyntaxError("Unexpected end of input"));
+        })
+      );
+
+      onCaughtError(analytics.caught);
+      await client.callTool({ name: "seo_list_rules", arguments: {} });
+      await client.close();
+
+      const errors = named(batches.flat(), "$exception");
+
+      expect(errors).toHaveLength(10);
+      expect(errors[0]?.properties).toMatchObject({
+        $exception_list: [{ type: "SyntaxError" }],
+      });
+    });
+
     it("sends an error nothing caught as unhandled, and waits for it", async () => {
       const sent: PostHogEvent[] = [];
       const timeouts: number[] = [];

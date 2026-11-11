@@ -1,5 +1,5 @@
 ---
-"@rivi-software/agentic-seo-check": patch
+"@rivi-software/agentic-seo-check": minor
 ---
 
 Error tracking in the hosted MCP server now hears its own bugs (issue #93). Before, it missed most of them:
@@ -10,3 +10,5 @@ Error tracking in the hosted MCP server now hears its own bugs (issue #93). Befo
 - A day's count or a call's record that could not be kept, OpenAI's ranges that could not be fetched (on the daily schedule too), and signing keys that do not parse are now reported. Before, they reached the Worker's logs at most.
 
 A call's `$exception` also carries its client, the names of the arguments it gave, its options and how far it got, as its `$mcp_tool_call` does. The Worker's 500 sits in the caller's session.
+
+For a server built with the library's `createMcpServer({ hosted })`: a `HostedProfile.startCall` that refuses a call now throws a `CallLimitError`, which the package exports (with its `LimitReason`), to have it counted as `rate_limited`. Any other error it throws is now the server's own failure, `internal`, and `McpAnalytics.toolCall` gets the error.
