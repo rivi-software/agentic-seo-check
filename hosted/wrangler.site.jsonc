@@ -67,6 +67,10 @@
     // invisible). Its secret key is the Worker secret TURNSTILE_SECRET_KEY; the audit form is off
     // when either is missing. .dev.vars has Cloudflare's test keys for local runs.
     "TURNSTILE_SITE_KEY": "0x4AAAAAAF7cZ5A-51MpK6BR",
+    // Where the Durable Object runs and keeps its data (src/state.ts, issue #78): the codes of the
+    // daily cap on sites stay in the EU. .dev.vars sets "none" for local runs, since workerd has no
+    // jurisdictions. Both Workers name the same, so that they share one object.
+    "STATE_JURISDICTION": "eu",
     // Usage analytics in PostHog's EU project "Agentic SEO" (issue #57): the pages' pageviews and
     // events, after the consent banner's rules. Empty turns them off; .dev.vars empties it for
     // local runs.

@@ -24,6 +24,7 @@ const settings = (config: typeof server) => ({
   CALLER_SITES: config.vars["CALLER_SITES"],
   PLATFORM_SITES: config.vars["PLATFORM_SITES"],
   POSTHOG_HOST: config.vars["POSTHOG_HOST"],
+  STATE_JURISDICTION: config.vars["STATE_JURISDICTION"],
 });
 
 describe("the two Workers' configurations", () => {
@@ -41,6 +42,10 @@ describe("the two Workers' configurations", () => {
         script_name: server.name,
       },
     ]);
+  });
+
+  it("keep the Durable Object in the EU (issue #78)", () => {
+    expect(server.vars["STATE_JURISDICTION"]).toBe("eu");
   });
 
   it("route the website's hostname to the website alone", () => {

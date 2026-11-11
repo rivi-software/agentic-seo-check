@@ -27,6 +27,8 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
   let stored = { day: "", count: 0 };
   /** The sites each caller audited, by day and caller, as HostedState counts them. */
   const sites = new Map<string, Set<string>>();
+  /** The objects the limits asked for, as "jurisdiction/name", "/name" without one. */
+  const objects: string[] = [];
 
   const counter = {
     // oxlint-disable-next-line eslint/require-await -- the Durable Object answers with a promise
@@ -64,6 +66,12 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
     },
   };
 
+  const object = (jurisdiction: string) => (name: string) => {
+    objects.push(`${jurisdiction}/${name}`);
+
+    return counter;
+  };
+
   const env: LimitsEnv = {
     MODE: "open",
     DAILY_REQUESTS: 100_000,
@@ -88,7 +96,10 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
         points.push(point ?? {});
       },
     },
-    STATE: { getByName: () => counter },
+    STATE: {
+      getByName: object(""),
+      jurisdiction: (jurisdiction) => ({ getByName: object(jurisdiction) }),
+    },
     ...overrides,
   };
 
@@ -105,6 +116,7 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
     settled: () => Promise.all(waiting),
     stored: () => stored,
     sites,
+    objects,
   };
 };
 
@@ -253,10 +265,9 @@ describe("the hosted server's limits", () => {
   it("refuse audits that request sites once the day's requests are sent, and nothing else", async () => {
     const { env, ctx } = fakeEnv({ DAILY_REQUESTS: 2 });
 
-    await env.STATE.getByName("global").addRequests(
-      new Date().toISOString().slice(0, 10),
-      2
-    );
+    await env.STATE.jurisdiction("eu")
+      .getByName("global")
+      .addRequests(new Date().toISOString().slice(0, 10), 2);
 
     const profile = hostedProfile(env, ctx, PERSON);
 
@@ -289,6 +300,29 @@ describe("the hosted server's limits", () => {
     await expect(refusalOf(profile.startCall(INLINE))).resolves.toBe(
       "admitted"
     );
+  });
+
+  it("keep the day's requests and sites in the one object in the EU", async () => {
+    const { env, ctx, settled, objects } = fakeEnv();
+    const call = await hostedProfile(env, ctx, PERSON).startCall(PAGE);
+
+    await call.gate?.beforeRequest(new URL("https://www.example.com/"));
+    call.end?.({ outcome: "ok", pages: 1 });
+    await settled();
+
+    // The day's count read, the site admitted, the requests counted.
+    expect(objects).toStrictEqual(["eu/global", "eu/global", "eu/global"]);
+  });
+
+  it("ask for the object without a jurisdiction only when STATE_JURISDICTION is none, as in workerd locally", async () => {
+    const local = fakeEnv({ STATE_JURISDICTION: "none" });
+    const other = fakeEnv({ STATE_JURISDICTION: "us" });
+
+    await hostedProfile(local.env, local.ctx, PERSON).startCall(PAGE);
+    await hostedProfile(other.env, other.ctx, PERSON).startCall(PAGE);
+
+    expect(local.objects).toStrictEqual(["/global", "/global"]);
+    expect(other.objects).toStrictEqual(["eu/global", "eu/global"]);
   });
 
   it("count a site only once the other limits let its call through", async () => {

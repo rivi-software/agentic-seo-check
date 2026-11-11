@@ -5,6 +5,9 @@
  */
 import { z } from "zod";
 
+import { globalState } from "./state.js";
+import type { StateEnv } from "./state.js";
+
 /**
  * Anthropic's outbound addresses, from which claude.ai, Cowork and the Claude apps call remote MCP
  * servers. They change only with notice (platform.claude.com/docs/en/api/ip-addresses).
@@ -29,6 +32,89 @@ export const parseOpenAiRanges = (text: string): string[] =>
   OpenAiRanges.parse(JSON.parse(text)).prefixes.flatMap((p) =>
     [p.ipv4Prefix, p.ipv6Prefix].filter((r) => r !== undefined)
   );
+
+/** Where every isolate finds OpenAI's ranges: the HostedState Durable Object (state.ts). */
+export interface RangesStore {
+  openAiRanges: () => Promise<string[]>;
+  setOpenAiRanges: (ranges: string[]) => Promise<void>;
+}
+
+export type RangesEnv = StateEnv<RangesStore>;
+
+/**
+ * Fetches OpenAI's list and keeps it for every isolate. Answers the ranges it kept, and none for a
+ * list that came back empty.
+ */
+export const refreshOpenAiRanges = async (
+  env: RangesEnv
+): Promise<string[]> => {
+  const res = await fetch(OPENAI_RANGES_URL);
+
+  if (!res.ok) {
+    throw new Error(`${OPENAI_RANGES_URL} answered HTTP ${res.status}.`);
+  }
+
+  const ranges = parseOpenAiRanges(await res.text());
+
+  // An empty list is a broken file, not a ChatGPT without addresses: keep the last one.
+  if (ranges.length > 0) {
+    await globalState(env).setOpenAiRanges(ranges);
+  }
+
+  return ranges;
+};
+
+/** How long an isolate uses the ranges it read before it asks the Durable Object again. */
+const RANGES_FOR_MS = 3_600_000;
+
+/**
+ * OpenAI's ranges as one isolate reads them: from the Durable Object at most once an hour. An
+ * object without ranges, as a new one is until the Cron Trigger's first run at 03:17 UTC, gets them
+ * fetched once, after the answer, rather than count ChatGPT's calls as calls from addresses until
+ * then. The empty list is kept for the hour as any other, so a fetch that fails waits an hour
+ * before the next.
+ */
+export const openAiRangesReader = (): ((
+  env: RangesEnv,
+  ctx: Pick<ExecutionContext, "waitUntil">
+) => Promise<string[]>) => {
+  let kept: { ranges: string[]; readAt: number } | null = null;
+  let fetching = false;
+
+  /** Fetches the list for an object that has none, and uses it here from then on. */
+  const fetchMissing = async (env: RangesEnv): Promise<void> => {
+    fetching = true;
+
+    try {
+      const ranges = await refreshOpenAiRanges(env);
+
+      if (ranges.length > 0) {
+        kept = { ranges, readAt: Date.now() };
+      }
+    } catch (error) {
+      console.error(
+        `Could not fetch OpenAI's ranges: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      fetching = false;
+    }
+  };
+
+  return async (env, ctx) => {
+    if (kept && Date.now() - kept.readAt < RANGES_FOR_MS) {
+      return kept.ranges;
+    }
+
+    const ranges = await globalState(env).openAiRanges();
+    kept = { ranges, readAt: Date.now() };
+
+    if (ranges.length === 0 && !fetching) {
+      ctx.waitUntil(fetchMissing(env));
+    }
+
+    return ranges;
+  };
+};
 
 /** 2 to the power of `bits`: what shifting a number that many bits multiplies or divides it by. */
 const shift = (bits: number | bigint): bigint => 2n ** BigInt(bits);

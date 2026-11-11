@@ -68,6 +68,10 @@
     // stays open to its caller until 00:00 UTC.
     "CALLER_SITES": 10,
     "PLATFORM_SITES": 100,
+    // Where the Durable Object runs and keeps its data (src/state.ts, issue #78): the codes of the
+    // daily cap on sites stay in the EU. .dev.vars sets "none" for local runs, since workerd has no
+    // jurisdictions. Both Workers name the same, so that they share one object.
+    "STATE_JURISDICTION": "eu",
     // The token OpenAI asks the domain to serve at /.well-known/openai-apps-challenge (#33); none yet.
     "OPENAI_APPS_CHALLENGE": "",
     // Usage analytics in PostHog's EU project "Agentic SEO" (issue #57): the pages' pageviews and

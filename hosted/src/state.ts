@@ -19,11 +19,44 @@ interface SiteKey {
 const endOf = (day: string): number =>
   Date.parse(`${day}T00:00:00Z`) + 24 * 60 * 60 * 1000;
 
+/** The STATE binding as `globalState` asks it, so the tests can fake it. */
+export interface StateNamespace<T> {
+  getByName: (name: string) => T;
+  jurisdiction: (jurisdiction: "eu") => { getByName: (name: string) => T };
+}
+
+/** The bindings and variables `globalState` reads, in both Workers. */
+export interface StateEnv<T> {
+  STATE: StateNamespace<T>;
+  /**
+   * "eu" in both configurations. "none" asks for the object without a jurisdiction, for workerd run
+   * locally, which has none ("Jurisdiction restrictions are not implemented in workerd"): .dev.vars
+   * sets it for `hosted:dev`, `site:dev` and the workerd tests. Any other value, or none at all,
+   * keeps the object in the EU, so that a mistake in a configuration cannot move it out.
+   */
+  STATE_JURISDICTION?: string;
+}
+
+/**
+ * The one HostedState, "global", in the EU jurisdiction (issue #78): Cloudflare runs it and keeps
+ * its data in the EU, and a Worker anywhere may still call it. While a day's key exists, the codes
+ * of that day's sites are pseudonymous personal data, and RIVI's privacy policy keeps data in the
+ * EU where it can. Both Workers ask for the object here, in this file, so that the website, which
+ * deploys from main, waits for the MCP server's deploy (deploy-site.yml) and never counts in
+ * another object than the MCP server.
+ */
+export const globalState = <T>(env: StateEnv<T>): T =>
+  (env.STATE_JURISDICTION === "none"
+    ? env.STATE
+    : env.STATE.jurisdiction("eu")
+  ).getByName("global");
+
 /**
  * What every isolate of the Worker shares: the day's count of outgoing requests, for the daily
  * limit (the rate limiting binding counts per 10 or 60 seconds only), the sites each caller audited
  * today, for the daily cap on sites (issue #73), and OpenAI's ChatGPT connector ranges, which a
- * Cron Trigger refreshes. One object, named "global", holds them.
+ * Cron Trigger refreshes. One object, named "global" in the EU jurisdiction (`globalState`), holds
+ * them.
  *
  * The website's Worker binds this class too (wrangler.site.jsonc), so its form counts in the same
  * day, but the object runs the code the MCP server last deployed. The website deploys from main,
