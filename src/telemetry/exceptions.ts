@@ -4,7 +4,8 @@
  * cause, and each stack's oldest call first). It keeps #57's promise of no URL, hostname, path or
  * text from a page: a message loses its URLs, paths, quoted text, hostnames and addresses, and a
  * frame keeps its file's place in the package, never the directories above it, which hold the
- * user's home and often their name. It runs in Node and in a Worker.
+ * user's home and often their name. It runs in Node and in a Worker. Issue #85 added one event per
+ * bug, with a count, and lets the local tool name a frame by its TypeScript source (`mapFrame`).
  */
 import { ExpectedError } from "../core/errors.js";
 import { BASE_PROPERTIES } from "./posthog.js";
@@ -232,10 +233,17 @@ const parseFrame = (
   return { ...frame, ...placeOf(where, root) };
 };
 
+/**
+ * A frame as the caller would rather name it: the CLI's and the local MCP server's map a frame of
+ * the build to its TypeScript source (telemetry/local.ts). It must not throw.
+ */
+export type FrameMapper = (frame: ExceptionFrame) => ExceptionFrame;
+
 /** The frames of `error`'s stack, the oldest call first, as PostHog orders them. */
 const framesOf = (
   error: Error,
-  root: string | undefined
+  root: string | undefined,
+  mapFrame: FrameMapper | undefined
 ): ExceptionFrame[] | undefined => {
   // A library may set `stack` to anything; String() reads what V8 wrote.
   const written = String(error.stack ?? "");
@@ -256,7 +264,7 @@ const framesOf = (
     const frame = parseFrame(line, root);
 
     if (frame) {
-      frames.push(frame);
+      frames.push(mapFrame ? mapFrame(frame) : frame);
     }
 
     if (frames.length === MAX_FRAMES) {
@@ -281,7 +289,8 @@ const messageOf = (error: unknown): string =>
 export const exceptionList = (
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- as above
   error: unknown,
-  handled: boolean
+  handled: boolean,
+  mapFrame?: FrameMapper
 ): ExceptionEntry[] => {
   const root = packageRoot();
   const list: ExceptionEntry[] = [];
@@ -299,7 +308,7 @@ export const exceptionList = (
     const id = list.length;
 
     const frames =
-      current instanceof Error ? framesOf(current, root) : undefined;
+      current instanceof Error ? framesOf(current, root, mapFrame) : undefined;
 
     list.push({
       type: typeOf(current),
@@ -341,7 +350,48 @@ export interface ExceptionContext {
   handled: boolean;
   surface: "cli" | "local" | "hosted";
   properties?: Record<string, PropertyValue | undefined>;
+  /** How a frame is named, when not as exceptions.ts reads it from the stack. */
+  mapFrame?: FrameMapper;
 }
+
+/**
+ * `error`'s list, or undefined when it is no bug (`reportable`) or a thrown value String() cannot
+ * read, such as an object without a prototype: no event then, and never an error in the error's way.
+ */
+const listOf = (
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- as above
+  error: unknown,
+  handled: boolean,
+  mapFrame: FrameMapper | undefined
+): ExceptionEntry[] | undefined => {
+  if (!reportable(error)) {
+    return undefined;
+  }
+
+  try {
+    return exceptionList(error, handled, mapFrame);
+  } catch {
+    return undefined;
+  }
+};
+
+const eventOf = (
+  list: ExceptionEntry[],
+  context: ExceptionContext,
+  at: Date
+): PostHogEvent => ({
+  event: "$exception",
+  timestamp: at.toISOString(),
+  properties: {
+    ...BASE_PROPERTIES,
+    distinct_id: context.distinctId,
+    $session_id: context.sessionId,
+    surface: context.surface,
+    $exception_list: list,
+    $exception_level: "error",
+    ...context.properties,
+  },
+});
 
 /** The `$exception` event of `error`, or undefined when it is no bug (`reportable`). */
 export const exceptionEvent = (
@@ -350,31 +400,84 @@ export const exceptionEvent = (
   context: ExceptionContext,
   at = new Date()
 ): PostHogEvent | undefined => {
-  if (!reportable(error)) {
-    return undefined;
+  const list = listOf(error, context.handled, context.mapFrame);
+
+  return list && eventOf(list, context, at);
+};
+
+/** One error of a run or a tool call, for `exceptionEvents`. */
+export interface ReportedError {
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  error: unknown;
+  /** False when only a last resort caught it. */
+  handled: boolean;
+  /** Its own properties, beside the context's, such as the rule whose check threw. */
+  properties?: Record<string, PropertyValue | undefined>;
+}
+
+/** The most `$exception` events one run or one tool call sends (issue #85). */
+export const MAX_EXCEPTIONS = 10;
+
+/**
+ * What makes two errors one bug: their type, cleaned message and handling, the place in the
+ * package's own code nearest the throw, and their own properties (one rule's crash is not
+ * another's). The full stack is left out: the same bug reached by two paths is still one.
+ */
+const bugKey = (list: ExceptionEntry[], error: ReportedError): string => {
+  const [first] = list;
+  const inApp = first?.stacktrace?.frames.findLast((frame) => frame.in_app);
+
+  return JSON.stringify([
+    first?.type,
+    first?.value,
+    error.handled,
+    inApp && `${inApp.filename}:${inApp.lineno}:${inApp.colno}`,
+    error.properties ?? {},
+  ]);
+};
+
+/**
+ * The `$exception` events of `errors`, one per bug (issue #85): a rule that throws on each of a
+ * crawl's 500 pages sends one event, whose `occurrences` is 500, not 500 events. Errors that are no
+ * bug send nothing, and at most MAX_EXCEPTIONS bugs are sent, the first ones met.
+ */
+export const exceptionEvents = (
+  errors: readonly ReportedError[],
+  context: Omit<ExceptionContext, "handled">,
+  at = new Date()
+): PostHogEvent[] => {
+  const bugs = new Map<string, { event: PostHogEvent; occurrences: number }>();
+
+  for (const error of errors) {
+    const list = listOf(error.error, error.handled, context.mapFrame);
+
+    if (!list) {
+      continue;
+    }
+
+    const key = bugKey(list, error);
+    const bug = bugs.get(key);
+
+    if (bug) {
+      bug.occurrences += 1;
+    } else if (bugs.size < MAX_EXCEPTIONS) {
+      bugs.set(key, {
+        event: eventOf(
+          list,
+          {
+            ...context,
+            handled: error.handled,
+            properties: { ...context.properties, ...error.properties },
+          },
+          at
+        ),
+        occurrences: 1,
+      });
+    }
   }
 
-  let list: ExceptionEntry[];
-
-  try {
-    list = exceptionList(error, context.handled);
-  } catch {
-    // A thrown value String() cannot read, such as an object without a prototype: no event, and
-    // never an error in the error's way.
-    return undefined;
-  }
-
-  return {
-    event: "$exception",
-    timestamp: at.toISOString(),
-    properties: {
-      ...BASE_PROPERTIES,
-      distinct_id: context.distinctId,
-      $session_id: context.sessionId,
-      surface: context.surface,
-      $exception_list: list,
-      $exception_level: "error",
-      ...context.properties,
-    },
-  };
+  return [...bugs.values()].map(({ event, occurrences }) => ({
+    ...event,
+    properties: { ...event.properties, occurrences },
+  }));
 };

@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { crawlSite } from "./crawl.js";
+import { crawlSite, failedPageFindings, userPatterns } from "./crawl.js";
 import type {
   CrawlOptions as InternalCrawlOptions,
   CrawlResult,
@@ -555,6 +555,8 @@ const buildSiteAudit = (
     crawlStopped: result.stopped?.message,
   });
 
+  siteFindings.push(...failedPageFindings(result.failedPages));
+
   const hiddenSite: Finding[] = [];
   siteFindings = sortFindings(selected(siteFindings, options, hiddenSite));
 
@@ -744,10 +746,8 @@ export const seoCrawlOptions = (
     includeSubdomains: options.includeSubdomains ?? false,
     checkExternalLinks: options.checkExternalLinks ?? false,
     maxLinkChecks: options.maxLinkChecks ?? DEFAULT_CRAWL.maxLinkChecks,
-    // oxlint-disable-next-line eslint/require-unicode-regexp -- the user's own patterns, in JavaScript's default syntax; the u flag would reject some of them
-    includePatterns: (options.includePatterns ?? []).map((p) => new RegExp(p)),
-    // oxlint-disable-next-line eslint/require-unicode-regexp -- the user's own patterns, in JavaScript's default syntax; the u flag would reject some of them
-    excludePatterns: (options.excludePatterns ?? []).map((p) => new RegExp(p)),
+    includePatterns: userPatterns(options.includePatterns, "include"),
+    excludePatterns: userPatterns(options.excludePatterns, "exclude"),
     fetch: fetchOpts,
     onProgress: options.onProgress,
     maxSitemaps: options.maxSitemaps,

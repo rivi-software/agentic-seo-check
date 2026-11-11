@@ -1,0 +1,5 @@
+---
+"@rivi-software/agentic-seo-check": minor
+---
+
+Error tracking in the CLI and the local MCP server now hears more of the tool's own bugs, and stops reporting the user's mistakes as crashes (issue #85). A rule that throws is reported with the rule's id. A page that a crawl leaves out because the audit failed on it is reported too, and the user is told in a new `tool.page-error` info finding, in the SEO and the AEO audit of a crawl. A bug met more than once in a run or a tool call sends one `$exception`, with `occurrences` counting it. A stack's files of the build are named by their TypeScript source, through the source maps the package ships. The CLI's error events carry the run's flag names, kind of target and format. An `--include` or `--exclude` pattern (`includePatterns`, `excludePatterns`) that is no regular expression now fails before any request, with a message that names it. An `-o` file the CLI cannot write fails with the reason. Neither is reported. Output piped into a reader that stops early, such as `| head`, no longer crashes the CLI with an `EPIPE` stack: the run ends with its own exit code.
