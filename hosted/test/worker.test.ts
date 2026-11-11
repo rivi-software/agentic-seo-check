@@ -338,6 +338,8 @@ describe("the hosted Worker in workerd", () => {
           pages: 1,
           requests: expect.any(Number),
           distinct_id: expect.stringMatching(/^ses_[\da-f-]{36}$/u),
+          // The User-Agent's product token, never the rest of the header.
+          $mcp_client_user_agent: expect.stringMatching(/^[A-Za-z][\w.-]*$/u),
         },
       });
       expect(event.properties.requests).toBeGreaterThan(0);

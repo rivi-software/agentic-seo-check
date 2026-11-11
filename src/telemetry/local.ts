@@ -36,16 +36,21 @@ const isOff = (value: string | undefined): boolean =>
 const isOn = (value: string | undefined): boolean =>
   Boolean(value?.trim()) && !isOff(value);
 
-/** Where the user's choice is kept: their config directory, as XDG and Windows place it. */
+/**
+ * Where the user's choice is kept: their config directory, as XDG and Windows place it. `home` is
+ * asked only when neither variable names one: os.homedir() throws where there is no HOME and the
+ * user has no passwd entry, as in containers that run under an arbitrary UID.
+ */
 export const settingsPath = (
   env: Env = process.env,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  home: () => string = homedir
 ): string => {
-  const windows = env.APPDATA || path.join(homedir(), "AppData", "Roaming");
+  const windows = () => env.APPDATA || path.join(home(), "AppData", "Roaming");
 
   const base =
     env.XDG_CONFIG_HOME ||
-    (platform === "win32" ? windows : path.join(homedir(), ".config"));
+    (platform === "win32" ? windows() : path.join(home(), ".config"));
 
   return path.join(base, "agentic-seo-check", "telemetry.json");
 };
@@ -104,9 +109,10 @@ export interface TelemetryStatus {
 }
 
 export const telemetryStatus = async (
-  env: Env = process.env
+  env: Env = process.env,
+  home: () => string = homedir
 ): Promise<TelemetryStatus> => {
-  const file = settingsPath(env);
+  const file = settingsPath(env, process.platform, home);
   const settings = await readSettings(file);
   const byEnv = offByEnv(env);
 
@@ -136,9 +142,21 @@ export const telemetryStatus = async (
  * that it was shown. When the file cannot be written, the notice is shown again next time.
  */
 export const prepareTelemetry = async (
-  options: { env?: Env; stderr?: Pick<NodeJS.WriteStream, "write"> } = {}
+  options: {
+    env?: Env;
+    stderr?: Pick<NodeJS.WriteStream, "write">;
+    /** os.homedir(), or what stands in for it in the tests. */
+    home?: () => string;
+  } = {}
 ): Promise<boolean> => {
-  const status = await telemetryStatus(options.env);
+  let status: TelemetryStatus;
+
+  try {
+    status = await telemetryStatus(options.env, options.home);
+  } catch {
+    // No directory to keep the choice in: telemetry never stops the CLI or the server, so it is off.
+    return false;
+  }
 
   if (!status.enabled) {
     return false;

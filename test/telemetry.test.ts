@@ -21,7 +21,7 @@ import {
   telemetryCommand,
   telemetryStatus,
 } from "../src/telemetry/local.js";
-import { instrumentTransport } from "../src/telemetry/mcp.js";
+import { clientToken, instrumentTransport } from "../src/telemetry/mcp.js";
 import type {
   McpAnalytics,
   McpCaller,
@@ -68,6 +68,11 @@ const recorder = () => {
 };
 
 const EVENT = { event: "x", properties: { distinct_id: "d" } };
+
+/** os.homedir() without HOME, in a container that runs under an arbitrary UID. */
+const noHome = (): string => {
+  throw new Error("ENOENT: no such file or directory, uv_os_homedir");
+};
 
 describe("telemetry", () => {
   describe("sending", () => {
@@ -166,6 +171,32 @@ describe("telemetry", () => {
       );
       expect(sends).toBeFalsy();
       expect(status.enabled).toBeTruthy();
+    });
+
+    it("is off, and says nothing, where there is no home directory", async () => {
+      const written: string[] = [];
+
+      const sends = await prepareTelemetry({
+        env: {},
+        home: noHome,
+        stderr: {
+          write: (text: string) => {
+            written.push(text);
+
+            return true;
+          },
+        },
+      });
+
+      expect(sends).toBeFalsy();
+      expect(written).toStrictEqual([]);
+      expect([
+        settingsPath({ XDG_CONFIG_HOME: "/config" }, "linux", noHome),
+        settingsPath({ APPDATA: "/appdata" }, "win32", noHome),
+      ]).toStrictEqual([
+        path.join("/config", "agentic-seo-check", "telemetry.json"),
+        path.join("/appdata", "agentic-seo-check", "telemetry.json"),
+      ]);
     });
 
     it("says it is on once, on stderr, on the first run", async () => {
@@ -330,6 +361,26 @@ describe("telemetry", () => {
         ["seo_audit_page", true, "validation"],
         ["seo_audit_page", true, "validation"],
         ["seo_audit_directory", true, "internal"],
+      ]);
+    });
+
+    it("keeps only the product token of a client's header", () => {
+      expect(
+        [
+          "claude-user/1.0 (+https://claude.ai)",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/142",
+          "https://tracker.example/me?id=42",
+          "claude-code",
+          "  ",
+          undefined,
+        ].map((value) => clientToken(value))
+      ).toStrictEqual([
+        "claude-user",
+        "Mozilla",
+        "https",
+        "claude-code",
+        undefined,
+        undefined,
       ]);
     });
 

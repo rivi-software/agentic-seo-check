@@ -38,9 +38,9 @@ export interface McpCaller {
   clientName?: string;
   clientVersion?: string;
   protocolVersion?: string;
-  /** The User-Agent header, on HTTP. */
+  /** The product token of the User-Agent header, on HTTP (`clientToken`). */
   userAgent?: string;
-  /** The X-Anthropic-Client header, which tells Claude Code from claude.ai. */
+  /** The product token of the X-Anthropic-Client header, which tells Claude Code from claude.ai. */
   vendorClient?: string;
 }
 
@@ -108,7 +108,18 @@ const header = (
   return short(Array.isArray(value) ? value[0] : value);
 };
 
-const ProtocolVersion = z.string();
+/**
+ * The product token at the start of a header such as `claude-user/1.0 (…)`: the client's name.
+ * The rest can hold a URL, or be distinctive enough to tie one caller's calls together, so it
+ * never reaches an event.
+ */
+const PRODUCT_TOKEN = /^[A-Za-z][\w.-]{0,63}/u;
+
+export const clientToken = (value: string | undefined): string | undefined =>
+  PRODUCT_TOKEN.exec(value?.trim() ?? "")?.[0];
+
+/** A revision of the protocol, such as `2025-11-25`: the only form a client's own value keeps. */
+const ProtocolVersion = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u);
 
 /** A tool call the server has received and not answered yet. */
 interface Pending {
@@ -150,8 +161,8 @@ export const instrumentTransport = (
     const headers = extra?.requestInfo?.headers;
 
     const http = {
-      userAgent: header(headers, "user-agent"),
-      vendorClient: header(headers, "x-anthropic-client"),
+      userAgent: clientToken(header(headers, "user-agent")),
+      vendorClient: clientToken(header(headers, "x-anthropic-client")),
     };
 
     const initialize = InitializeRequestSchema.safeParse(message);
@@ -162,7 +173,7 @@ export const instrumentTransport = (
       session = {
         clientName: short(clientInfo.name),
         clientVersion: short(clientInfo.version),
-        protocolVersion: short(protocolVersion),
+        protocolVersion: ProtocolVersion.safeParse(protocolVersion).data,
       };
 
       analytics.initialize({ ...session, ...http });
@@ -190,7 +201,8 @@ export const instrumentTransport = (
     const revision =
       ProtocolVersion.safeParse(
         meta?.["io.modelcontextprotocol/protocolVersion"]
-      ).data ?? header(headers, "mcp-protocol-version");
+      ).data ??
+      ProtocolVersion.safeParse(header(headers, "mcp-protocol-version")).data;
 
     const slot: Slot = {};
 
