@@ -8,8 +8,10 @@
  * under each tab the cards of one section. The overview has what to fix first, an index of the
  * findings as a tile for each group, and the facts; each audit's section has a card for each
  * category of findings; the last is the AI crawlers. The page's script shows one section at a
- * time; without it they follow one another.
+ * time; without it they follow one another. Printed, or saved as a PDF from the print dialog, the
+ * report is every section in turn, on white, with every finding open (ui/style.ts and files.ts).
  */
+import { MAKER, PRODUCT_NAME, WEBSITE_URL } from "../../../src/brand.js";
 import { compactAeoAudit } from "../../../src/core/aeo/audit.js";
 import { compactAudit } from "../../../src/core/audit.js";
 import { HOSTED_LIMITS } from "../../../src/core/hosted.js";
@@ -379,7 +381,7 @@ export const fixFirst = (seo: FindingPart[], aeo: FindingPart[]): string => {
 
   return overviewPart(
     "Fix first",
-    `<ol class="fix-list">${rows.join("")}</ol>${more > 0 ? `<p class="card-foot">And ${more} more under the SEO and AEO tabs.</p>` : ""}`,
+    `<ol class="fix-list">${rows.join("")}</ol>${more > 0 ? `<p class="card-foot">And ${more} more in the SEO and AEO findings.</p>` : ""}`,
     "fix-first",
     tally(urgent.map(({ item }) => item.severity))
   );
@@ -633,14 +635,30 @@ export const reportData = (
     })
   );
 
+/** When an audit ran, as the printed report says it: "11 November 2026 at 14:05 UTC". */
+export const auditedOn = (auditedAt: string): string => {
+  const date = new Date(auditedAt);
+
+  const day = date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
+  return `${day} at ${date.toISOString().slice(11, 16)} UTC`;
+};
+
 /**
  * A report under the audit form: a card with the address and the buttons, then `body`, a stack of
  * cards, and `data`. `share` is the Share menu (share-page.ts), when the site can sign a share
- * link.
+ * link. Under the address, a line that only paper and a PDF show says when the audit ran and what
+ * made it, as a document handed on needs to.
  */
 export const reportFrame = (report: {
   title: string;
   url: string;
+  auditedAt: string;
   body: string;
   data: string;
   share?: string;
@@ -648,8 +666,8 @@ export const reportFrame = (report: {
 <div class="wrap report-stack">
 <div class="window report-head">
 <div class="report-bar">
-<div class="report-title"><h2 id="report-title">${report.title}</h2><p class="report-url">${icon("globe")}<span>${esc(report.url)}</span></p></div>
-<div class="report-actions"><button class="btn btn-secondary btn-sm" type="button" data-report="download">${icon("download")}<span class="btn-label">Download JSON</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="copy">${icon("copy")}<span class="btn-label">Copy as Markdown</span></button>${report.share ?? ""}</div>
+<div class="report-title"><h2 id="report-title">${report.title}</h2><p class="report-url">${icon("globe")}<span>${esc(report.url)}</span></p><p class="report-print">Audited on ${auditedOn(report.auditedAt)} with ${PRODUCT_NAME} by ${MAKER}, <a href="${WEBSITE_URL}/">${new URL(WEBSITE_URL).host}</a></p></div>
+<div class="report-actions"><button class="btn btn-secondary btn-sm" type="button" data-report="download">${icon("download")}<span class="btn-label">Download JSON</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="copy">${icon("copy")}<span class="btn-label">Copy as Markdown</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="pdf">${icon("file")}<span class="btn-label">Save as PDF</span></button>${report.share ?? ""}</div>
 </div>
 </div>
 ${report.body}
@@ -726,6 +744,7 @@ export const renderReport = (
   return reportFrame({
     title: "Audit report",
     url: seo.url,
+    auditedAt: seo.auditedAt,
     share,
     data: reportData(seo, aeo, new URL(seo.url).hostname),
     body: `<div class="scores">${scoreCard("seo", "SEO: search engines", seo.score, seo.counts)}${scoreCard("aeo", "AEO: AI answer engines", aeo.score, aeo.counts)}</div>

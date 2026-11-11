@@ -24,6 +24,7 @@ import {
 } from "../src/site/site-report.ts";
 import { CLAUDE_DIRECTORY_URL } from "../src/ui/frame.ts";
 import { OG_IMAGE, SERVER_CARD, SITE_CARD } from "../src/ui/og.ts";
+import { STYLE } from "../src/ui/style.ts";
 
 /** The daily limits as wrangler.jsonc sets them. */
 const DAILY = {
@@ -351,6 +352,26 @@ describe("the report of a page audit", () => {
     expect(report).not.toContain('class="fix-row');
   });
 
+  it("saves as a PDF from the print dialog, with when the audit ran on paper only", async () => {
+    const url = "https://shop.example.com/";
+
+    const html =
+      "<html><head><title>React App</title></head><body></body></html>";
+
+    const report = renderReport(
+      {
+        ...(await auditHtml(html, { url, source: "url", target: url })),
+        auditedAt: "2026-11-11T14:05:09.000Z",
+      },
+      await auditAeoHtml(html, { url })
+    );
+
+    expect(report).toContain('data-report="pdf"');
+    expect(report).toContain(
+      '<p class="report-print">Audited on 11 November 2026 at 14:05 UTC with Agentic SEO Check by RIVI Software, <a href="https://agentic-seo.rivi.software/">agentic-seo.rivi.software</a></p>'
+    );
+  });
+
   it("never lets the audited page's text become markup", async () => {
     const url = "https://shop.example.com/";
 
@@ -511,6 +532,13 @@ describe("the report of a site audit", () => {
     ).toBeTruthy();
   });
 
+  it("saves as a PDF from the print dialog, with when the crawl ran on paper only", () => {
+    expect(report).toContain('data-report="pdf"');
+    expect(report).toMatch(
+      /<p class="report-print">Audited on \d{1,2} [A-Z][a-z]+ \d{4} at \d{2}:\d{2} UTC with /u
+    );
+  });
+
   it("never lets the site's text become markup", () => {
     expect(report).not.toContain("<script>alert");
     expect(report).not.toContain("<img");
@@ -643,5 +671,24 @@ describe("the share images", () => {
         height: OG_IMAGE.height,
       });
     }
+  });
+});
+
+describe("the stylesheet on paper", () => {
+  const print = STYLE.slice(STYLE.indexOf("@media print{"));
+
+  it("prints a report alone, on white, with every section and without the evidence", () => {
+    const rules = [
+      "--bg:#fff",
+      "print-color-adjust:exact",
+      "main:has(>.report)>:not(.report){display:none}",
+      ".report-panel[hidden]{display:block;content-visibility:visible}",
+      ".report-print{display:block",
+    ];
+
+    expect(STYLE).toContain("@media print{");
+    expect(rules.filter((rule) => !print.includes(rule))).toStrictEqual([]);
+    expect(print).toMatch(/[,{]\.evidence[,{]/u);
+    expect(print).toMatch(/[,{]\.report-tabs[,{]/u);
   });
 });
