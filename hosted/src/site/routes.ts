@@ -15,7 +15,7 @@ import { homePage, notFoundPage } from "./home.js";
 import { SITE_HOST } from "./layout.js";
 import { rulesPage } from "./rules-page.js";
 import { sharePage } from "./share-page.js";
-import { openShare } from "./share.js";
+import { openShare, shareImageCacheKey } from "./share.js";
 
 /**
  * The website's hostname. Wrangler's dev server gives every request the hostname of the first
@@ -159,7 +159,10 @@ const share = async (
 
   // The cache keeps GET answers, and a HEAD asks for the same image without its body. The key
   // names the version, so a deploy that changes the card draws it again.
-  const key = new Request(`${request.url}?v=${VERSION}`, { method: "GET" });
+  const key = new Request(shareImageCacheKey(request.url, VERSION), {
+    method: "GET",
+  });
+
   const cache = await caches.open("share-images");
   const cached = await cache.match(key);
 

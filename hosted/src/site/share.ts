@@ -186,16 +186,26 @@ const same = (a: string, b: string): boolean => {
   return diff === 0;
 };
 
-/** The result's share link, or null when the site has no SHARE_KEY. */
+/**
+ * The result's share link, or null when the site has no SHARE_KEY, or when openShare would refuse
+ * the link: an address over 2,048 characters, which a redirect or the percent-encoding of a typed
+ * path can make. A Share button whose link answers 404 is worse than none.
+ */
 export const signShare = async (
   env: ShareEnv,
   result: ShareResult
 ): Promise<ShareLink | null> => {
-  if (!env.SHARE_KEY) {
+  const packed = Packed.safeParse(pack(result));
+
+  if (!env.SHARE_KEY || !packed.success) {
     return null;
   }
 
-  const data = Buffer.from(JSON.stringify(pack(result))).toString("base64url");
+  const data = Buffer.from(JSON.stringify(packed.data)).toString("base64url");
+
+  if (data.length > MAX_RESULT_CHARS) {
+    return null;
+  }
 
   return {
     result,
@@ -246,6 +256,17 @@ export const sharePath = (token: string): string => `/share/${token}`;
 
 export const shareImagePath = (token: string): string =>
   `${sharePath(token)}.png`;
+
+/**
+ * The Cache API's key for the share image at `url`: its path and the Worker's version, never its
+ * query. The route ignores the query, so `….png?1` and `….png?2` are one image, drawn once; a key
+ * with the query would let anyone with one link make the Worker draw it on every request.
+ */
+export const shareImageCacheKey = (url: string, version: string): string => {
+  const { origin, pathname } = new URL(url);
+
+  return `${origin}${pathname}?v=${encodeURIComponent(version)}`;
+};
 
 /** The day of the audit as people read it: 11 November 2026. */
 export const dayText = (day: string): string =>

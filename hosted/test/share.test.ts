@@ -14,6 +14,7 @@ import { renderReport } from "../src/site/report.ts";
 import { shareMenu, sharePage } from "../src/site/share-page.ts";
 import {
   openShare,
+  shareImageCacheKey,
   shareResult,
   shareTargets,
   signShare,
@@ -97,6 +98,23 @@ describe("a share link", () => {
     await expect(
       openShare({ SHARE_KEY: "the new key" }, fresh.token)
     ).resolves.toStrictEqual(RESULT);
+  });
+
+  it("is not made for an address the page would refuse, so no Share button leads to a 404", async () => {
+    // Under the form's 2,048 typed characters, but over them once URL percent-encodes the path,
+    // as it is again after a redirect to a long address.
+    const encoded = new URL(`https://shop.example.com/${"é".repeat(400)}`).href;
+
+    expect(encoded.length).toBeGreaterThan(2048);
+    await expect(
+      signShare(ENV, { ...RESULT, url: encoded })
+    ).resolves.toBeNull();
+    await expect(
+      signShare(ENV, {
+        ...RESULT,
+        url: `https://shop.example.com/${"a".repeat(2000)}`,
+      })
+    ).resolves.not.toBeNull();
   });
 
   it("is not made, and none opens, without a key", async () => {
@@ -236,6 +254,23 @@ describe("the share page", () => {
     );
 
     expect(html).not.toContain("<script>alert(1)");
+  });
+});
+
+describe("the share image's cache key", () => {
+  it("is the path and the version, whatever query the request has", () => {
+    const image = `${SITE_ORIGIN}/share/abc.${"A".repeat(22)}.png`;
+
+    expect(
+      ["", "?1", "?2&x=y"].map((query) =>
+        shareImageCacheKey(`${image}${query}`, "0.8.2")
+      )
+    ).toStrictEqual([
+      `${image}?v=0.8.2`,
+      `${image}?v=0.8.2`,
+      `${image}?v=0.8.2`,
+    ]);
+    expect(shareImageCacheKey(image, "0.9.0")).toBe(`${image}?v=0.9.0`);
   });
 });
 
