@@ -1,6 +1,7 @@
 import { MARK_SVG } from "../../../src/brand.js";
 import { POSTHOG_HOST } from "../../../src/telemetry/posthog.js";
 import { VERSION } from "../../../src/version.js";
+import { reportError } from "../analytics.js";
 /**
  * The routes of the website at agentic-seo.rivi.software (issue #39), which the Worker
  * serves beside the MCP server's own hostname: the homepage with the audit form, the rules, the
@@ -122,7 +123,14 @@ const audit = async (
 
   const stream = async (): Promise<void> => {
     write(html.slice(0, slot));
-    await rest(write);
+
+    try {
+      await rest(write);
+    } catch (error) {
+      // The report could not be drawn (issue #60): the page still ends as a page does.
+      reportError(env, ctx, error, "website:/audit");
+    }
+
     write(html.slice(slot + REPORT_SLOT.length));
     await writer.close();
   };

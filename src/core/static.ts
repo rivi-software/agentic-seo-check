@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import type { CrawlResult } from "./crawl.js";
+import { ExpectedError } from "./errors.js";
 import { DEFAULT_USER_AGENT } from "./fetch.js";
 import { extractPage } from "./html/extract.js";
 import { buildRobots } from "./robots.js";
@@ -499,7 +500,7 @@ export const scanDirectory = async (
   const stat = await fs.stat(root).catch(() => null);
 
   if (!stat?.isDirectory()) {
-    throw new Error(`Not a directory: ${root}`);
+    throw new ExpectedError(`Not a directory: ${root}`);
   }
 
   const base = new URL(

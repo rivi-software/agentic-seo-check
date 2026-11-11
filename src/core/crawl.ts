@@ -1,4 +1,5 @@
 import { mapConcurrent, sleep } from "./concurrency.js";
+import { ExpectedError } from "./errors.js";
 import {
   DEFAULT_USER_AGENT,
   fetchPage,
@@ -414,7 +415,7 @@ const crawlPolicy = (
 
     // A gate (the hosted server's) obeys robots.txt for every request, with no way to turn that
     // off: it gives the site's reason and nothing more.
-    throw new Error(
+    throw new ExpectedError(
       options.gated
         ? reason
         : `${reason} Audit single pages instead; for a site of your own, crawl without obeying robots.txt (respectRobots: false with the local server, --ignore-robots with the CLI).`

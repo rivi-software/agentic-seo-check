@@ -57,6 +57,8 @@ export {
 
 export { renderPage, RenderUnavailableError } from "./core/render.js";
 
+export { ExpectedError } from "./core/errors.js";
+
 export {
   fetchPage,
   probeUrl,

@@ -1,4 +1,5 @@
 import { AEO_SITE_RULES } from "../aeo/site-rules.js";
+import { ExpectedError } from "../errors.js";
 import { PERFORMANCE_RULES } from "../performance-rules.js";
 import { RENDER_RULES } from "../render-rules.js";
 import { SITE_RULES } from "../site-rules.js";
@@ -150,7 +151,8 @@ export const checkRuleIds = (
     const other = kind === "SEO" ? AEO_RULES : SEO_RULES;
     const elsewhere = unknown.filter((id) => other.some((r) => r.id === id));
 
-    throw new Error(
+    // The caller's input: an error the tool explains, not a bug (issue #60).
+    throw new ExpectedError(
       elsewhere.length === unknown.length
         ? `${unknown.join(", ")} ${unknown.length === 1 ? "is" : "are"} not ${kind} rules; run ${kind === "SEO" ? "the AEO audit (aeo, seo_aeo_audit)" : "the SEO audit (audit, crawl)"} for ${unknown.length === 1 ? "it" : "them"}.`
         : `Unknown rule id(s): ${unknown.join(", ")}. List the rules with \`agentic-seo-check rules\` or seo_list_rules.`

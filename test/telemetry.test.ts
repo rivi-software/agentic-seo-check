@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -12,6 +12,7 @@ import {
   cliEvent,
   localMcpAnalytics,
   NOTICE,
+  NOTICE_VERSION,
   offByEnv,
   prepareTelemetry,
   runReport,
@@ -219,7 +220,33 @@ describe("telemetry", () => {
       expect(written).toStrictEqual([`${NOTICE}\n`]);
       expect(JSON.parse(settings)).toMatchObject({
         noticeShown: expect.any(String),
+        noticeVersion: NOTICE_VERSION,
       });
+
+      await rm(home, { recursive: true, force: true });
+    });
+
+    it("says it once more to a user who saw the notice before it named errors", async () => {
+      const { home, env } = await freshEnv();
+      const written: string[] = [];
+
+      const stderr = {
+        write: (text: string) => {
+          written.push(text);
+
+          return true;
+        },
+      };
+
+      // The settings issue #57's release wrote: a notice, without its version.
+      await mkdir(path.dirname(settingsPath(env)), { recursive: true });
+      await writeFile(settingsPath(env), '{ "noticeShown": "2026-11-11" }');
+
+      await prepareTelemetry({ env, stderr });
+      await prepareTelemetry({ env, stderr });
+
+      expect(written).toStrictEqual([`${NOTICE}\n`]);
+      expect(NOTICE).toMatch(/type and stack of an unexpected error/u);
 
       await rm(home, { recursive: true, force: true });
     });
@@ -294,11 +321,9 @@ describe("telemetry", () => {
     });
 
     it("gives each run an id of its own, so no two can be linked", () => {
-      const run = startCliRun("rules", []);
-
-      expect(cliEvent(run, 0).properties.distinct_id).not.toBe(
-        cliEvent(run, 0).properties.distinct_id
-      );
+      expect(
+        cliEvent(startCliRun("rules", []), 0).properties.distinct_id
+      ).not.toBe(cliEvent(startCliRun("rules", []), 0).properties.distinct_id);
     });
 
     it("counts one page for a page audit", async () => {
@@ -350,7 +375,7 @@ describe("telemetry", () => {
         name: "seo_audit_page",
         arguments: { maxDepth: "deep" },
       });
-      // A directory that is not there.
+      // A directory that is not there: a failure the tool expects and explains.
       await client.callTool({
         name: "seo_audit_directory",
         arguments: { dir: "no/such/dir" },
@@ -360,7 +385,12 @@ describe("telemetry", () => {
       expect(calls.map((c) => [c.tool, c.isError, c.errorType])).toStrictEqual([
         ["seo_audit_page", true, "validation"],
         ["seo_audit_page", true, "validation"],
-        ["seo_audit_directory", true, "internal"],
+        ["seo_audit_directory", true, "validation"],
+      ]);
+      expect(calls.map((c) => c.error)).toStrictEqual([
+        undefined,
+        undefined,
+        undefined,
       ]);
     });
 
@@ -386,7 +416,14 @@ describe("telemetry", () => {
 
     it("sends the local server's calls as PostHog's MCP Analytics reads them, in one session", async () => {
       const sent: PostHogEvent[] = [];
-      const client = await connect(localMcpAnalytics((e) => sent.push(e)));
+
+      const client = await connect(
+        localMcpAnalytics((e) => {
+          sent.push(e);
+
+          return Promise.resolve(true);
+        })
+      );
 
       await client.callTool({
         name: "seo_audit_page",

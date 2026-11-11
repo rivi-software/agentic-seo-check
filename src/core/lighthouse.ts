@@ -2,6 +2,7 @@ import type { Options as ChromeLaunchOptions } from "chrome-launcher";
 import type { Flags as LighthouseFlags } from "lighthouse";
 import { z } from "zod";
 
+import { ExpectedError } from "./errors.js";
 import { quote } from "./html/dom.js";
 import { BROWSER_INSTALL_HINT } from "./render.js";
 import type {
@@ -13,7 +14,7 @@ import type {
   PerformanceResult,
 } from "./types.js";
 
-export class LighthouseUnavailableError extends Error {
+export class LighthouseUnavailableError extends ExpectedError {
   constructor(message: string) {
     super(message);
     this.name = "LighthouseUnavailableError";
@@ -749,13 +750,13 @@ export const runLighthouse = async (
     const result = await Promise.race([run, timeout]);
 
     if (!result) {
-      throw new Error("Lighthouse returned no result");
+      throw new ExpectedError("Lighthouse returned no result");
     }
 
     const lhr: LhrLike = result.lhr;
 
     if (lhr.runtimeError && lhr.runtimeError.code !== "NO_ERROR") {
-      throw new Error(
+      throw new ExpectedError(
         `Lighthouse runtime error ${lhr.runtimeError.code}: ${lhr.runtimeError.message}`
       );
     }

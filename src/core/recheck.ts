@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
+import { ExpectedError } from "./errors.js";
 import { findingKey } from "./rules/rule.js";
 import type { PageRecord } from "./site-rules.js";
 import type {
@@ -335,7 +336,7 @@ export const baselineFromAudit = (json: string): BaselineEntry[] => {
   try {
     data = JSON.parse(json);
   } catch {
-    throw new Error(
+    throw new ExpectedError(
       "The baseline is not JSON. Save the first audit with --format json."
     );
   }
@@ -343,7 +344,7 @@ export const baselineFromAudit = (json: string): BaselineEntry[] => {
   const parsed = savedAudit.safeParse(data);
 
   if (!parsed.success) {
-    throw new Error(
+    throw new ExpectedError(
       'The baseline is not an audit: expected the JSON of an earlier run ("kind": "page", "site" or "aeo").'
     );
   }
@@ -365,7 +366,7 @@ export const baselineFromAudit = (json: string): BaselineEntry[] => {
         audit.findings.length < total(audit.counts);
 
   if (summarised) {
-    throw new Error(
+    throw new ExpectedError(
       "The baseline audit lists no page findings (it ran with --page-detail summary). Run it again with --page-detail full."
     );
   }

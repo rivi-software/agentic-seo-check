@@ -7,6 +7,7 @@ import { MAKER, MAKER_URL, PRODUCT_NAME, REPOSITORY_URL } from "./brand.js";
 import { auditAeoTarget, compactAeoAudit } from "./core/aeo/audit.js";
 import { auditTarget, compactAudit } from "./core/audit.js";
 import type { CrawlOptions, ProgressEvent } from "./core/audit.js";
+import { ExpectedError, onCaughtError } from "./core/errors.js";
 import type { FetchOptions } from "./core/fetch.js";
 import { baselineFromAudit } from "./core/recheck.js";
 import type { BaselineEntry } from "./core/recheck.js";
@@ -17,8 +18,10 @@ import { SEVERITY_RANK } from "./core/types.js";
 import type { AeoAudit, Audit, Severity } from "./core/types.js";
 import { startMcpServer } from "./mcp.js";
 import {
-  localMcpAnalytics,
+  localMcpTelemetry,
+  noteCliError,
   prepareTelemetry,
+  reportCrashes,
   runReport,
   sendCliRun,
   startCliRun,
@@ -44,7 +47,7 @@ const flagsGiven = (command: Command): string[] =>
     )
     .map((option) => option.long ?? option.short ?? option.flags);
 
-/** Sends this run's event, once its output is written; it waits a second at most. */
+/** Sends this run's events, once its output is written; it waits a second at most. */
 const finishRun = async (exitCode: number): Promise<void> => {
   const done = run;
   run = null;
@@ -52,6 +55,26 @@ const finishRun = async (exitCode: number): Promise<void> => {
   if (done) {
     await sendCliRun(done, exitCode);
   }
+};
+
+/**
+ * Notes this run's unexpected errors for error tracking (issue #60): those the core caught and
+ * turned into a finding, and one nothing caught, which ends the run as Node would.
+ */
+const watchErrors = (): void => {
+  onCaughtError((caught) => {
+    if (run) {
+      noteCliError(run, caught, true);
+    }
+  });
+
+  reportCrashes(async (thrown) => {
+    if (run) {
+      noteCliError(run, thrown, false);
+    }
+
+    await finishRun(1);
+  });
 };
 
 program
@@ -68,6 +91,7 @@ program
   .hook("preAction", async (_program, action) => {
     if (TRACKED.has(action.name()) && (await prepareTelemetry())) {
       run = startCliRun(action.name(), flagsGiven(action));
+      watchErrors();
     }
   });
 
@@ -252,7 +276,9 @@ const readBaseline = async (
   }
 
   const json = await fs.readFile(file, "utf-8").catch((error: Error) => {
-    throw new Error(`Cannot read the baseline ${file}: ${error.message}`);
+    throw new ExpectedError(
+      `Cannot read the baseline ${file}: ${error.message}`
+    );
   });
 
   return baselineFromAudit(json);
@@ -266,7 +292,9 @@ const parseHeaders = (values: string[] = []) => {
     const idx = h.indexOf(":");
 
     if (idx === -1) {
-      throw new InvalidArgumentError(`Header "${h}" must be "Name: value".`);
+      // Thrown inside the action, where commander does not handle InvalidArgumentError: the
+      // top-level catch prints it, and error tracking leaves it out (issue #60).
+      throw new ExpectedError(`Header "${h}" must be "Name: value".`);
     }
 
     headers[h.slice(0, idx).trim()] = h.slice(idx + 1).trim();
@@ -503,9 +531,14 @@ program
     "Start the MCP server on stdio (for Claude Code, Cursor, Codex, etc.)"
   )
   .action(async () => {
-    await startMcpServer({
-      analytics: (await prepareTelemetry()) ? localMcpAnalytics() : undefined,
-    });
+    const analytics = await localMcpTelemetry();
+
+    try {
+      await startMcpServer({ analytics });
+    } catch (error) {
+      await analytics?.crashed(error);
+      throw error;
+    }
   });
 
 program
@@ -529,6 +562,11 @@ try {
   process.stderr.write(
     `agentic-seo-check: ${error instanceof Error ? error.message : String(error)}\n`
   );
+
+  if (run) {
+    noteCliError(run, error, false);
+  }
+
   await finishRun(2);
   process.exit(2);
 }

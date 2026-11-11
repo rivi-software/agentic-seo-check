@@ -7,9 +7,10 @@ import path from "node:path";
 import type { Browser } from "playwright";
 import type * as Playwright from "playwright";
 
+import { ExpectedError } from "./errors.js";
 import { DEFAULT_USER_AGENT } from "./fetch.js";
 
-export class RenderUnavailableError extends Error {
+export class RenderUnavailableError extends ExpectedError {
   constructor(message: string) {
     super(message);
     this.name = "RenderUnavailableError";
@@ -162,6 +163,12 @@ export const renderPage = async (
         timeout,
       });
     } catch (error) {
+      // A page that does not load (`net::ERR_CONNECTION_REFUSED`, as from a dev server that is not
+      // running) is the site's failure, not a bug of ours (issue #60).
+      if (error instanceof Error && /net::ERR_/u.test(error.message)) {
+        throw new ExpectedError(error.message, { cause: error });
+      }
+
       // networkidle can time out on pages with long-polling; fall back to whatever has loaded.
       if (!(error instanceof Error) || !/Timeout/iu.test(error.message)) {
         throw error;

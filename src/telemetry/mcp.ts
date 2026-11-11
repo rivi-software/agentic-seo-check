@@ -60,6 +60,11 @@ export interface McpToolCall extends McpCaller {
   durationMs: number;
   isError: boolean;
   errorType?: McpErrorType;
+  /**
+   * The error behind an internal failure, for its `$exception` event (issue #60, exceptions.ts).
+   * `$mcp_tool_call` never carries it.
+   */
+  error?: unknown;
 }
 
 /** Where a server's calls are reported. Neither may throw into the call it is told about. */
@@ -70,9 +75,11 @@ export interface McpAnalytics {
   initialize: (caller: McpCaller) => void;
 }
 
-/** What a tool said of its own failure, for the call it answers. */
+/** The call a tool is answering, and what the tool said of its own failure. */
 interface Slot {
+  tool: string;
   errorType?: McpErrorType;
+  error?: unknown;
 }
 
 /**
@@ -83,21 +90,27 @@ interface Slot {
 const slots = new AsyncLocalStorage<Slot>();
 
 /**
- * Notes the kind of failure a tool error is, for its call's event; the result is unchanged. Outside
- * a call the transport watches, it notes nothing.
+ * Notes the kind of failure a tool error is, for its call's event, and the error behind an internal
+ * one; the result is unchanged. Outside a call the transport watches, it notes nothing.
  */
 export const withErrorType = <T extends CallToolResult>(
   result: T,
-  type: McpErrorType
+  type: McpErrorType,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  error?: unknown
 ): T => {
   const slot = slots.getStore();
 
   if (slot) {
     slot.errorType = type;
+    slot.error = error;
   }
 
   return result;
 };
+
+/** The tool whose call is running here, if any: for an error the core caught within it. */
+export const currentTool = (): string | undefined => slots.getStore()?.tool;
 
 const header = (
   headers: IsomorphicHeaders | undefined,
@@ -204,7 +217,7 @@ export const instrumentTransport = (
       ).data ??
       ProtocolVersion.safeParse(header(headers, "mcp-protocol-version")).data;
 
-    const slot: Slot = {};
+    const slot: Slot = { tool: call.data.params.name };
 
     pending.set(message.id, {
       tool: call.data.params.name,
@@ -251,6 +264,7 @@ export const instrumentTransport = (
       durationMs: Math.round(performance.now() - call.started),
       isError,
       errorType: isError ? errorType : undefined,
+      error: isError ? call.slot.error : undefined,
       ...call.caller,
     });
   };

@@ -10,7 +10,8 @@ import { HOSTED_LIMITS } from "../../src/core/hosted.js";
 import { HOSTED_TOOLS } from "../../src/mcp-hosted.js";
 import { createMcpServer } from "../../src/mcp.js";
 import { instrumentTransport } from "../../src/telemetry/mcp.js";
-import { hostedAnalytics } from "./analytics.js";
+import { hostedAnalytics, reportError } from "./analytics.js";
+import type { ErrorRoute } from "./analytics.js";
 import { callerOf, OPENAI_RANGES_URL, parseOpenAiRanges } from "./callers.js";
 import { FORMER_HOST, hostedProfile, ORIGIN } from "./limits.js";
 import {
@@ -238,6 +239,35 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
   }
 };
 
+/** The paths an error's event may name (issue #60); any other is `other`. */
+const KNOWN_PATHS = new Set([
+  "/",
+  "/mcp",
+  "/audit",
+  "/rules",
+  "/crawler",
+  "/robots.txt",
+  "/sitemap.xml",
+  "/llms.txt",
+  "/site.js",
+  "/ph.js",
+  "/favicon.svg",
+  DIRECTORY_PATH,
+]);
+
+/** Where a request went, as an error's event names it: never its address, nor a share link's result. */
+const errorRoute = (request: Request): ErrorRoute => {
+  const { hostname, pathname } = new URL(request.url);
+
+  let path = KNOWN_PATHS.has(pathname) ? pathname : "other";
+
+  if (pathname.startsWith("/share/")) {
+    path = "/share/:result";
+  }
+
+  return `${isSiteHost(hostname) ? "website" : "server"}:${path}`;
+};
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     try {
@@ -247,6 +277,7 @@ export default {
       console.error(
         `Request failed: ${error instanceof Error ? error.message : String(error)}`
       );
+      reportError(env, ctx, error, errorRoute(request), false);
 
       return new Response("Something went wrong on the hosted server.\n", {
         status: 500,
