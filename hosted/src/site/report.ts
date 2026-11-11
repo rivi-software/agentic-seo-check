@@ -3,6 +3,10 @@
  * score and its findings, and every finding with the edits that fix it. What it shows is the
  * audit as the tools return it; no model reads or rewrites it. Everything quoted from the audited
  * page is escaped. A site's report (site-report.ts) is built from the same parts.
+ *
+ * A report is in sections, one tab each: an overview with an index of the findings, the findings
+ * of each audit grouped by category, and the AI crawlers. The page's script shows one section at
+ * a time; without it they follow one another.
  */
 import { compactAeoAudit } from "../../../src/core/aeo/audit.js";
 import { compactAudit } from "../../../src/core/audit.js";
@@ -10,6 +14,7 @@ import { HOSTED_LIMITS } from "../../../src/core/hosted.js";
 import {
   ACTION_LABEL,
   band,
+  CATEGORY_LABEL,
   countLabel,
   plural,
   PURPOSE_LABEL,
@@ -20,9 +25,11 @@ import {
   renderAeoMarkdown,
   renderMarkdown,
 } from "../../../src/core/report/markdown.js";
+import { AEO_PAGE_RULES } from "../../../src/core/rules/index.js";
 import type {
   AeoAudit,
   AiBotAccess,
+  Category,
   Finding,
   FixEdit,
   PageAudit,
@@ -134,14 +141,206 @@ const findingHtml = (finding: Finding): string => {
 </details>`;
 };
 
-/** Findings with their fixes, or `empty` when there are none. */
-export const findingsHtml = (
-  findings: Finding[],
-  empty = "No findings: nothing to fix on this page."
-): string =>
+/** The AEO rules that look at one page, as against those that look at the site's files. */
+export const AEO_PAGE_RULE_IDS = new Set(
+  AEO_PAGE_RULES.map((rule) => rule.meta.id)
+);
+
+/** A group of findings under a heading of its own: a category's, or those across the site. */
+export interface FindingGroup {
+  /** Its anchor, which the overview's index links to. */
+  id: string;
+  label: string;
+  /** The severity of each finding in it, for its counts. */
+  severities: Severity[];
+  /** The findings, as HTML. */
+  html: string;
+}
+
+/**
+ * Groups of findings, under `title` when it has one: "On the pages" holds a site's page findings
+ * by category, under the group of its findings across the site.
+ */
+export interface FindingPart {
+  title?: string;
+  groups: FindingGroup[];
+}
+
+/** The counts of the severities that occur in `severities`: "2 errors", "1 warning", "3 info". */
+export const tally = (severities: Severity[]): string =>
+  `<span class="counts">${SEVERITIES.flatMap((severity) => {
+    const count = severities.filter((s) => s === severity).length;
+
+    return count > 0
+      ? [`<span class="is-${severity}">${countLabel(severity, count)}</span>`]
+      : [];
+  }).join("")}</span>`;
+
+/**
+ * `items` by category, the groups in the order their first item comes in: as findings come sorted
+ * by severity, the group with the worst finding is first.
+ */
+export const byCategory = <T extends { category: Category }>(
+  items: T[]
+): [Category, T[]][] => {
+  const groups = new Map<Category, T[]>();
+
+  for (const item of items) {
+    const group = groups.get(item.category);
+
+    if (group) {
+      group.push(item);
+    } else {
+      groups.set(item.category, [item]);
+    }
+  }
+
+  return [...groups];
+};
+
+const findingsList = (findings: Finding[]): string =>
+  `<div class="findings">${findings.map(findingHtml).join("\n")}</div>`;
+
+/** `findings` as one group, or no group when there are none. */
+export const findingGroup = (
+  id: string,
+  label: string,
+  findings: Finding[]
+): FindingGroup[] =>
   findings.length === 0
-    ? `<p class="empty">${icon("check")}${empty}</p>`
-    : `<div class="findings">${findings.map(findingHtml).join("\n")}</div>`;
+    ? []
+    : [
+        {
+          id,
+          label,
+          severities: findings.map((finding) => finding.severity),
+          html: findingsList(findings),
+        },
+      ];
+
+/** `findings` by category, each group at the anchor `<prefix>-<category>`. */
+export const categoryGroups = (
+  prefix: string,
+  findings: Finding[]
+): FindingGroup[] =>
+  byCategory(findings).flatMap(([category, group]) =>
+    findingGroup(`${prefix}-${category}`, CATEGORY_LABEL[category], group)
+  );
+
+const groupHtml = (group: FindingGroup, level: 4 | 5): string =>
+  `<div class="finding-group" id="${group.id}"><div class="finding-group-head"><h${level}>${group.label}</h${level}>${tally(group.severities)}</div>${group.html}</div>`;
+
+/** Parts of findings with their headings, or `empty` when none of them has a finding. */
+export const partsHtml = (parts: FindingPart[], empty: string): string => {
+  const shown = parts.filter((part) => part.groups.length > 0);
+
+  if (shown.length === 0) {
+    return `<p class="empty">${icon("check")}${empty}</p>`;
+  }
+
+  return `<div class="finding-groups">${shown
+    .map((part) =>
+      part.title
+        ? `<div class="finding-part"><div class="finding-group-head finding-part-head"><h4>${part.title}</h4>${tally(part.groups.flatMap((group) => group.severities))}</div>${part.groups.map((group) => groupHtml(group, 5)).join("\n")}</div>`
+        : part.groups.map((group) => groupHtml(group, 4)).join("\n")
+    )
+    .join("\n")}</div>`;
+};
+
+/** One audit's column in the overview's index: a link to each of its groups, with their counts. */
+const indexColumn = (name: string, parts: FindingPart[]): string => {
+  const rows = parts.flatMap((part) =>
+    part.groups.length === 0
+      ? []
+      : [
+          ...(part.title ? [`<li class="index-sub">${part.title}</li>`] : []),
+          ...part.groups.map(
+            (group) =>
+              `<li><a href="#${group.id}"><span class="index-label">${group.label}</span>${tally(group.severities)}</a></li>`
+          ),
+        ]
+  );
+
+  return `<div class="index-col"><p class="index-title">${name}</p>${
+    rows.length === 0
+      ? `<p class="index-empty">${icon("check")}No findings</p>`
+      : `<ul>${rows.join("")}</ul>`
+  }</div>`;
+};
+
+/** A block of the overview, under its own heading; nothing when it has no body. */
+export const overviewPart = (title: string, body: string, id = ""): string =>
+  body
+    ? `<div class="report-part"${id ? ` id="${id}"` : ""}><h4 class="report-sub">${title}</h4>${body}</div>`
+    : "";
+
+/** The overview's index of both audits' findings, by the groups their sections show them in. */
+export const findingsIndex = (seo: FindingPart[], aeo: FindingPart[]): string =>
+  overviewPart(
+    "Findings by section",
+    `<div class="section-index">${indexColumn("SEO: search engines", seo)}${indexColumn("AEO: AI answer engines", aeo)}</div>`
+  );
+
+/** The AEO findings of one page: those about the site's files, then the page's own. */
+const aeoPageParts = (findings: Finding[]): FindingPart[] => [
+  {
+    groups: [
+      ...findingGroup(
+        "aeo-site",
+        "Across the site",
+        findings.filter((finding) => !AEO_PAGE_RULE_IDS.has(finding.rule))
+      ),
+      ...findingGroup(
+        "aeo-page",
+        "On this page",
+        findings.filter((finding) => AEO_PAGE_RULE_IDS.has(finding.rule))
+      ),
+    ],
+  },
+];
+
+/** One section of a report: its tab, and the panel the tab shows. */
+export interface ReportSection {
+  id: string;
+  tab: string;
+  /** The number on the tab: how many findings, rules or pages its panel lists. */
+  count?: number;
+  /** Whether one of them is an error, which colours the number. */
+  errors?: boolean;
+  title: string;
+  /** Chips beside the panel's heading. */
+  chips?: string;
+  body: string;
+}
+
+export const chip = (text: string): string =>
+  `<span class="chip">${text}</span>`;
+
+const tabHtml = (section: ReportSection): string =>
+  `<a href="#${section.id}">${section.tab}${
+    section.count === undefined
+      ? ""
+      : `<span class="tab-count${section.errors ? " has-errors" : ""}"><span class="sr-only">: </span>${section.count}</span>`
+  }</a>`;
+
+const panelHtml = (section: ReportSection): string =>
+  `<div class="report-panel" id="${section.id}">
+<div class="report-section">
+<div class="report-section-head"><h3>${section.title}</h3>${section.chips ?? ""}</div>
+${section.body}
+</div>
+</div>`;
+
+/**
+ * A report's sections: a strip with a tab for each, then their panels. The page's script makes
+ * the strip a tab list that shows one panel at a time; without it the panels follow one another
+ * and the strip links to each.
+ */
+export const sectionsHtml = (sections: ReportSection[]): string =>
+  `<nav class="report-tabs" aria-label="Sections of the report">${sections.map(tabHtml).join("")}</nav>
+<div class="report-panels">
+${sections.map(panelHtml).join("\n")}
+</div>`;
 
 /** How a fact reads at a glance: a good, doubtful or bad value gets a coloured dot. */
 type Tone = "good" | "warn" | "bad" | null;
@@ -255,12 +454,18 @@ export const aeoFacts = (audit: AeoAudit, scope: "page" | "site"): string => {
 const botItem = (bot: AiBotAccess): string =>
   `<li class="crawler ${bot.allowed ? "is-allowed" : "is-blocked"}">${code(bot.name)}<span class="crawler-op">${esc(bot.operator)}</span><span class="crawler-state">${icon(bot.allowed ? "check" : "x")}${bot.allowed ? "Allowed" : "Blocked"}</span></li>`;
 
-/** robots.txt's answer for each AI crawler, for `page`: "this page", or a site's start page. */
-export const crawlersHtml = (audit: AeoAudit, page = "this page"): string => {
+/**
+ * robots.txt's answer for each AI crawler, for `page`: "this page", or a site's start page. None
+ * when the audit has no robots.txt answer to show.
+ */
+export const crawlersSection = (
+  audit: AeoAudit,
+  page = "this page"
+): ReportSection[] => {
   const bots = audit.crawlers?.bots ?? [];
 
   if (bots.length === 0) {
-    return "";
+    return [];
   }
 
   const allowed = bots.filter((bot) => bot.allowed).length;
@@ -277,10 +482,15 @@ export const crawlersHtml = (audit: AeoAudit, page = "this page"): string => {
     }
   );
 
-  return `<div class="report-section" id="crawlers">
-<div class="report-section-head"><h3>AI crawlers in robots.txt</h3><span class="chip">${allowed} of ${bots.length} may fetch ${page}</span></div>
-<div class="crawler-groups">${groups.join("")}</div>
-</div>`;
+  return [
+    {
+      id: "crawlers",
+      tab: "AI crawlers",
+      title: "AI crawlers in robots.txt",
+      chips: chip(`${allowed} of ${bots.length} may fetch ${page}`),
+      body: `<div class="crawler-groups">${groups.join("")}</div>`,
+    },
+  ];
 };
 
 /** A score with its counts, linked to the findings at `#anchor`, or on its own with no anchor. */
@@ -296,17 +506,6 @@ export const scoreCard = (
     ? `<a class="score-card" href="#${anchor}">${inner}</a>`
     : `<div class="score-card">${inner}</div>`;
 };
-
-const auditSection = (
-  anchor: string,
-  title: string,
-  factsHtml: string,
-  findings: Finding[]
-): string => `<div class="report-section" id="${anchor}">
-<div class="report-section-head"><h3>${title}</h3><span class="chip">${plural(findings.length, "finding")}</span></div>
-${factsHtml}
-${findingsHtml(findings)}
-</div>`;
 
 /**
  * The report's data for its buttons: the two audits as the MCP tools return them, and the same as
@@ -378,15 +577,55 @@ export const renderReport = (
   aeo: AeoAudit,
   homepage = false,
   share = ""
-): string =>
-  reportFrame({
+): string => {
+  const seoParts = [{ groups: categoryGroups("seo", seo.findings) }];
+  const aeoParts = aeoPageParts(aeo.findings);
+
+  const sections: ReportSection[] = [
+    {
+      id: "overview",
+      tab: "Overview",
+      title: "Overview",
+      body: [
+        findingsIndex(seoParts, aeoParts),
+        overviewPart("The page", seoFacts(seo)),
+        overviewPart("For AI answer engines", aeoFacts(aeo, "page")),
+      ].join("\n"),
+    },
+    {
+      id: "seo",
+      tab: "SEO",
+      count: seo.findings.length,
+      errors: seo.counts.error > 0,
+      title: "SEO findings",
+      chips: chip(plural(seo.findings.length, "finding")),
+      body: partsHtml(
+        seoParts,
+        "No SEO findings: nothing to fix on this page."
+      ),
+    },
+    {
+      id: "aeo",
+      tab: "AEO",
+      count: aeo.findings.length,
+      errors: aeo.counts.error > 0,
+      title: "AEO findings",
+      chips: chip(plural(aeo.findings.length, "finding")),
+      body: partsHtml(
+        aeoParts,
+        "No AEO findings: nothing to fix on this page."
+      ),
+    },
+    ...crawlersSection(aeo),
+  ];
+
+  return reportFrame({
     title: "Audit report",
     url: seo.url,
     share,
     data: reportData(seo, aeo, new URL(seo.url).hostname),
     body: `<div class="scores">${scoreCard("seo", "SEO: search engines", seo.score, seo.counts)}${scoreCard("aeo", "AEO: AI answer engines", aeo.score, aeo.counts)}</div>
-${auditSection("seo", "SEO findings", seoFacts(seo), seo.findings)}
-${auditSection("aeo", "AEO findings", aeoFacts(aeo, "page"), aeo.findings)}
-${crawlersHtml(aeo)}
+${sectionsHtml(sections)}
 <div class="report-note">${icon("info")}<p>${pageNote(seo, homepage)}</p></div>`,
   });
+};

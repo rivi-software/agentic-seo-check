@@ -196,6 +196,21 @@ describe("the website's pages", () => {
   });
 });
 
+/** The anchors the report's tab strip links to, in its order. */
+const tabsOf = (report: string): string[] => {
+  const start = report.indexOf('<nav class="report-tabs"');
+
+  return [
+    ...report
+      .slice(start, report.indexOf("</nav>", start))
+      .matchAll(/href="#(?<id>[a-z-]+)"/gu),
+  ].map((match) => match.groups?.id ?? "");
+};
+
+/** The anchors among `ids` that the report has no panel for. */
+const missingPanels = (report: string, ids: string[]): string[] =>
+  ids.filter((id) => !report.includes(`class="report-panel" id="${id}"`));
+
 describe("the report of a page audit", () => {
   it("shows both audits' scores and findings with their fixes", async () => {
     const url = "https://shop.example.com/";
@@ -213,6 +228,29 @@ describe("the report of a page audit", () => {
     expect(report).toContain("<code>title.generic</code>");
     expect(report).toContain('class="edits"');
     expect(report).toContain('id="report-data"');
+  });
+
+  it("is in sections, with a tab for each, the SEO findings by category and an index of them", async () => {
+    const url = "https://shop.example.com/";
+
+    const html =
+      "<html><head><title>React App</title></head><body></body></html>";
+
+    const report = renderReport(
+      await auditHtml(html, { url, source: "url", target: url }),
+      await auditAeoHtml(html, { url })
+    );
+
+    const tabs = tabsOf(report);
+    const titles = report.slice(report.indexOf('id="seo-title"'));
+
+    expect(tabs.slice(0, 3)).toStrictEqual(["overview", "seo", "aeo"]);
+    expect(missingPanels(report, tabs)).toStrictEqual([]);
+    expect(titles).toContain("<h4>Titles</h4>");
+    expect(
+      titles.slice(0, titles.indexOf('class="finding-group"', 1))
+    ).toContain("<code>title.generic</code>");
+    expect(report).toContain('<a href="#seo-title">');
   });
 
   it("never lets the audited page's text become markup", async () => {
@@ -272,6 +310,30 @@ describe("the report of a site audit", () => {
     ];
 
     expect(parts.filter((part) => !report.includes(part))).toStrictEqual([]);
+  });
+
+  it("is in sections, with the findings on the pages by category under those across the site", () => {
+    const tabs = tabsOf(report);
+
+    const seo = report.slice(
+      report.indexOf('id="seo"'),
+      report.indexOf('id="aeo"')
+    );
+
+    expect(tabs.slice(0, 5)).toStrictEqual([
+      "overview",
+      "seo",
+      "aeo",
+      "home",
+      "pages",
+    ]);
+    expect(missingPanels(report, tabs)).toStrictEqual([]);
+    expect(seo.indexOf('id="seo-site"')).toBeLessThan(
+      seo.indexOf("On the pages, by rule")
+    );
+    expect(seo).toContain('<div class="finding-group" id="seo-pages-');
+    // The AEO rules share one category, so its findings on the pages are one group.
+    expect(report).not.toContain('id="aeo-pages-aeo"');
   });
 
   it("links each page to the form with its address, and runs nothing", () => {
