@@ -17,7 +17,7 @@ import { RequestRefusedError } from "../src/core/fetch.js";
 import { LighthouseUnavailableError } from "../src/core/lighthouse.js";
 import { RenderUnavailableError } from "../src/core/render.js";
 import { fail, InputError } from "../src/mcp-shared.js";
-import { LOCAL_TOOLS } from "../src/mcp.js";
+import { createMcpServer, LOCAL_TOOLS } from "../src/mcp.js";
 import {
   cleanMessage,
   exceptionEvent,
@@ -216,6 +216,19 @@ describe("error tracking", () => {
       expect(json).not.toMatch(/Alice|shop\.example/u);
     });
 
+    it("takes no hostname for a folder of a file", () => {
+      const changed = new Error(
+        "Bad page\n    at x (shop.example.com/u/bob.js:1:2)"
+      );
+
+      void changed.stack;
+      changed.message = "Bad page";
+
+      expect(JSON.stringify(exceptionList(changed, true))).not.toContain(
+        "shop.example"
+      );
+    });
+
     it("reads no frame out of the message", () => {
       const sneaky = new Error(
         "Bad page\n    at secret (https://shop.example.com/x.js:1:2)"
@@ -358,6 +371,25 @@ describe("error tracking", () => {
         $exception_list: [{ type: "TypeError", value: "Could not read <url>" }],
       });
       expect(JSON.stringify(sent)).not.toContain("shop.example.com");
+    });
+
+    it("sends nothing for a rule id the caller mistyped", async () => {
+      const { client, sent } = await connect(createMcpServer());
+
+      await client.callTool({
+        name: "seo_audit_page",
+        arguments: {
+          html: "<html><head><title>A page</title></head><body></body></html>",
+          rules: ["title.too-lng"],
+        },
+      });
+      await client.close();
+
+      expect(named(sent, "$exception")).toStrictEqual([]);
+      expect(named(sent, "$mcp_tool_call")[0]?.properties).toMatchObject({
+        $mcp_is_error: true,
+        $mcp_error_type: "validation",
+      });
     });
 
     it("sends nothing for a failure the tool expects", async () => {

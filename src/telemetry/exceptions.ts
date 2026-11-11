@@ -158,7 +158,8 @@ const placeOf = (
 
   // A Worker's bundle (`index.js`) is a JavaScript or TypeScript file by a relative name. Nothing
   // else is, such as a hostname or a URL that text from a page made look like a frame.
-  if (/^[\w.-]+(?:\/[\w.-]+)*\.[cm]?[jt]s$/u.test(name)) {
+  // Its folders, if any, have no dot, so a hostname cannot pass for one.
+  if (/^(?:[\w-]+\/)*[\w.-]+\.[cm]?[jt]s$/u.test(name)) {
     return { filename: name, in_app: true };
   }
 

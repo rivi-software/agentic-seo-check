@@ -292,7 +292,9 @@ const parseHeaders = (values: string[] = []) => {
     const idx = h.indexOf(":");
 
     if (idx === -1) {
-      throw new InvalidArgumentError(`Header "${h}" must be "Name: value".`);
+      // Thrown inside the action, where commander does not handle InvalidArgumentError: the
+      // top-level catch prints it, and error tracking leaves it out (issue #60).
+      throw new ExpectedError(`Header "${h}" must be "Name: value".`);
     }
 
     headers[h.slice(0, idx).trim()] = h.slice(idx + 1).trim();
