@@ -238,7 +238,7 @@ ${CHAT}
 <p class="kicker">Fair use</p>
 <h2 id="limits-title">Limits.</h2>
 <p>Free for everyone, so each site and each caller gets a fair share. A call past a limit names the limit and when to try again.</p>
-<p>The limits a minute are counted per Cloudflare location, so approximate. <code>seo_list_rules</code> is not counted, and inline HTML counts for no site.</p>
+<p>The limits a minute are counted per Cloudflare location, so approximate. <code>seo_list_rules</code> is not counted, and inline HTML counts for no site. A page that redirects to another hostname, a subdomain included, counts that hostname as a site too.</p>
 </div>
 <div class="spec"><table>
 <thead><tr><th scope="col">What</th><th scope="col">Limit</th></tr></thead>
