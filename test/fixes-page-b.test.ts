@@ -170,6 +170,11 @@ const CASES: Case[] = [
     input: live(PAGE),
   },
   {
+    name: "content: placeholder heading",
+    html: doc("", `<h2>Lorem ipsum</h2><p>${words(320, "widgets")}</p>`),
+    input: live(PAGE),
+  },
+  {
     name: "content: hard to read",
     html: doc(
       "",

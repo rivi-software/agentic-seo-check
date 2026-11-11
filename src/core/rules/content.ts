@@ -1,4 +1,8 @@
-import { fleschReadingEase, hasPlaceholderText } from "../html/text.js";
+import {
+  fillerIn,
+  fleschReadingEase,
+  isPlaceholderPassage,
+} from "../html/text.js";
 import type { ExtractedPage, FixEdit, TextBlock } from "../types.js";
 import { addHtml, replaceHtml, slot } from "./fix.js";
 import { bestBlock, rewriteBlock, sentences } from "./page-fixes.js";
@@ -29,16 +33,22 @@ const PLACEHOLDER_WRITE =
 const READABILITY_WRITE =
   "This paragraph, which holds the page's longest sentence, rewritten in sentences of about 15-20 words with common words. Rewrite the page's other long sentences the same way, aiming for a Flesch score of 50-70.";
 
-/** "Lorem ipsum" as the page writes it, with its capitals. */
+/** The filler, or "Lorem ipsum", as the page writes it, with its capitals. */
 const placeholderQuote = (text: string): string =>
-  /lorem\s+ipsum/iu.exec(text)?.[0] ?? "Lorem ipsum";
+  fillerIn(text) ?? /lorem\s+ipsum/iu.exec(text)?.[0] ?? "Lorem ipsum";
+
+/** The page holds filler copy, or a passage that opens with "Lorem ipsum". */
+const hasPlaceholder = (page: ExtractedPage): boolean =>
+  fillerIn(page.text) !== undefined ||
+  page.markup.blocks.some((b) => isPlaceholderPassage(b.text)) ||
+  page.headings.some((h) => isPlaceholderPassage(h.text));
 
 /**
  * Each block that holds placeholder text, rewritten whole; when none does (the text sits straight
- * in a <div>), the words "Lorem ipsum" themselves.
+ * in a <div>, or in a heading), the placeholder words themselves.
  */
 const placeholderFix = (blocks: TextBlock[], text: string) => {
-  const found = blocks.filter((b) => hasPlaceholderText(b.text));
+  const found = blocks.filter((b) => isPlaceholderPassage(b.text));
 
   return found.length
     ? found.map((b) => rewriteBlock(b, "real copy", PLACEHOLDER_WRITE))
@@ -137,7 +147,7 @@ export const contentRules = [
         "Replace the placeholder copy with real content before publishing.",
     },
     ({ page }, make) =>
-      hasPlaceholderText(page.text)
+      hasPlaceholder(page)
         ? make('Page contains "lorem ipsum" placeholder text.', {
             fix: placeholderFix(page.markup.blocks, page.text),
           })

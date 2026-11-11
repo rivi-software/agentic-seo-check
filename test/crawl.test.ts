@@ -35,6 +35,35 @@ describe("audits of a site served over HTTP", () => {
       expect(audit.findings[0]?.rule).toBe("response.fetch-failed");
       expect(audit.score).toBeLessThan(100);
     });
+
+    it("takes Cloudflare's DNS resolution error for the failure it is, and a site's own 409 for a 409", async () => {
+      // What a Worker gets for a name under a Cloudflare zone that has no DNS record.
+      const cloudflare = await startFixtureServer({
+        "/": {
+          status: 409,
+          headers: { "content-type": "text/plain; charset=UTF-8" },
+          body: "error code: 1001",
+        },
+        "/conflict": {
+          status: 409,
+          headers: { "content-type": "text/plain; charset=UTF-8" },
+          body: "error code: 1001 is what Cloudflare sends; this is the site.",
+        },
+      });
+
+      try {
+        const dns = await auditUrl(`${cloudflare.origin}/`);
+        expect(dns.response?.status).toBeNull();
+        expect(dns.response?.error).toContain("Cloudflare error 1001");
+        expect(dns.findings[0]?.rule).toBe("response.fetch-failed");
+
+        const conflict = await auditUrl(`${cloudflare.origin}/conflict`);
+        expect(conflict.response?.status).toBe(409);
+        expect(conflict.summary.wordCount).toBeGreaterThan(5);
+      } finally {
+        await cloudflare.close();
+      }
+    });
   });
 
   describe(auditSite, () => {

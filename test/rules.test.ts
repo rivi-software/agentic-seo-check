@@ -17,6 +17,17 @@ const bad = readFileSync(
 
 const rulesOf = (findings: { rule: string }[]) => findings.map((f) => f.rule);
 
+/** The rules content.placeholder-text reports on a page with this body: none or itself. */
+const placeholder = async (body: string) => {
+  const audit = await auditHtml(
+    `<!doctype html><html lang="en"><head><title>Placeholder copy</title></head><body>${body}</body></html>`,
+    { url: "https://www.example.com/" },
+    { onlyRules: ["content.placeholder-text"] }
+  );
+
+  return rulesOf(audit.findings);
+};
+
 describe("page rules", () => {
   it("a well-formed page has no errors or warnings", async () => {
     const audit = await auditHtml(good, {
@@ -112,6 +123,31 @@ describe("page rules", () => {
   });
 
   // An agent quotes these values in its pull request, so a reviewer sees the mistake it fixed.
+  it("content.placeholder-text tells filler from a mention of it", async () => {
+    const found = ["content.placeholder-text"];
+
+    // Filler as templates write it, anywhere, and a passage that opens with its first words.
+    await expect(
+      placeholder("<div>Text: Lorem ipsum dolor sit amet.</div>")
+    ).resolves.toStrictEqual(found);
+    await expect(
+      placeholder("<p>Sed do eiusmod, consectetur adipiscing elit.</p>")
+    ).resolves.toStrictEqual(found);
+    await expect(
+      placeholder("<h2>Lorem ipsum</h2><p>Our widgets.</p>")
+    ).resolves.toStrictEqual(found);
+    await expect(
+      placeholder("<ul><li>Lorem ipsum</li></ul>")
+    ).resolves.toStrictEqual(found);
+
+    // A page that names the words: the rule's own description on the website's rules page, prose.
+    await expect(
+      placeholder(
+        '<p>Placeholder text ("lorem ipsum") is present in the page.</p><p>Replace any lorem ipsum before launch.</p>'
+      )
+    ).resolves.toStrictEqual([]);
+  });
+
   it("title and meta description findings carry the text they are about", async () => {
     const audit = await auditHtml(
       '<!DOCTYPE html><html lang="en"><head><title>Pricing</title><meta name="description" content="pricing"></head><body><h1>Pricing</h1></body></html>',

@@ -125,6 +125,17 @@ export interface FetchResult {
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
+/**
+ * Whether a response's Content-Encoding is the one the site sent. Not in a Cloudflare Worker (the
+ * hosted server): Cloudflare's network negotiates compression with the site on its own hop and
+ * hands the Worker the page without the header, so every page would look uncompressed. A Worker's
+ * navigator names the runtime.
+ */
+export const seesContentEncoding = (): boolean =>
+  // Node has a navigator from version 21 only, and other runtimes may have none.
+  typeof navigator === "undefined" ||
+  navigator.userAgent !== "Cloudflare-Workers";
+
 const pickHeaders = (headers: Headers) => {
   const out: Record<string, string> = {};
 
@@ -211,6 +222,30 @@ const readLimited = async (
   }
 
   return { bytes: Buffer.concat(chunks), truncated };
+};
+
+/**
+ * Cloudflare's answer for a name that resolves to no site: HTTP 409 with the text "error code:
+ * 1001", its DNS resolution error. A Worker gets it where Node's fetch fails to resolve the name,
+ * for any name under a zone on Cloudflare, such as the www host of a site that has none.
+ * https://developers.cloudflare.com/support/troubleshooting/http-status-codes/4xx-client-error/error-409/
+ */
+const CLOUDFLARE_DNS_ERROR = /^error code: 1001\s*$/u;
+
+/** The longest body read to tell Cloudflare's DNS resolution error from a 409 of the site's. */
+const DNS_ERROR_PEEK_BYTES = 64;
+
+/** Whether `res` is Cloudflare's DNS resolution error, read from a copy so the body stays unread. */
+const isCloudflareDnsError = async (res: Response): Promise<boolean> => {
+  const type = res.headers.get("content-type") ?? "";
+
+  if (res.status !== 409 || !type.toLowerCase().startsWith("text/plain")) {
+    return false;
+  }
+
+  const { bytes } = await readLimited(res.clone(), DNS_ERROR_PEEK_BYTES);
+
+  return CLOUDFLARE_DNS_ERROR.test(new TextDecoder().decode(bytes));
 };
 
 /** The body as text, in the charset the Content-Type header names (UTF-8 otherwise). */
@@ -345,6 +380,25 @@ const fetchHop = async (
     });
 
     await showGate(options.gate, current, res);
+
+    // A name that does not resolve fails here as it does in Node, rather than answering 409.
+    if (await isCloudflareDnsError(res)) {
+      await res.body?.cancel().catch(() => null);
+
+      return {
+        done: result(
+          url,
+          current,
+          null,
+          {},
+          null,
+          chain,
+          started,
+          `DNS resolution error: ${new URL(current).hostname} does not resolve (Cloudflare error 1001)`
+        ),
+      };
+    }
+
     const headers = pickHeaders(res.headers);
 
     if (REDIRECT_STATUSES.has(res.status) && headers["location"]) {

@@ -1,4 +1,5 @@
 import { isHomePage } from "../aeo/page.js";
+import { seesContentEncoding } from "../fetch.js";
 import type { FixEdit, ImageInfo } from "../types.js";
 import { isLocalHost } from "./canonical.js";
 import {
@@ -158,7 +159,9 @@ export const loadingRules = [
         !response ||
         response.status !== 200 ||
         isLocalHost(response.finalUrl) ||
-        page.htmlBytes < MIN_COMPRESSIBLE_BYTES
+        page.htmlBytes < MIN_COMPRESSIBLE_BYTES ||
+        // In a Worker the site's Content-Encoding never reaches the audit: no sign either way.
+        !seesContentEncoding()
       ) {
         return null;
       }

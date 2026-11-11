@@ -58,10 +58,26 @@ export const fleschReadingEase = (text: string): number | null => {
   return Math.round(score * 10) / 10;
 };
 
-const PLACEHOLDER_RE = /lorem ipsum|dolor sit amet|consectetur adipiscing/iu;
+/**
+ * Filler as a template writes it: "Lorem ipsum dolor sit amet, consectetur adipiscing elit". The
+ * words "lorem ipsum" alone are as often a mention as filler (an article about placeholder copy,
+ * the website's rules page that names this check), so they count only where they open a passage.
+ */
+const FILLER_RE =
+  /lorem\s+ipsum\s+dolor|dolor\s+sit\s+amet|consectetur\s+adipiscing/iu;
 
-export const hasPlaceholderText = (text: string): boolean =>
-  PLACEHOLDER_RE.test(text);
+const OPENS_WITH_LOREM_RE = /^lorem\s+ipsum\b/iu;
+
+/** The filler `text` holds, as it writes it, or undefined. */
+export const fillerIn = (text: string): string | undefined =>
+  FILLER_RE.exec(text)?.[0];
+
+/**
+ * A passage (a paragraph, a list item, a heading) that is placeholder text: it holds filler, or it
+ * opens with "Lorem ipsum", as a heading cut from the filler does.
+ */
+export const isPlaceholderPassage = (text: string): boolean =>
+  FILLER_RE.test(text) || OPENS_WITH_LOREM_RE.test(text.trim());
 
 export const GENERIC_TITLES = new Set([
   "home",
