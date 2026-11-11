@@ -86,12 +86,17 @@ describe("the website's pages", () => {
     expect(problems(rules.findings)).toStrictEqual([]);
   });
 
-  it("list every rule the audits report, each under its id", () => {
+  it("list every rule the audits report, each under its id, closed on what to change", () => {
     const html = rulesPage();
 
     for (const rule of ALL_RULES) {
-      expect(html).toContain(`id="${rule.id}"`);
+      expect(html).toContain(
+        `<details class="rule sev-${rule.severity}" id="${rule.id}">`
+      );
     }
+
+    // The filter needs the script, which shows it.
+    expect(html).toContain('<div class="rules-filter" hidden>');
   });
 
   it("show the form only when the audit is on", () => {

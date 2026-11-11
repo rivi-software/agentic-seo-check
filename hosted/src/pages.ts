@@ -105,12 +105,12 @@ const CLIENTS: [name: string, how: string, code: string][] = [
   ],
   [
     "claude.ai, Cowork and the Claude apps",
-    `Connect it from <a href="${CLAUDE_DIRECTORY_URL}">its listing in the Claude Directory</a>, or in claude.ai open Settings, then Connectors, and add a custom connector with this address. Either way it needs no sign-in.`,
+    `Connect it from <a href="${CLAUDE_DIRECTORY_URL}">the Claude Directory</a>, or add a custom connector with this address under Settings, Connectors.`,
     install(MCP_URL, "setup_claude_ai"),
   ],
   [
     "ChatGPT",
-    "Add a custom app (connector) with this address and no authentication. Custom apps need developer mode, under Settings, Apps, Advanced settings.",
+    "Add a custom app with this address and no authentication. It needs developer mode, under Settings, Apps, Advanced settings.",
     install(MCP_URL, "setup_chatgpt"),
   ],
   [
@@ -200,7 +200,7 @@ export const landingPage = (dailyRequests: number): string =>
 <div class="hero-copy">
 <p class="pill rise"><span class="dot" aria-hidden="true"></span>Free, with no account and no key</p>
 <h1 class="hero-title rise" id="hero-title" style="--d:60ms">SEO and AEO audits <span class="hero-accent">for your AI assistant, hosted.</span></h1>
-<p class="lede rise" style="--d:120ms">${PRODUCT_NAME} audits pages and sites for search engines and AI answer engines, and gives every finding the exact fix. This is its MCP server, hosted by ${MAKER}: free to use, with no account and no key.</p>
+<p class="lede rise" style="--d:120ms">Your assistant audits pages and sites for search engines and AI answer engines, and gets the exact fix for every finding. Hosted by ${MAKER}.</p>
 </div>
 <div class="endpoint rise" style="--d:180ms">
 <p class="endpoint-label">The server's address</p>
@@ -216,7 +216,7 @@ ${CHAT}
 <div class="section-head">
 <p class="kicker">Set up</p>
 <h2 id="add-title">Add it to your assistant.</h2>
-<p>One address for every client, with no sign-in. To audit a page or a whole site yourself, with no assistant, use the form on <a href="${SITE_ORIGIN}/">the ${PRODUCT_NAME} website</a>, which also lists <a href="${SITE_ORIGIN}/rules">every rule</a>.</p>
+<p>One address for every client, with no sign-in. No assistant? <a href="${SITE_ORIGIN}/">Audit a page in your browser</a>.</p>
 </div>
 <ul class="cards clients">${CLIENTS.map(([name, how, code]) => `<li class="card"><h3>${name}</h3><p>${how}</p>${code}</li>`).join("")}</ul>
 </div>
@@ -226,7 +226,7 @@ ${CHAT}
 <div class="section-head">
 <p class="kicker">The tools</p>
 <h2 id="tools-title">Four read-only tools.</h2>
-<p>Ask your assistant to audit a page, crawl a site or check how answer engines see it; it answers with findings it can act on, such as a missing canonical, a broken internal link or robots.txt keeping out an AI crawler, each with the edits that fix it.</p>
+<p>Ask your assistant to audit a page, crawl a site or check how answer engines see it.</p>
 </div>
 <ul class="cards tools">${TOOLS.map(([name, iconName, text]) => `<li class="card"><span class="card-icon">${icon(iconName)}</span><h3><code>${name}</code></h3><p>${text}</p></li>`).join("")}</ul>
 </div>
@@ -236,8 +236,8 @@ ${CHAT}
 <div class="split-copy">
 <p class="kicker">Fair use</p>
 <h2 id="limits-title">Limits.</h2>
-<p>The server is free for everyone, so it keeps each site and each caller to a fair share. A call past a limit gets an answer that names the limit and says when to try again.</p>
-<p>The limits on calls and requests count per Cloudflare location and are approximate. <code>seo_list_rules</code> is not counted.</p>
+<p>Free for everyone, so each site and each caller gets a fair share. A call past a limit names the limit and when to try again.</p>
+<p>Counted per Cloudflare location, so approximate. <code>seo_list_rules</code> is not counted.</p>
 </div>
 <div class="spec"><table>
 <thead><tr><th scope="col">What</th><th scope="col">Limit</th></tr></thead>
@@ -257,7 +257,7 @@ ${limitRow("A page", `the first ${MB(HOSTED_LIMITS.maxBodyBytes)} of its HTML, w
 <div class="section-head">
 <p class="kicker">Hosted or local</p>
 <h2 id="local-title">What it cannot do.</h2>
-<p>The server runs on Cloudflare's network, not on your machine. For what it cannot do, run the local server, which does all of it from your own machine.</p>
+<p>It runs on Cloudflare's network, not on your machine. For the rest, run the local server.</p>
 </div>
 <div class="compare-wrap"><table class="compare">
 <thead><tr><th scope="col">What</th><th scope="col">Hosted</th><th scope="col">Local</th></tr></thead>
@@ -274,8 +274,8 @@ ${limitRow("A page", `the first ${MB(HOSTED_LIMITS.maxBodyBytes)} of its HTML, w
 </div>
 <div class="rows">
 <div class="row" id="robots"><h3>robots.txt</h3><div class="row-body"><p>The server obeys robots.txt for every request it sends, an audit of one page included: the group for <code>agentic-seo-check</code>, or <code>*</code> when there is none. A crawl waits between requests to a site as its <code>Crawl-delay</code> asks, for at most ${CRAWL_DELAY_BUDGET} in all. When robots.txt keeps it out, or a site turns it away, the server says so and requests nothing more there.</p></div></div>
-<div class="row" id="privacy"><h3>Privacy</h3><div class="row-body"><p>The server keeps no HTML you send, no reports and no headers. For each tool call, and each run of the website's page audit, it records the tool, the outcome, the duration, the number of requests and pages, and the hostname it audited, so that a report about too many requests to a site can be checked against what the server sent there. It records the hostname only, never the path or the query, and never your IP address. Records are kept for three months. The server runs on Cloudflare, which processes the requests for ${MAKER}.</p><p>For usage analytics, each tool call also goes to PostHog, in the EU, as one event: the tool, whether it failed and how, the duration, the number of requests and pages, the MCP client and its version, and whether the call came from claude.ai's or ChatGPT's addresses. Never the hostname, the arguments, the answer or your IP address, and nothing that links two calls. When a call fails on a bug of the server's, PostHog also gets the kind of error and where in the code it happened, without the addresses or text in its message. These pages count visits with PostHog too, without a cookie unless you accept one. The <a href="${PRIVACY_URL}">privacy policy</a> has the details.</p></div></div>
-<div class="row" id="requests"><h3>Requests to your site</h3><div class="row-body"><p>If this server has requested your site, <a href="/crawler">the page for site owners</a> says what the requests are and how to stop them. Report abuse, such as too many requests to one site, through <a href="${ABUSE_URL}">help.rivi.software/contact</a>.</p></div></div>
+<div class="row" id="privacy"><h3>Privacy</h3><div class="row-body"><p>The server keeps no HTML you send, no reports and no headers. For each call it records the tool, the outcome, the duration, the requests and pages, and the hostname audited, for three months, so a report of too many requests to a site can be checked. Never the path, the query or your IP address.</p><p>PostHog (EU) gets one event per call, and one per bug of ours: the tool, the outcome, the duration, the counts and the MCP client. Never the hostname, the arguments, the answer or your IP address. These pages count visits with it too, without a cookie unless you accept one. The <a href="${PRIVACY_URL}">privacy policy</a> has the details.</p></div></div>
+<div class="row" id="requests"><h3>Requests to your site</h3><div class="row-body"><p><a href="/crawler">The page for site owners</a> says what the requests are and how to stop them. Report abuse through <a href="${ABUSE_URL}">help.rivi.software/contact</a>.</p></div></div>
 </div>
 </div>
 </section>`,
