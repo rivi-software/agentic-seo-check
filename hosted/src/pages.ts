@@ -206,7 +206,7 @@ export const landingPage = (daily: DailyLimits): string =>
 <div class="endpoint rise" style="--d:180ms">
 <p class="endpoint-label">The server's address</p>
 ${install(MCP_URL, "mcp_url")}
-<ul class="endpoint-facts"><li class="chip">${icon("check")}MCP over Streamable HTTP</li><li class="chip">${icon("check")}Read-only tools</li><li class="chip">${icon("check")}Obeys robots.txt</li></ul>
+<ul class="endpoint-facts"><li class="chip">${icon("check")}MCP over Streamable HTTP</li><li class="chip">${icon("check")}Read-only audits</li><li class="chip">${icon("check")}Obeys robots.txt</li></ul>
 ${directoryBadge()}
 </div>
 </div>
@@ -226,8 +226,8 @@ ${CHAT}
 <div class="wrap">
 <div class="section-head">
 <p class="kicker">The tools</p>
-<h2 id="tools-title">Four read-only tools.</h2>
-<p>Ask your assistant to audit a page, crawl a site or check how answer engines see it.</p>
+<h2 id="tools-title">Four read-only audit tools, and one for feedback.</h2>
+<p>Ask your assistant to audit a page, crawl a site or check how answer engines see it. With a fifth tool, <code>send_feedback</code>, it can tell us about a capability it missed, a tool that failed or misled it, or one that worked well.</p>
 </div>
 <ul class="cards tools">${TOOLS.map(([name, iconName, text]) => `<li class="card"><span class="card-icon">${icon(iconName)}</span><h3><code>${name}</code></h3><p>${text}</p></li>`).join("")}</ul>
 </div>

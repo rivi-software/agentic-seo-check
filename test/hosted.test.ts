@@ -532,6 +532,16 @@ describe("the hosted server", () => {
         },
       });
 
+      // A name in a tool's shape that is none of the server's tools may name a business.
+      await client.callTool({
+        name: "send_feedback",
+        arguments: {
+          feedback_type: "praise",
+          summary: "The fixes were exact.",
+          tool_name: "AcmeBakery",
+        },
+      });
+
       expect(result.isError).toBeFalsy();
       expect(textOf(result)).toContain("Your feedback was recorded");
       expect(calls).toStrictEqual([]);
@@ -548,8 +558,10 @@ describe("the hosted server", () => {
             taskCompleted: false,
           },
         },
+        { report: { type: "praise", tool: "other" } },
       ]);
       expect(started).toMatchObject([
+        { tool: "send_feedback", fetches: false },
         { tool: "send_feedback", fetches: false },
       ]);
     });

@@ -413,7 +413,7 @@ const FEEDBACK_INPUT = {
     .max(64)
     .optional()
     .describe(
-      "Optional: the tool this feedback is about, for issue or praise. Leave it out for missing_capability."
+      "Optional: the tool of this server that this feedback is about, for issue or praise. Leave it out for missing_capability."
     ),
   sentiment: z
     .enum(["positive", "neutral", "negative", "mixed"])
@@ -867,6 +867,13 @@ export const HOSTED_TOOLS: ReadonlyMap<string, CountedTool> = new Map(
   ])
 );
 
+/**
+ * The tool a feedback names, as its event keeps it: one of this server's, or `other`. The agent
+ * writes the name, and a word in a tool name's shape can still name a person or a business.
+ */
+const knownTool = (name: string): string =>
+  HOSTED_TOOLS.has(name) ? name : "other";
+
 /** The hosted server's tools: as the local server's, less what needs the user's machine. */
 export const registerHostedTools = (
   server: McpServer,
@@ -899,7 +906,7 @@ export const registerHostedTools = (
             details: input.details,
             frictionPoints: input.friction_points,
             suggestedImprovement: input.suggested_improvement,
-            tool: input.tool_name,
+            tool: input.tool_name && knownTool(input.tool_name),
             sentiment: input.sentiment,
             taskCompleted: input.task_completed,
           });
