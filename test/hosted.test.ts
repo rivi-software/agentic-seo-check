@@ -31,7 +31,11 @@ import type {
   HostedProfile,
 } from "../src/mcp.js";
 import { instrumentTransport } from "../src/telemetry/mcp.js";
-import type { McpToolCall } from "../src/telemetry/mcp.js";
+import type {
+  McpFeedback,
+  McpToolCall,
+  McpUnknownToolCall,
+} from "../src/telemetry/mcp.js";
 
 const USER_AGENT =
   "Mozilla/5.0 (compatible; agentic-seo-check/0.0.0-test; +https://mcp.agentic-seo.rivi.software/crawler)";
@@ -131,9 +135,14 @@ const connect = async (profile: HostedProfile) => {
   return client;
 };
 
-/** `connect`, with the calls' analytics kept in `calls` (issue #57). */
+/**
+ * `connect`, with the calls' analytics kept in `calls` (issue #57), and the feedback and the calls
+ * to tools the server lacks in theirs (issue #101).
+ */
 const connectWatched = async (profile: HostedProfile) => {
   const calls: McpToolCall[] = [];
+  const feedback: McpFeedback[] = [];
+  const unknown: McpUnknownToolCall[] = [];
   const server = createMcpServer({ hosted: profile });
   const client = new Client({ name: "test-client", version: "0.0.0" });
 
@@ -148,13 +157,28 @@ const connectWatched = async (profile: HostedProfile) => {
       initialize: () => {
         // The tests here read the calls only.
       },
+      feedback: (report) => feedback.push(report),
+      unknownTool: (call) => unknown.push(call),
     },
     HOSTED_TOOLS
   );
   await client.connect(clientTransport);
 
-  return { client, calls };
+  return { client, calls, feedback, unknown };
 };
+
+/** The conversation an answer ends with (issue #101). */
+const conversationOf = (result: Awaited<ReturnType<Client["callTool"]>>) => {
+  const last = CallToolResultSchema.parse(result).content.at(-1);
+  assert(last?.type === "text", "the last content block is text");
+
+  return z.object({ conversation_id: z.string() }).parse(JSON.parse(last.text))
+    .conversation_id;
+};
+
+/** A UUIDv7, as the hosted server issues conversations' ids. */
+const UUID_V7 =
+  /^[\da-f]{8}-[\da-f]{4}-7[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/u;
 
 const textOf = (result: Awaited<ReturnType<Client["callTool"]>>) => {
   const [first] = CallToolResultSchema.parse(result).content;
@@ -296,6 +320,7 @@ describe("the hosted server", () => {
       const { tools } = await client.listTools();
 
       expect(tools.map((t) => t.name).toSorted()).toStrictEqual([
+        "send_feedback",
         "seo_aeo_audit",
         "seo_audit_page",
         "seo_crawl_site",
@@ -338,11 +363,15 @@ describe("the hosted server", () => {
       expect(pageTool?.description).not.toContain("localhost dev server");
     });
 
-    it("counts every tool it lists in its analytics, with its arguments (issues #57, #84)", async () => {
+    it("counts every tool it lists in its analytics, with its arguments and description (issues #57, #84, #101)", async () => {
       const client = await connect(profileWith().profile);
       const { tools } = await client.listTools();
 
-      expect(namedArguments([...HOSTED_TOOLS])).toStrictEqual(
+      expect(
+        namedArguments(
+          [...HOSTED_TOOLS].map(([tool, counted]) => [tool, counted.arguments])
+        )
+      ).toStrictEqual(
         namedArguments(
           tools.map((t) => [
             t.name,
@@ -352,12 +381,208 @@ describe("the hosted server", () => {
       );
 
       for (const tool of tools) {
+        expect(HOSTED_TOOLS.get(tool.name)?.description).toBe(tool.description);
+        expect(tool.inputSchema.properties).toMatchObject({
+          llm_model: { type: "string", maxLength: HOSTED_LIMITS.maxModelChars },
+          conversation_id: { type: "string" },
+        });
+        expect(tool.inputSchema.required).not.toContain("llm_model");
+        expect(tool.inputSchema.required).not.toContain("conversation_id");
+      }
+
+      // The audit tools list `context` as required, so agents fill it in (issue #101).
+      for (const tool of tools.filter((t) => t.name.startsWith("seo_"))) {
         expect(tool.inputSchema.properties).toHaveProperty("context", {
           type: "string",
           maxLength: HOSTED_LIMITS.maxContextChars,
           description: expect.stringContaining("never by name"),
         });
+        expect(tool.inputSchema.required).toContain("context");
       }
+    });
+
+    it("answers a call without `context`, or with one it cannot read, and keeps 300 characters of a long one (issue #101)", async () => {
+      const { client, calls } = await connectWatched(profileWith().profile);
+
+      const answers = await Promise.all(
+        [{}, { context: 42 }, { context: "re-check ".repeat(500) }].map(
+          (extra) =>
+            client.callTool({
+              name: "seo_list_rules",
+              arguments: { rule: "title.missing", ...extra },
+            })
+        )
+      );
+
+      expect(answers.map((a) => a.isError)).toStrictEqual([
+        undefined,
+        undefined,
+        undefined,
+      ]);
+      expect(calls.map((c) => c.intent?.length)).toStrictEqual([
+        undefined,
+        undefined,
+        300,
+      ]);
+    });
+
+    it("answers each call in a conversation, which the agent continues by sending its id back (issue #101)", async () => {
+      const connection = "01a1ccb2-c50e-77f6-9996-449b3851a46d";
+      const { client, calls } = await connectWatched(profileWith().profile);
+
+      const call = (conversation?: string) =>
+        client.callTool({
+          name: "seo_list_rules",
+          arguments: {
+            rule: "title.missing",
+            context: "look up a rule",
+            ...(conversation && { conversation_id: conversation }),
+          },
+        });
+
+      const first = conversationOf(await call());
+      const echoed = conversationOf(await call(` ${first.toUpperCase()} `));
+      const madeUp = conversationOf(await call("conv-1"));
+
+      // A connection's session: a call that sends no conversation back joins it.
+      const joined = await connectWatched({
+        ...profileWith().profile,
+        connection,
+      });
+
+      const inConnection = conversationOf(
+        await joined.client.callTool({ name: "seo_list_rules", arguments: {} })
+      );
+
+      expect([first, madeUp]).toStrictEqual([
+        expect.stringMatching(UUID_V7),
+        expect.stringMatching(UUID_V7),
+      ]);
+      // A made-up id is no conversation the server issued: the answer starts a new one.
+      expect(madeUp).not.toBe(first);
+      expect([
+        echoed,
+        inConnection,
+        joined.calls[0]?.conversationId,
+      ]).toStrictEqual([first, connection, connection]);
+      expect(calls.map((c) => c.conversationId)).toStrictEqual([
+        first,
+        first,
+        madeUp,
+      ]);
+    });
+
+    it("ends an error's answer with its conversation too, after the error", async () => {
+      const client = await connect(profileWith().profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "http://localhost:3000/" },
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toContain("cannot reach localhost");
+      expect(conversationOf(result)).toMatch(UUID_V7);
+    });
+
+    it("tells its analytics the model, the client's word over the agent's, and only an id's shape (issue #101)", async () => {
+      const { client, calls } = await connectWatched(profileWith().profile);
+
+      const call = (model: string | number, codexModel?: string) =>
+        client.callTool({
+          name: "seo_list_rules",
+          arguments: { rule: "title.missing", llm_model: model },
+          ...(codexModel && {
+            _meta: { "x-codex-turn-metadata": { model: codexModel } },
+          }),
+        });
+
+      await call("claude-opus-4-8");
+      await call("claude-opus-4-8", "gpt-5.2-codex");
+      await Promise.all(
+        [
+          "unknown",
+          "shop.example.com",
+          "jo@example.org",
+          "us.anthropic.claude-sonnet-4-5-v1:0",
+          "/Users/someone/model",
+          42,
+        ].map((dropped) => call(dropped))
+      );
+
+      expect(calls).toHaveLength(8);
+      expect(calls.flatMap((c) => (c.model ? [c.model] : []))).toStrictEqual([
+        { id: "claude-opus-4-8", source: "self_reported" },
+        { id: "gpt-5.2-codex", source: "client_metadata" },
+      ]);
+    });
+
+    it("sends an agent's feedback as feedback, not a tool call, and counts it against the caller (issue #101)", async () => {
+      const { profile, calls: started } = profileWith();
+      const { client, calls, feedback } = await connectWatched(profile);
+
+      const result = await client.callTool({
+        name: "send_feedback",
+        arguments: {
+          feedback_type: "missing_capability",
+          summary: "No tool to audit a directory of built HTML.",
+          tool_name: "seo_audit_page",
+          sentiment: "neutral",
+          task_completed: false,
+        },
+      });
+
+      // A name in a tool's shape that is none of the server's tools may name a business.
+      await client.callTool({
+        name: "send_feedback",
+        arguments: {
+          feedback_type: "praise",
+          summary: "The fixes were exact.",
+          tool_name: "AcmeBakery",
+        },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(textOf(result)).toContain("Your feedback was recorded");
+      expect(calls).toStrictEqual([]);
+      expect(feedback).toMatchObject([
+        {
+          tool: "send_feedback",
+          isError: false,
+          conversationId: expect.stringMatching(UUID_V7),
+          report: {
+            type: "missing_capability",
+            summary: "No tool to audit a directory of built HTML.",
+            tool: "seo_audit_page",
+            sentiment: "neutral",
+            taskCompleted: false,
+          },
+        },
+        { report: { type: "praise", tool: "other" } },
+      ]);
+      expect(started).toMatchObject([
+        { tool: "send_feedback", fetches: false },
+        { tool: "send_feedback", fetches: false },
+      ]);
+    });
+
+    it("tells its analytics of a call to a tool it lacks, by a name in a tool's shape (issue #101)", async () => {
+      const { client, calls, unknown } = await connectWatched(
+        profileWith().profile
+      );
+
+      await client.callTool({
+        name: "seo_audit_directory",
+        arguments: { dir: "dist" },
+      });
+      await client.callTool({ name: "shop.example.com", arguments: {} });
+
+      expect(calls).toStrictEqual([]);
+      expect(unknown.map((u) => u.tool)).toStrictEqual([
+        "seo_audit_directory",
+        "other",
+      ]);
+      expect(JSON.stringify(unknown)).not.toContain("example");
     });
 
     it("tells its analytics what an audit found and the options it ran with, never a value (issue #84)", async () => {
@@ -387,6 +612,8 @@ describe("the hosted server", () => {
           tool: "seo_audit_page",
           isError: false,
           arguments: ["context", "format", "keyword", "url"],
+          inputKeys: ["context", "format", "keyword", "url", "[redacted]"],
+          description: expect.stringContaining("Audit a single page"),
           intent:
             "Check <url> and <host> for the <text> launch, fix meta-description.missing on <host>, then mail <email>",
           properties: {
@@ -552,9 +779,15 @@ describe("the hosted server", () => {
 
       for (const tool of tools) {
         expect(tool.annotations?.title).toBe(tool.title);
+        // Every tool reads, but send_feedback, which records what the agent sent (issue #101).
+        expect(tool.annotations?.readOnlyHint).toBe(
+          tool.name !== "send_feedback"
+        );
       }
 
-      for (const tool of tools.filter((t) => t.name !== "seo_list_rules")) {
+      for (const tool of tools.filter(
+        (t) => t.name.startsWith("seo_") && t.name !== "seo_list_rules"
+      )) {
         expect(tool.description).toContain(`${REPOSITORY_URL}#hosted-server`);
         expect(tool.description).toContain(`${WEBSITE_URL}/rules`);
       }

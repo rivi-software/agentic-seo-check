@@ -293,3 +293,128 @@ describe("the hosted server's tool calls (issue #84)", () => {
     expect(rules?.properties).not.toHaveProperty("$mcp_intent_source");
   });
 });
+
+describe("the hosted server's conversations and feedback (issue #101)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const SESSION = "ses_01a1cb45-38c0-70bb-8e46-8e0d2e2198ef";
+  const CONVERSATION = "01a1ccb2-c50e-77f6-9996-449b3851a46d";
+
+  it("names a call's session after its conversation, and a call without one after its connection", async () => {
+    const { events, ctx, settled } = capture();
+
+    const tracking = hostedAnalytics(
+      { POSTHOG_HOST: POSTHOG },
+      ctx,
+      callerOf("203.0.113.5", []),
+      writeSessionToken({ session: SESSION, client: "claude-code" })
+    );
+
+    tracking?.analytics.toolCall({
+      tool: "seo_list_rules",
+      startedAt: new Date(),
+      durationMs: 1,
+      isError: false,
+      conversationId: CONVERSATION,
+      model: { id: "claude-opus-4-8", source: "self_reported" },
+      inputKeys: ["context", "rule", "[redacted]"],
+      description: "List every rule this tool can report",
+    });
+    tracking?.analytics.toolCall({
+      tool: "seo_list_rules",
+      startedAt: new Date(),
+      durationMs: 1,
+      isError: false,
+    });
+    await settled();
+
+    expect(tracking?.connection).toBe(SESSION.slice("ses_".length));
+    expect(events.map((e) => e.properties.$session_id)).toStrictEqual([
+      `ses_${CONVERSATION}`,
+      SESSION,
+    ]);
+    expect(events[0]?.properties).toMatchObject({
+      distinct_id: `ses_${CONVERSATION}`,
+      $mcp_conversation_id: CONVERSATION,
+      $mcp_llm_model: "claude-opus-4-8",
+      $mcp_llm_model_source: "self_reported",
+      $mcp_input_keys: ["context", "rule", "[redacted]"],
+      $mcp_tool_description: "List every rule this tool can report",
+      $mcp_interface: "mcp",
+      $mcp_client_name: "claude-code",
+    });
+  });
+
+  it("sends an agent's feedback and a call to a tool it lacks as events of their own, cleaned", async () => {
+    const { events, ctx, settled } = capture();
+
+    const tracking = hostedAnalytics(
+      { POSTHOG_HOST: POSTHOG },
+      ctx,
+      callerOf("203.0.113.5", [])
+    );
+
+    tracking?.observe({
+      tool: "send_feedback",
+      outcome: "ok",
+      requests: 0,
+      pages: 0,
+    });
+    tracking?.analytics.feedback?.({
+      tool: "send_feedback",
+      startedAt: new Date(),
+      durationMs: 2,
+      isError: false,
+      conversationId: CONVERSATION,
+      report: {
+        type: "issue",
+        summary:
+          'seo_crawl_site stopped on https://shop.example.com/ with "Access denied"',
+        details: "Mail jo@example.org about title.missing on café.fr",
+        tool: "shop.example.com",
+        sentiment: "negative",
+        taskCompleted: true,
+      },
+    });
+    tracking?.analytics.unknownTool?.({
+      tool: "seo_audit_directory",
+      startedAt: new Date(),
+      conversationId: CONVERSATION,
+    });
+    await settled();
+
+    const [feedback, unknown] = events;
+
+    expect(feedback).toMatchObject({
+      event: "$mcp_feedback",
+      properties: {
+        $session_id: `ses_${CONVERSATION}`,
+        $mcp_resource_name: "send_feedback",
+        $mcp_feedback_type: "issue",
+        $mcp_feedback_summary: "seo_crawl_site stopped on <url> with <text>",
+        $mcp_feedback_details: "Mail <email> about title.missing on <host>",
+        $mcp_feedback_tool: "other",
+        $mcp_feedback_sentiment: "negative",
+        $mcp_feedback_task_completed: true,
+        $mcp_intent:
+          "seo_crawl_site stopped on <url> with <text>\n\nMail <email> about title.missing on <host>",
+        $mcp_intent_source: "context_parameter",
+        outcome: "ok",
+        platform: "none",
+      },
+    });
+    // Feedback is no tool call: PostHog's tool counts leave it out.
+    expect(feedback?.properties).not.toHaveProperty("$mcp_tool_name");
+    expect(unknown).toMatchObject({
+      event: "$mcp_unknown_tool",
+      properties: {
+        $mcp_tool_name: "seo_audit_directory",
+        $session_id: `ses_${CONVERSATION}`,
+        $mcp_conversation_id: CONVERSATION,
+      },
+    });
+    expect(JSON.stringify(events)).not.toMatch(/example|café/u);
+  });
+});

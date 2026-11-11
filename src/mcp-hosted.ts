@@ -4,12 +4,14 @@
  * headers or User-Agent, AI bot probes), with every input capped and every request through the
  * hosted gate, which obeys robots.txt (issue #41). Once published, these schemas are a contract of their own.
  * Each call tells its analytics event what it found and why it stopped, in counts and fixed lists
- * (issue #84).
+ * (issue #84). Each answer names the conversation it belongs to, and `send_feedback` lets an agent
+ * tell the developers what it missed (issue #101).
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
+import { PRODUCT_NAME } from "./brand.js";
 import { auditAeoHtml, auditAeoSite, auditAeoUrl } from "./core/aeo/audit.js";
 import type { AeoOptions } from "./core/aeo/audit.js";
 import { auditHtml, auditSite, auditUrl } from "./core/audit.js";
@@ -36,8 +38,14 @@ import {
   respondAeo,
   toOptions,
 } from "./mcp-shared.js";
-import { noteCall } from "./telemetry/mcp.js";
-import type { CallProperties } from "./telemetry/mcp.js";
+import {
+  conversationIdOf,
+  noteCall,
+  noteConversation,
+  noteFeedback,
+} from "./telemetry/mcp.js";
+import type { CallProperties, CountedTool } from "./telemetry/mcp.js";
+import { uuidv7 } from "./telemetry/posthog.js";
 import { runReport } from "./telemetry/report.js";
 
 /** One tool call, as the hosted server's `startCall` is told it. */
@@ -81,6 +89,12 @@ export interface HostedProfile {
    * message is the tool error the caller gets.
    */
   startCall: (call: HostedCallInfo) => Promise<HostedCall>;
+  /**
+   * The session that the request's `Mcp-Session-Id` token names, as a UUIDv7 (hosted/src/analytics.ts).
+   * A call that sends no conversation back joins it, so a connection's first conversation is its
+   * session (issue #101).
+   */
+  connection?: string;
 }
 
 /**
@@ -155,17 +169,59 @@ const hostedOptions = {
   detail,
 };
 
+/** What an argument for the analytics alone is read as when it is missing, not text or too long. */
+// oxlint-disable-next-line unicorn/no-useless-undefined -- zod's catch takes the value to read instead, and that is none
+const none = (): undefined => undefined;
+
+// SAFETY: zod types the value of a catch as its schema's, a string, but no tool reads `context`: the
+// transport reads it from the request's own arguments (telemetry/mcp.ts).
+const noContext = none as () => never;
+
 /**
- * What the agent says the call is for, for the analytics alone (issue #84): no tool reads it, and
- * its event carries it cleaned of URLs, hostnames and emails (`intentOf` in telemetry/mcp.ts).
+ * What the agent says the call is for, for the analytics alone (issues #84 and #101): no tool reads
+ * it, and its event carries it cleaned of URLs, hostnames and emails (`intentOf` in
+ * telemetry/mcp.ts). `tools/list` shows it as required, as PostHog's own SDK does, since agents
+ * leave optional arguments out. A call never fails over it all the same: a value that is missing,
+ * not text or too long is read as none. Zod has no type for a key that is required in the schema
+ * but not in the input, so the catch claims to give a string (`noContext`).
  */
 const context = z
   .string()
   .max(LIMITS.maxContextChars)
-  .optional()
+  .catch(noContext)
   .describe(
-    'Optional: a few words on what you are trying to do with this call, such as "re-check the title fixes" or "first audit before a redesign". Recorded, without URLs, hostnames or emails, in the hosted server\'s anonymous usage analytics. Describe people and businesses by role, never by name. The audit is the same with or without it.'
+    'A few words on what you are trying to do with this call, such as "re-check the title fixes" or "first audit before a redesign". Recorded, without URLs, hostnames or emails, in the hosted server\'s anonymous usage analytics. Describe people and businesses by role, never by name, and do not quote the user. The audit is the same with or without it.'
   );
+
+/** The model the agent runs as, for the analytics alone (issue #101): a wrong value is read as none. */
+const llmModel = z
+  .string()
+  .max(LIMITS.maxModelChars)
+  .optional()
+  .catch(none)
+  .describe(
+    'The model you are running as, such as "claude-opus-4-8" or "gpt-5.2"; "unknown" if you are not sure. Recorded in the hosted server\'s anonymous usage analytics. The audit is the same with or without it.'
+  );
+
+/**
+ * The conversation the call is part of (issue #101): the id the last answer ended with, which the
+ * call's event is in the session of. A wrong value is read as none, and the answer issues a new id.
+ */
+const conversationId = z
+  .string()
+  .max(LIMITS.maxConversationIdChars)
+  .optional()
+  .catch(none)
+  .describe(
+    "The conversation_id this server returned earlier in this conversation, unchanged, including after later user messages. Omit it if you have none. Recorded in the hosted server's anonymous usage analytics."
+  );
+
+/** The arguments every audit tool takes for its analytics alone. */
+const agentArguments = {
+  context,
+  llm_model: llmModel,
+  conversation_id: conversationId,
+};
 
 const url = z.string().url().max(2048);
 
@@ -217,7 +273,7 @@ const AUDIT_PAGE_INPUT = {
       "With `html`: the URL the HTML would be served at (used to resolve links and classify them as internal/external)."
     ),
   ...hostedOptions,
-  context,
+  ...agentArguments,
 };
 
 /** The arguments of seo_crawl_site. */
@@ -261,7 +317,7 @@ const CRAWL_SITE_INPUT = {
       "summary: per-page scores/counts only (findings are rolled up in `issues`); full: every finding on every page."
     ),
   ...hostedOptions,
-  context,
+  ...agentArguments,
 };
 
 /** The arguments of seo_aeo_audit. */
@@ -312,11 +368,64 @@ const AEO_AUDIT_INPUT = {
   timeoutMs: hostedOptions.timeoutMs,
   format,
   detail,
-  context,
+  ...agentArguments,
 };
 
-/** The arguments of seo_list_rules: the local server's, and `context`. */
-const LIST_RULES_INPUT = { ...LIST_RULES.inputSchema, context };
+/** The arguments of seo_list_rules: the local server's, and those for the analytics. */
+const LIST_RULES_INPUT = { ...LIST_RULES.inputSchema, ...agentArguments };
+
+/** The kinds of feedback, as PostHog's MCP Analytics groups them (`$mcp_feedback_type`). */
+const FEEDBACK_TYPES = [
+  "missing_capability",
+  "issue",
+  "praise",
+  "other",
+] as const;
+
+const feedbackText = (what: string) =>
+  z.string().max(LIMITS.maxFeedbackChars).optional().describe(what);
+
+/** The arguments of send_feedback, as PostHog's SDK defines the tool (issue #101). */
+const FEEDBACK_INPUT = {
+  feedback_type: z
+    .enum(FEEDBACK_TYPES)
+    .describe(
+      "What kind of feedback this is. missing_capability: a tool or option you needed does not exist here; nothing failed. issue: a tool failed, returned a confusing error, or its description or schema misled you. praise: something worked notably well. other: anything else."
+    ),
+  summary: z
+    .string()
+    .min(1)
+    .max(LIMITS.maxFeedbackChars)
+    .describe(
+      'One self-contained sentence. For missing_capability, the capability you needed, such as "No tool to audit a page behind a login." For issue, the tool and the problem.'
+    ),
+  details: feedbackText(
+    "Optional: what you tried, the options you used and the error you saw."
+  ),
+  friction_points: feedbackText(
+    "Optional: the moments that slowed you down, as short sentences."
+  ),
+  suggested_improvement: feedbackText(
+    "Optional: the change that would have helped, such as a tool or option to add, or a description to reword."
+  ),
+  tool_name: z
+    .string()
+    .max(64)
+    .optional()
+    .describe(
+      "Optional: the tool of this server that this feedback is about, for issue or praise. Leave it out for missing_capability."
+    ),
+  sentiment: z
+    .enum(["positive", "neutral", "negative", "mixed"])
+    .optional()
+    .describe("Optional: how the experience felt overall."),
+  task_completed: z
+    .boolean()
+    .optional()
+    .describe("Optional: whether you still completed the user's task."),
+  llm_model: llmModel,
+  conversation_id: conversationId,
+};
 
 /** The page count of an answer, for the record of the call. */
 const pagesOf = (audit: Audit | AeoAudit): number =>
@@ -461,6 +570,36 @@ const runCall = async (
   return result;
 };
 
+/**
+ * Answers a call in its conversation (issue #101): the one the call sent back, when the server
+ * issued it; else the session of the call's connection; else a new one. The answer ends with the
+ * conversation's id, as data the agent sends back with its next call, whether the analytics are on
+ * or off, so an answer is the same in every deployment.
+ */
+const inConversation = async (
+  profile: HostedProfile,
+  given: string | undefined,
+  answer: () => CallToolResult | Promise<CallToolResult>
+): Promise<CallToolResult> => {
+  const conversation =
+    conversationIdOf(given) ?? conversationIdOf(profile.connection) ?? uuidv7();
+
+  noteConversation(conversation);
+
+  const result = await answer();
+
+  return {
+    ...result,
+    content: [
+      ...result.content,
+      {
+        type: "text",
+        text: JSON.stringify({ conversation_id: conversation }),
+      },
+    ],
+  };
+};
+
 /** The options of an audit on the hosted server: the caller's, with the hosted fetch. */
 const auditOptions = (
   input: Parameters<typeof toOptions>[0],
@@ -470,28 +609,86 @@ const auditOptions = (
   fetch: { ...fetch, timeoutMs: input.timeoutMs },
 });
 
+/** seo_audit_page: one page, by URL or as HTML. */
+const AUDIT_PAGE = {
+  title: "Audit one page for SEO",
+  description:
+    `Audit a single page and return prioritised, actionable findings (rule id, severity, message, recommendation, CSS selector, evidence) with a \`fix\` for each: the exact edits that resolve it, quoting the code to replace (\`{{…}}\` marks words the author writes). ` +
+    `Checks title, meta description, headings, canonical, robots/noindex, viewport/lang, Open Graph/Twitter cards, images, links, hreflang, structured data (JSON-LD/microdata), content quality and the HTTP response. ` +
+    `Provide either \`url\` (a public http(s) URL) or \`html\` (raw HTML string, e.g. from a template or test render). ${
+      HOSTED_NOTE
+    }Typical workflow: audit, apply the \`fix\` of each error and warning in the source code, then re-check with \`rules\` (the rules you fixed) and \`baseline\` (the finding ids) to confirm they are fixed and nothing new appeared. ${docsNote(
+      "hosted"
+    )}`,
+  inputSchema: AUDIT_PAGE_INPUT,
+  annotations: {
+    title: "Audit one page for SEO",
+    readOnlyHint: true,
+    openWorldHint: true,
+    idempotentHint: true,
+  },
+};
+
+/** seo_crawl_site: a site, up to the hosted crawl's limits. */
+const CRAWL_SITE = {
+  title: "Crawl a site and audit every page",
+  description:
+    `Crawl internal links from a start URL (at most ${LIMITS.maxPages} pages, depth ${LIMITS.maxDepth}), audit every HTML page, and run site-wide checks: robots.txt, XML sitemap coverage (missing/noindex/non-canonical/broken URLs), broken internal links with their sources, redirect chains, duplicate titles/descriptions/H1s/content, orphan and deep pages, soft-404 behaviour, http→https and www redirects, hreflang return links. ` +
+    `Returns site findings plus \`issues\` (page findings rolled up by rule with example URLs) and per-page scores. Use seo_audit_page on a specific URL for full per-page detail. ` +
+    `The crawl checks at most ${LIMITS.maxLinkChecks} link targets and reads at most ${LIMITS.maxSitemaps} sitemaps. ${
+      HOSTED_NOTE
+    }${docsNote("hosted")}`,
+  inputSchema: CRAWL_SITE_INPUT,
+  annotations: {
+    title: "Crawl a site and audit every page",
+    readOnlyHint: true,
+    openWorldHint: true,
+  },
+};
+
+/** seo_aeo_audit: a page or a site, for answer engines. */
+const AEO_AUDIT = {
+  title: "Audit a page or site for answer engines (AEO)",
+  description:
+    `Answer engine optimization audit: can AI answer engines (ChatGPT search, Claude, Perplexity, Google AI Overviews and AI Mode, Copilot, Gemini) reach, quote and trust the content? ` +
+    `Checks robots.txt for each AI crawler (search crawlers, answer bots, training bots), Content-Signal lines and the shared \`__usage_ai-training\` opt-out, /llms.txt, nosnippet/max-snippet/data-nosnippet, Bing's noarchive/nocache for Copilot, noai, content that needs JavaScript, question headings without a direct answer, FAQPage/HowTo markup that the page does not show, article author and dates, and Organization/Person entities with sameAs. ` +
+    `Returns its own AEO score, a per-bot \`crawlers\` table and findings with rule ids (aeo.*). ` +
+    `Provide one of \`url\` (one page, or a site with \`crawl: true\`) or \`html\`. ${
+      HOSTED_NOTE
+    }The local server can also request the page with each AI bot's User-Agent (\`aiBots\`). ${docsNote(
+      "hosted"
+    )}`,
+  inputSchema: AEO_AUDIT_INPUT,
+  annotations: {
+    title: "Audit a page or site for answer engines (AEO)",
+    readOnlyHint: true,
+    openWorldHint: true,
+  },
+};
+
+/** What send_feedback answers: the feedback was kept, and nothing else changed. */
+const FEEDBACK_ANSWER = `Your feedback was recorded for the developers of ${PRODUCT_NAME}. It adds or changes no tools: continue with the tools listed.`;
+
+/**
+ * send_feedback (issue #101): what an agent tells the developers, as PostHog's SDK defines the
+ * tool. It records something, so it is the one tool that does not say it is read-only.
+ */
+const FEEDBACK = {
+  title: "Send feedback to the developers",
+  description: `Send feedback about this server to the developers of ${PRODUCT_NAME}: a capability you needed that no tool or option provides, a tool that failed or misled you, or something that worked well. It records the feedback in the hosted server's anonymous usage analytics, without URLs, hostnames or emails, and does not add or change tools. Leave out personal or sensitive details.`,
+  inputSchema: FEEDBACK_INPUT,
+  annotations: {
+    title: "Send feedback to the developers",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+};
+
 const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
-  server.registerTool(
-    "seo_audit_page",
-    {
-      title: "Audit one page for SEO",
-      description:
-        `Audit a single page and return prioritised, actionable findings (rule id, severity, message, recommendation, CSS selector, evidence) with a \`fix\` for each: the exact edits that resolve it, quoting the code to replace (\`{{…}}\` marks words the author writes). ` +
-        `Checks title, meta description, headings, canonical, robots/noindex, viewport/lang, Open Graph/Twitter cards, images, links, hreflang, structured data (JSON-LD/microdata), content quality and the HTTP response. ` +
-        `Provide either \`url\` (a public http(s) URL) or \`html\` (raw HTML string, e.g. from a template or test render). ${
-          HOSTED_NOTE
-        }Typical workflow: audit, apply the \`fix\` of each error and warning in the source code, then re-check with \`rules\` (the rules you fixed) and \`baseline\` (the finding ids) to confirm they are fixed and nothing new appeared. ${docsNote(
-          "hosted"
-        )}`,
-      inputSchema: AUDIT_PAGE_INPUT,
-      annotations: {
-        title: "Audit one page for SEO",
-        readOnlyHint: true,
-        openWorldHint: true,
-        idempotentHint: true,
-      },
-    },
-    (input) => {
+  server.registerTool("seo_audit_page", AUDIT_PAGE, (input) =>
+    inConversation(profile, input.conversation_id, () => {
       noteOptions(input);
 
       const { html: source, url: target } = input;
@@ -535,29 +732,13 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
           };
         }
       );
-    }
+    })
   );
 };
 
 const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
-  server.registerTool(
-    "seo_crawl_site",
-    {
-      title: "Crawl a site and audit every page",
-      description:
-        `Crawl internal links from a start URL (at most ${LIMITS.maxPages} pages, depth ${LIMITS.maxDepth}), audit every HTML page, and run site-wide checks: robots.txt, XML sitemap coverage (missing/noindex/non-canonical/broken URLs), broken internal links with their sources, redirect chains, duplicate titles/descriptions/H1s/content, orphan and deep pages, soft-404 behaviour, http→https and www redirects, hreflang return links. ` +
-        `Returns site findings plus \`issues\` (page findings rolled up by rule with example URLs) and per-page scores. Use seo_audit_page on a specific URL for full per-page detail. ` +
-        `The crawl checks at most ${LIMITS.maxLinkChecks} link targets and reads at most ${LIMITS.maxSitemaps} sitemaps. ${
-          HOSTED_NOTE
-        }${docsNote("hosted")}`,
-      inputSchema: CRAWL_SITE_INPUT,
-      annotations: {
-        title: "Crawl a site and audit every page",
-        readOnlyHint: true,
-        openWorldHint: true,
-      },
-    },
-    (input) => {
+  server.registerTool("seo_crawl_site", CRAWL_SITE, (input) =>
+    inConversation(profile, input.conversation_id, () => {
       noteOptions(input, input.pageDetail);
 
       let host: string;
@@ -596,32 +777,13 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
           };
         }
       );
-    }
+    })
   );
 };
 
 const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
-  server.registerTool(
-    "seo_aeo_audit",
-    {
-      title: "Audit a page or site for answer engines (AEO)",
-      description:
-        `Answer engine optimization audit: can AI answer engines (ChatGPT search, Claude, Perplexity, Google AI Overviews and AI Mode, Copilot, Gemini) reach, quote and trust the content? ` +
-        `Checks robots.txt for each AI crawler (search crawlers, answer bots, training bots), Content-Signal lines and the shared \`__usage_ai-training\` opt-out, /llms.txt, nosnippet/max-snippet/data-nosnippet, Bing's noarchive/nocache for Copilot, noai, content that needs JavaScript, question headings without a direct answer, FAQPage/HowTo markup that the page does not show, article author and dates, and Organization/Person entities with sameAs. ` +
-        `Returns its own AEO score, a per-bot \`crawlers\` table and findings with rule ids (aeo.*). ` +
-        `Provide one of \`url\` (one page, or a site with \`crawl: true\`) or \`html\`. ${
-          HOSTED_NOTE
-        }The local server can also request the page with each AI bot's User-Agent (\`aiBots\`). ${docsNote(
-          "hosted"
-        )}`,
-      inputSchema: AEO_AUDIT_INPUT,
-      annotations: {
-        title: "Audit a page or site for answer engines (AEO)",
-        readOnlyHint: true,
-        openWorldHint: true,
-      },
-    },
-    (input) => {
+  server.registerTool("seo_aeo_audit", AEO_AUDIT, (input) =>
+    inConversation(profile, input.conversation_id, () => {
       noteOptions(
         input,
         input.url !== undefined && input.crawl ? input.pageDetail : undefined
@@ -677,22 +839,40 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
           };
         }
       );
-    }
+    })
   );
 };
 
+/** seo_list_rules: the local server's tool, with the arguments for the analytics. */
+const LIST_RULES_TOOL = { ...LIST_RULES, inputSchema: LIST_RULES_INPUT };
+
 /**
- * The hosted server's tools and the names of their arguments, for its analytics: a call to any
- * other tool is left out, and an event lists only the arguments its tool has (issue #84).
+ * The hosted server's tools, with the names of their arguments and their descriptions, for its
+ * analytics: a call to any other tool is an unknown tool's event, and a call's event lists only the
+ * arguments its tool has (issues #84 and #101).
  */
-export const HOSTED_TOOLS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+export const HOSTED_TOOLS: ReadonlyMap<string, CountedTool> = new Map(
   Object.entries({
-    seo_audit_page: AUDIT_PAGE_INPUT,
-    seo_crawl_site: CRAWL_SITE_INPUT,
-    seo_aeo_audit: AEO_AUDIT_INPUT,
-    seo_list_rules: LIST_RULES_INPUT,
-  }).map(([tool, input]) => [tool, new Set(Object.keys(input))])
+    seo_audit_page: AUDIT_PAGE,
+    seo_crawl_site: CRAWL_SITE,
+    seo_aeo_audit: AEO_AUDIT,
+    seo_list_rules: LIST_RULES_TOOL,
+    send_feedback: FEEDBACK,
+  }).map(([tool, listed]) => [
+    tool,
+    {
+      arguments: new Set(Object.keys(listed.inputSchema)),
+      description: listed.description,
+    },
+  ])
 );
+
+/**
+ * The tool a feedback names, as its event keeps it: one of this server's, or `other`. The agent
+ * writes the name, and a word in a tool name's shape can still name a person or a business.
+ */
+const knownTool = (name: string): string =>
+  HOSTED_TOOLS.has(name) ? name : "other";
 
 /** The hosted server's tools: as the local server's, less what needs the user's machine. */
 export const registerHostedTools = (
@@ -703,14 +883,40 @@ export const registerHostedTools = (
   registerCrawlSite(server, profile);
   registerAeoAudit(server, profile);
 
-  server.registerTool(
-    "seo_list_rules",
-    { ...LIST_RULES, inputSchema: LIST_RULES_INPUT },
-    (input) =>
+  server.registerTool("seo_list_rules", LIST_RULES_TOOL, (input) =>
+    inConversation(profile, input.conversation_id, () =>
       runCall(
         profile,
         { tool: "seo_list_rules", fetches: false, crawl: false, host: null },
         () => ({ result: listRules(input), pages: 0 })
       )
+    )
+  );
+
+  // Unlike seo_list_rules, it counts against the caller's calls a minute: it sends free text.
+  server.registerTool("send_feedback", FEEDBACK, (input) =>
+    inConversation(profile, input.conversation_id, () =>
+      runCall(
+        profile,
+        { tool: "send_feedback", fetches: false, crawl: false, host: null },
+        () => {
+          noteFeedback({
+            type: input.feedback_type,
+            summary: input.summary,
+            details: input.details,
+            frictionPoints: input.friction_points,
+            suggestedImprovement: input.suggested_improvement,
+            tool: input.tool_name && knownTool(input.tool_name),
+            sentiment: input.sentiment,
+            taskCompleted: input.task_completed,
+          });
+
+          return {
+            result: { content: [{ type: "text", text: FEEDBACK_ANSWER }] },
+            pages: 0,
+          };
+        }
+      )
+    )
   );
 };

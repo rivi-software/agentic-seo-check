@@ -66,6 +66,12 @@ export const HOSTED_LIMITS = {
   maxKeywordChars: 200,
   /** `context`, the sentence an agent may write on what a call is for (issue #84). */
   maxContextChars: 1000,
+  /** `llm_model`, the model an agent says it runs as (issue #101). */
+  maxModelChars: 100,
+  /** `conversation_id`: the UUIDv7 the server issued, with room for what an agent wraps it in. */
+  maxConversationIdChars: 64,
+  /** Each text of `send_feedback` (issue #101). */
+  maxFeedbackChars: 2000,
   /**
    * How long robots.txt's Crawl-delay may add to one crawl, the delays of its requests to every
    * site added up: past it, the crawl stops requesting the site it would wait for, rather than keep
