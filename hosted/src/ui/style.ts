@@ -619,6 +619,66 @@ html{scroll-behavior:smooth}
 @keyframes dot-on{0%{background-color:var(--text-faint);box-shadow:0 0 #3be08a00}40%{background-color:var(--signal);box-shadow:0 0 0 5px #3be08a47}}
 `;
 
+/**
+ * Paper, and a PDF saved from the print dialog (issue #92). Printed as it is, the dark page puts
+ * pale text on white, since browsers leave out backgrounds, so the tokens turn light. A report
+ * prints alone, every section in turn from a page of its own (the script shows every tab and opens
+ * every finding just before), with the colours of its severities and scores. The evidence is left
+ * out: it is JSON for a tool, and the JSON download has it. The page is about 700 CSS pixels wide
+ * on A4 or Letter, so the phone layout's media queries apply, and the rules after them put the
+ * score cards and a finding's head back as the screen has them. The findings' containers are
+ * blocks on paper, not grids: Chrome moves a whole grid item that fits on the next page there,
+ * which left a section's heading alone on a page.
+ */
+const PRINT = `
+.report-print{display:none}
+@media print{
+@page{margin:14mm 12mm}
+:root{color-scheme:light;--bg:#fff;--bg-raised:#fff;--bg-raised-2:#f4f5f6;--bg-inset:#f8f9fa;--bg-hover:#0000;--line-faint:#00000014;--line:#0000001f;--line-strong:#0000003d;--text:#0b0c0e;--text-body:#2f343b;--text-muted:#555b65;--text-faint:#6a707a;--signal:#139a55;--signal-text:#0b7a42;--signal-soft:#139a5524;--error:#d23b31;--error-text:#b0261c;--error-soft:#d23b311c;--warning:#c97c00;--warning-text:#8f5600;--warning-soft:#c97c0021;--info:#2f6fc6;--info-text:#1d58a8;--info-soft:#2f6fc61c;--shadow-panel:none;--shadow-window:none}
+html{font-size:12px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{font-size:12px}
+*,::before,::after{animation:none!important;transition:none!important}
+.site-header,.site-footer,.consent,.skip-link,.crawl-progress,.report-actions,.report-tabs,.copy,.evidence,.chev,.fix-row>.arrow,.score-more{display:none!important}
+main:has(>.report)>:not(.report){display:none}
+.wrap{max-width:none;padding-inline:0}
+pre,.table-wrap{overflow:visible}
+.report{padding:0}
+.report-stack{gap:12px}
+.window::before{display:none}
+.report-bar{padding:14px 16px}
+.report-print{display:block;color:var(--text-muted);font-size:.8125rem}
+.scores{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.score-card{padding:16px 18px}
+.ring-fill{filter:none}
+.sev-bar,.edit-step{background:#0000000f}
+.report-panels,.has-tabs .report-panels{display:block;padding-top:0}
+.report-panel[hidden]{display:block;content-visibility:visible}
+.report-panel+.report-panel{break-before:page}
+.report-panel:first-child{margin-top:16px}
+.finding,.finding[open]{overflow:visible;background:var(--bg-raised);box-shadow:none;border-left:3px solid var(--c)}
+.fix-row{box-shadow:none;border-left:3px solid var(--c)}
+.index-tile{box-shadow:none;border-top:2px solid var(--c)}
+.finding>summary,.fix-row{flex-wrap:nowrap}
+.finding-text{flex-basis:auto;order:0}
+.facts-text .fact{grid-template-columns:9rem minmax(0,1fr);gap:16px}
+.pages-table{min-width:0}
+.report-card,.finding-group,.crawler-group{padding:14px}
+.fix-list{gap:6px}
+.finding>summary{padding:10px 12px 10px 14px}
+.finding-body{padding:12px 14px}
+.todo{padding:10px 12px}
+.edit{gap:8px;padding:10px}
+.report-section,.finding-groups,.finding-group,.finding-part,.findings,.finding-body,.fix,.edits{display:block}
+.report-section>*+*,.finding-groups>*+*{margin-top:16px}
+.finding-group>*+*,.finding-part>*+*{margin-top:12px}
+.findings>*+*,.edits>*+*{margin-top:6px}
+.finding-body>*+*{margin-top:10px}
+.fix>*+*{margin-top:8px}
+.report-card,.score-card,.fix-row,.index-tile,.fact,.todo,.edit,.empty,.report-note,.crawler-group,.pages-table tr,.finding>summary{break-inside:avoid}
+h3,h4,h5,.label,.card-head,.report-section-head,.finding-group-head,.finding>summary,.edit-head,.diff-label{break-after:avoid}
+}
+`;
+
 export const STYLE = [
   TOKENS,
   BASE,
@@ -634,6 +694,7 @@ export const STYLE = [
   CONSENT,
   RESPONSIVE,
   MOTION,
+  PRINT,
 ]
   .join("")
   .replaceAll("\n", "");

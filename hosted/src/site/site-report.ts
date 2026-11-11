@@ -292,6 +292,7 @@ export const renderSiteReport = (audits: SiteAudits, share = ""): string => {
   return reportFrame({
     title: "Site audit report",
     url: aeo.url,
+    auditedAt: seo.auditedAt,
     share,
     data: reportData(seo, aeo, hostname),
     body: `<div class="scores">${scoreCard("seo", "SEO: search engines", seo.score, seo.counts)}${scoreCard("aeo", "AEO: AI answer engines", aeo.score, aeo.counts)}</div>

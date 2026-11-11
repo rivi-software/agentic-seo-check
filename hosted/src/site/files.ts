@@ -55,12 +55,13 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
  * needs no inline script. It gives every command and snippet marked data-copy a button that copies
  * it, waits for Turnstile's token before the audit form is sent, shows that an audit or a crawl is
  * running, shows the report one section at a time behind its tabs, gives the report as a JSON
- * file or as Markdown on the clipboard, adds the system's
- * share sheet to the report's Share menu, and filters the rules page. On the production hostnames
- * it also loads PostHog from /ph.js for the usage analytics (issue #57), with the cookie banner,
- * and sends the closed list of events below: never an address the visitor audited, nothing they
- * typed and nothing from a report but its scores. Without it every page still reads and works, but
- * the form. It runs once the page is read to its end, so after a crawl's streamed answer.
+ * file, as Markdown on the clipboard or to the print dialog to save as a PDF, with every section
+ * and finding open while it prints, adds the system's share sheet to the report's Share menu, and
+ * filters the rules page. On the production hostnames it also loads PostHog from /ph.js for the
+ * usage analytics (issue #57), with the cookie banner, and sends the closed list of events below:
+ * never an address the visitor audited, nothing they typed and nothing from a report but its
+ * scores. Without it every page still reads and works, but the form. It runs once the page is read
+ * to its end, so after a crawl's streamed answer.
  */
 export const SITE_JS = `(() => {
   const COPY = ${JSON.stringify(`${icon("copy")}<span class="sr-only">Copy</span>`)};
@@ -308,8 +309,10 @@ export const SITE_JS = `(() => {
     const tabs = [...tabStrip.querySelectorAll("a")];
     const panels = tabs.map((tab) => document.getElementById(tab.hash.slice(1)));
     const holder = panels[0].parentElement;
+    let current = 0;
 
     const show = (index) => {
+      current = index;
       tabs.forEach((tab, i) => {
         tab.setAttribute("aria-selected", String(i === index));
         tab.tabIndex = i === index ? 0 : -1;
@@ -341,6 +344,18 @@ export const SITE_JS = `(() => {
     tabStrip.setAttribute("role", "tablist");
     tabStrip.closest(".report").classList.add("has-tabs");
     show(0);
+
+    // Printed, or saved as a PDF, the report has every section, one after the other; afterwards the
+    // tab that was open is again the only one.
+    window.addEventListener("beforeprint", () => {
+      for (const panel of panels) {
+        panel.hidden = false;
+      }
+    });
+
+    window.addEventListener("afterprint", () => {
+      show(current);
+    });
 
     // Opens the tab \`index\`. When the strip is stuck to the top of the window, the section that was
     // open is scrolled out of view above it, and the new one is shown from its start.
@@ -467,6 +482,13 @@ export const SITE_JS = `(() => {
           return;
         }
 
+        // The browser's print dialog, where "Save as PDF" is one of the destinations.
+        if (button.dataset.report === "pdf") {
+          track("report_downloaded", { format: "pdf" });
+          window.print();
+          return;
+        }
+
         try {
           await navigator.clipboard.writeText(data.markdown);
           track("report_downloaded", { format: "markdown" });
@@ -476,6 +498,45 @@ export const SITE_JS = `(() => {
         }
       });
     }
+
+    // Printed, every finding is open with its fix, and the file a PDF is saved to is named after
+    // the site, as the JSON download is. Afterwards the page is as the visitor left it. A browser
+    // may say "beforeprint" twice before one "afterprint" (Chrome's PDF does): the second changes
+    // nothing, so what the first kept is what comes back.
+    let printing = false;
+    let closed = [];
+    let title = document.title;
+
+    window.addEventListener("beforeprint", () => {
+      if (printing) {
+        return;
+      }
+
+      printing = true;
+      closed = [...document.querySelectorAll(".report details.finding:not([open])")];
+
+      for (const finding of closed) {
+        finding.open = true;
+      }
+
+      title = document.title;
+      document.title = "agentic-seo-check-" + data.name;
+    });
+
+    window.addEventListener("afterprint", () => {
+      if (!printing) {
+        return;
+      }
+
+      printing = false;
+
+      for (const finding of closed) {
+        finding.open = false;
+      }
+
+      closed = [];
+      document.title = title;
+    });
 
     if (data.summary) {
       track("audit_shown", data.summary);
