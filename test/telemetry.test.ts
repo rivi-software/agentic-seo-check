@@ -15,7 +15,6 @@ import {
   NOTICE_VERSION,
   offByEnv,
   prepareTelemetry,
-  runReport,
   settingsPath,
   startCliRun,
   targetKind,
@@ -30,6 +29,7 @@ import type {
 } from "../src/telemetry/mcp.js";
 import { sendEvents, uuidv7 } from "../src/telemetry/posthog.js";
 import type { PostHogEvent } from "../src/telemetry/posthog.js";
+import { runReport } from "../src/telemetry/report.js";
 import { siteRoutes, startFixtureServer } from "./helpers/fixture-server.js";
 import type { FixtureServer } from "./helpers/fixture-server.js";
 
@@ -342,7 +342,7 @@ describe("telemetry", () => {
 
       await client.callTool({
         name: "seo_list_rules",
-        arguments: { rule: "title.missing" },
+        arguments: { rule: "title.missing", context: "look up a rule" },
       });
       await client.callTool({ name: "no_such_tool", arguments: {} });
       await client.close();
@@ -364,6 +364,10 @@ describe("telemetry", () => {
           durationMs: expect.any(Number),
         }),
       ]);
+      // The local server's events name no arguments and no intent (issue #84 is the hosted one's).
+      expect(calls[0]?.arguments).toBeUndefined();
+      expect(calls[0]?.intent).toBeUndefined();
+      expect(calls[0]?.properties).toStrictEqual({});
     });
 
     it("tells the kinds of failure apart", async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { CallLimitError } from "../../src/mcp-hosted.ts";
 import type { HostedCallInfo } from "../../src/mcp.ts";
 import type { Caller } from "../src/callers.ts";
 import { hostedProfile, MAX_INDEX_BYTES, USER_AGENT } from "../src/limits.ts";
@@ -143,6 +144,17 @@ const refusalOf = async (start: Promise<unknown>): Promise<string> => {
   }
 };
 
+/** The reason of the limit `start` ends in, for the analytics (issue #84), or "admitted". */
+const reasonOf = async (start: Promise<unknown>): Promise<string> => {
+  try {
+    await start;
+
+    return "admitted";
+  } catch (error) {
+    return error instanceof CallLimitError ? error.reason : "no reason";
+  }
+};
+
 describe("the hosted server's limits", () => {
   it("send the hosted User-Agent, which links to the page for site owners", () => {
     expect(USER_AGENT).toMatch(
@@ -228,6 +240,7 @@ describe("the hosted server's limits", () => {
     expect(answers.filter((a) => a === undefined)).toHaveLength(600);
     expect(answers.at(-1)).toStrictEqual({
       scope: "host",
+      reason: "site_requests",
       message:
         "The hosted server has sent www.example.com 600 requests in the last minute, its limit per site for all its callers together. Try again in a minute. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp",
     });
@@ -330,6 +343,7 @@ describe("the hosted server's limits", () => {
     await expect(go(page, "https://third.example.net/")).resolves.toStrictEqual(
       {
         scope: "host",
+        reason: "caller_sites",
         message:
           "The page led to third.example.net, another site than the one audited. This address has audited 2 different sites on the hosted server today, its daily limit per caller. Sites it audited today still work; others wait until 00:00 UTC. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp",
       }
@@ -360,6 +374,48 @@ describe("the hosted server's limits", () => {
     await expect(
       refusalOf(hostedProfile(env, ctx, PERSON).startCall(PAGE))
     ).resolves.toBe("admitted");
+  });
+
+  it("name the limit that keeps a call out, for the analytics (issue #84)", async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const full = fakeEnv({ DAILY_REQUESTS: 1 });
+    await full.env.STATE.getByName("global").addRequests(day, 1);
+
+    const reason = (
+      overrides: Partial<LimitsEnv>,
+      caller: Caller,
+      call: HostedCallInfo
+    ) => {
+      const { env, ctx } = fakeEnv(overrides);
+
+      return reasonOf(hostedProfile(env, ctx, caller).startCall(call));
+    };
+
+    await expect(
+      Promise.all([
+        reason({ MODE: "closed" }, PERSON, INLINE),
+        reason({ MODE: "no-crawls" }, PERSON, CRAWL),
+        reason({ CALLER_CALLS: limiter(0) }, PERSON, PAGE),
+        reason({ CALLER_CRAWLS: limiter(0) }, PERSON, CRAWL),
+        reason({ PLATFORM_CALLS: limiter(0) }, CLAUDE, PAGE),
+        reason({ PLATFORM_CRAWLS: limiter(0) }, CLAUDE, CRAWL),
+        reasonOf(hostedProfile(full.env, full.ctx, PERSON).startCall(PAGE)),
+        reason({ CALLER_SITES: 0 }, PERSON, PAGE),
+        reason({ PLATFORM_SITES: 0 }, CLAUDE, PAGE),
+        reason({}, PERSON, PAGE),
+      ])
+    ).resolves.toStrictEqual([
+      "paused",
+      "no_crawls",
+      "caller_calls",
+      "caller_crawls",
+      "platform_calls",
+      "platform_crawls",
+      "daily_requests",
+      "caller_sites",
+      "platform_sites",
+      "admitted",
+    ]);
   });
 
   it("turn crawls, or every call, off with MODE", async () => {

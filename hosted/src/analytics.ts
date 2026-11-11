@@ -12,6 +12,10 @@
  * call. What an event says of the caller is the MCP client and the platform the call comes from:
  * claude.ai's or ChatGPT's addresses, or neither. The hostname a call audited stays in Analytics
  * Engine, for abuse reports, and out of PostHog.
+ *
+ * What a call did comes from the tools (issue #84, src/mcp-hosted.ts): the score, the counts and
+ * the rules of its audit, a re-check's result, the options it ran with, why it stopped, the names
+ * of the arguments it gave, and the agent's `context`, cleaned, as `$mcp_intent`.
  */
 import { z } from "zod";
 

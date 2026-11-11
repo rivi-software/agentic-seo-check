@@ -380,6 +380,7 @@ describe("the hosted Worker in workerd", () => {
 
       const { result } = await audit("seo_audit_page", {
         url: "https://shop.example.com/about",
+        context: "first audit of https://shop.example.com/about",
       });
 
       expect(result.isError).toBeFalsy();
@@ -407,6 +408,17 @@ describe("the hosted Worker in workerd", () => {
           // From the session's token: the call's own request names no client.
           $mcp_client_name: "worker-test",
           $mcp_client_version: "0.0.0",
+          // What the call did and what it was for (issue #84).
+          $mcp_intent: "first audit of <url>",
+          $mcp_intent_source: "context_parameter",
+          arguments: ["context", "url"],
+          target: "url",
+          score: expect.any(Number),
+          errors: expect.any(Number),
+          rules: expect.any(Array),
+          format: "json",
+          detail: "compact",
+          recheck: false,
         },
       });
       expect(event.properties.requests).toBeGreaterThan(0);
@@ -473,6 +485,7 @@ describe("the hosted Worker in workerd", () => {
         $mcp_tool_name: "seo_audit_page",
         $mcp_is_error: true,
         $mcp_error_type: "validation",
+        reason: "address",
       });
       expect(JSON.stringify(event)).not.toContain("localhost");
     });
@@ -576,7 +589,9 @@ describe("the hosted Worker in workerd", () => {
       expect(requests.map((r) => r.url)).not.toContain("http://10.0.0.1/admin");
     });
 
-    it("says a site turned it away", async () => {
+    it("says a site turned it away, and tells PostHog why", async () => {
+      const before = events.length;
+
       const { result } = await audit("seo_aeo_audit", {
         url: "https://walled.example.com/",
       });
@@ -585,6 +600,14 @@ describe("the hosted Worker in workerd", () => {
       expect(textOf(result)).toContain(
         "walled.example.com answered the hosted server with a challenge page"
       );
+
+      const [event] = await eventsAfter(before, "$mcp_tool_call");
+
+      expect(event?.properties).toMatchObject({
+        $mcp_error_type: "permission",
+        outcome: "refused",
+        reason: "challenge",
+      });
     });
 
     it("passes its own audit, landing page included", async () => {

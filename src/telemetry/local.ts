@@ -13,13 +13,13 @@ import { z } from "zod";
 import { PRODUCT_NAME, REPOSITORY_URL } from "../brand.js";
 import { resolveTarget } from "../core/audit.js";
 import { onCaughtError } from "../core/errors.js";
-import type { AeoAudit, Audit, SeverityCounts } from "../core/types.js";
 import type { OutputFormat } from "../terminal.js";
 import { exceptionEvent } from "./exceptions.js";
 import { currentTool, initializeEvent, toolCallEvent } from "./mcp.js";
 import type { McpAnalytics, McpEventContext, McpToolCall } from "./mcp.js";
 import { BASE_PROPERTIES, sendEvents, uuidv7 } from "./posthog.js";
 import type { PostHogEvent } from "./posthog.js";
+import type { RunReport } from "./report.js";
 
 /** The variable that turns telemetry off: 0, false, off or no. */
 export const TELEMETRY_ENV = "AGENTIC_SEO_CHECK_TELEMETRY";
@@ -243,49 +243,6 @@ export const targetKind = async (
   } catch {
     return undefined;
   }
-};
-
-/** The most rule ids an event lists. */
-const MAX_RULES = 100;
-
-/** What an audit found, in numbers and rule ids: the rules are the tool's own. */
-export interface RunReport {
-  pages: number;
-  counts: SeverityCounts;
-  rules: string[];
-}
-
-const ids = (list: { rule: string }[] | undefined): string[] =>
-  (list ?? []).map((item) => item.rule);
-
-export const runReport = (report: Audit | AeoAudit): RunReport => {
-  let rules: string[];
-  let pages: number;
-
-  switch (report.kind) {
-    case "page": {
-      rules = ids(report.findings);
-      pages = 1;
-      break;
-    }
-
-    case "site": {
-      rules = [...ids(report.siteFindings), ...ids(report.issues)];
-      pages = report.pages.length;
-      break;
-    }
-
-    default: {
-      rules = [...ids(report.findings), ...ids(report.issues)];
-      pages = report.pages?.length ?? 1;
-    }
-  }
-
-  return {
-    pages,
-    counts: report.counts,
-    rules: [...new Set(rules)].toSorted().slice(0, MAX_RULES),
-  };
 };
 
 /** An error a run met, for its `$exception` event (issue #60). */
