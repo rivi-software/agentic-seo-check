@@ -9,6 +9,7 @@ import {
   setAttributeEdit,
   slot,
 } from "./fix.js";
+import { hashRoute } from "./links.js";
 import {
   ORIGIN_SLOT_WRITE,
   permanentRedirect,
@@ -621,25 +622,29 @@ export const urlRules = [
       recommendation:
         'Give the target element the id the link names, or fix the link. If JavaScript handles the click (a menu or modal toggle), use a <button> instead of <a href="#...">.',
     },
-    ({ page }, make) =>
-      page.missingFragments.length > 0
+    ({ page }, make) => {
+      // A hash router's "#/products" names a view, not an element: links.hash-route reports it.
+      const missing = page.missingFragments.filter((href) => !hashRoute(href));
+
+      return missing.length > 0
         ? make(
-            `${page.missingFragments.length} same-page link(s) point to ids that are not on the page: ${cap(page.missingFragments, 5).join(", ")}.`,
+            `${missing.length} same-page link(s) point to ids that are not on the page: ${cap(missing, 5).join(", ")}.`,
             {
-              fix: page.missingFragments.map((href) =>
+              fix: missing.map((href) =>
                 addHtml(
                   `the element ${href} should scroll to`,
                   `id="${escapeAttribute(href.slice(1))}"`,
                   `Put this id on the section or heading the link ${href} means. If a script handles the click instead (a menu or modal toggle), make the link a <button type="button">.`
                 )
               ),
-              selector: cap(page.missingFragments, 5)
+              selector: cap(missing, 5)
                 .map((href) => `a[href="${href.replaceAll('"', '\\"')}"]`)
                 .join(", "),
-              evidence: { fragments: cap(page.missingFragments) },
+              evidence: { fragments: cap(missing) },
             }
           )
-        : null
+        : null;
+    }
   ),
   defineRule(
     {

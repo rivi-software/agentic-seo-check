@@ -45,7 +45,68 @@ export const RETIRED_RICH_RESULTS: ReadonlyMap<string, string> = new Map([
     "SearchAction",
     "Google removed the sitelinks search box in November 2024; WebSite markup still sets the site name.",
   ],
+  ["Occupation", "Google phased out Estimated Salary rich results in 2025."],
+  [
+    "OccupationAggregationByEmployer",
+    "Google phased out Estimated Salary rich results in 2025.",
+  ],
 ]);
+
+/**
+ * Retired rich results whose types live on for others: a LearningResource video was a Learning
+ * Video (a LearningResource is also a Math solver), and a Book's ReadAction or BorrowAction was a
+ * Book Action. They count only in that company.
+ */
+const LEARNING_VIDEO =
+  "Google phased out Learning Video rich results in 2025; the VideoObject itself still earns video results.";
+
+const BOOK_ACTION = "Google phased out Book Actions in 2025.";
+
+const BOOK_ACTION_TYPES = new Set(["ReadAction", "BorrowAction"]);
+
+/** The ReadAction and BorrowAction objects below a Book, nested ones included. */
+const bookActionsBelow = (book: JsonObject): [JsonObject, string][] => {
+  const out: [JsonObject, string][] = [];
+  const seen = new Set<JsonObject>();
+
+  const walk = (value: JsonValue | undefined, depth: number): void => {
+    if (depth > 6 || out.length >= 50) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        walk(v, depth);
+      }
+
+      return;
+    }
+
+    if (!isJsonObject(value) || seen.has(value)) {
+      return;
+    }
+
+    seen.add(value);
+
+    const action = typesOf(value["@type"]).find((t) =>
+      BOOK_ACTION_TYPES.has(t)
+    );
+
+    if (action) {
+      out.push([value, action]);
+    }
+
+    for (const v of Object.values(value)) {
+      walk(v, depth + 1);
+    }
+  };
+
+  for (const v of Object.values(book)) {
+    walk(v, 0);
+  }
+
+  return out;
+};
 
 const SD =
   "https://developers.google.com/search/docs/appearance/structured-data/";
@@ -72,7 +133,7 @@ interface ObjectWalk {
 }
 
 /** Visit every JSON-LD object, nested ones included, with a dotted path to it. */
-const eachObject = (
+export const eachObject = (
   items: StructuredDataItem[],
   visit: (node: JsonObject, path: string, item: StructuredDataItem) => void
 ): ObjectWalk => {
@@ -148,7 +209,7 @@ const numeric = (value: JsonValue | undefined): number | null => {
 };
 
 /** One property to set so a value Google cannot use becomes one it can. */
-interface ValueFix {
+export interface ValueFix {
   property: string;
   /** JSON to write, which may hold a `{{…}}` slot. */
   value: string;
@@ -322,6 +383,208 @@ const ratingProblems = (node: JsonObject, types: string[]): ValueProblem[] => {
   return problems;
 };
 
+/** A property whose value is one of a fixed list, as Google and schema.org give it. */
+interface Enumeration {
+  values: readonly string[];
+  /** Part of every member a free-text value leaves out ("new" for NewCondition). */
+  affix?: RegExp;
+  /** Words people write for a member that its name does not hold. */
+  aliases?: ReadonlyMap<string, string>;
+  /** Compared as written: Google calls employmentType's values case-sensitive. */
+  caseSensitive?: boolean;
+  /** A fix writes the member as a schema.org URL rather than as the bare value. */
+  url: boolean;
+  docs: string;
+}
+
+const ENUMERATIONS: ReadonlyMap<string, Enumeration> = new Map([
+  [
+    "availability",
+    {
+      values: [
+        "InStock",
+        "OutOfStock",
+        "PreOrder",
+        "BackOrder",
+        "SoldOut",
+        "Discontinued",
+        "InStoreOnly",
+        "OnlineOnly",
+        "LimitedAvailability",
+        "PreSale",
+      ],
+      url: true,
+      docs: `${SD}merchant-listing`,
+    },
+  ],
+  [
+    "itemCondition",
+    {
+      values: [
+        "NewCondition",
+        "UsedCondition",
+        "RefurbishedCondition",
+        "DamagedCondition",
+      ],
+      affix: /condition$/u,
+      url: true,
+      docs: `${SD}merchant-listing`,
+    },
+  ],
+  [
+    "eventStatus",
+    {
+      values: [
+        "EventScheduled",
+        "EventCancelled",
+        "EventPostponed",
+        "EventRescheduled",
+        "EventMovedOnline",
+      ],
+      affix: /^event/u,
+      aliases: new Map([["canceled", "EventCancelled"]]),
+      url: true,
+      docs: `${SD}event`,
+    },
+  ],
+  [
+    "eventAttendanceMode",
+    {
+      values: [
+        "OfflineEventAttendanceMode",
+        "OnlineEventAttendanceMode",
+        "MixedEventAttendanceMode",
+      ],
+      affix: /eventattendancemode$/u,
+      url: true,
+      docs: `${SD}event`,
+    },
+  ],
+  [
+    "employmentType",
+    {
+      values: [
+        "FULL_TIME",
+        "PART_TIME",
+        "CONTRACTOR",
+        "TEMPORARY",
+        "INTERN",
+        "VOLUNTEER",
+        "PER_DIEM",
+        "OTHER",
+      ],
+      aliases: new Map([
+        ["contract", "CONTRACTOR"],
+        ["temp", "TEMPORARY"],
+        ["internship", "INTERN"],
+      ]),
+      caseSensitive: true,
+      url: false,
+      docs: `${SD}job-posting`,
+    },
+  ],
+]);
+
+/** The member a value names, without a schema.org prefix: `https://schema.org/InStock` and `schema:InStock` are `InStock`. */
+const memberName = (value: string): string =>
+  value.trim().replace(/^(?:https?:\/\/(?:www\.)?schema\.org\/|schema:)/iu, "");
+
+/** A free-text value reduced to its letters, for matching "in stock" or "Full-time" to a member. */
+const squash = (value: string): string =>
+  value.toLowerCase().replaceAll(/[^a-z]/gu, "");
+
+/** Whether `name` is a member of `e` as Google reads it. */
+const isMember = (e: Enumeration, name: string): boolean =>
+  e.caseSensitive
+    ? e.values.includes(name)
+    : e.values.some((v) => v.toLowerCase() === name.toLowerCase());
+
+/** The member a free-text value plainly means ("in stock", "Full-time", "new"), or null. */
+const memberFor = (e: Enumeration, value: string): string | null => {
+  const text = squash(memberName(value));
+
+  if (!text) {
+    return null;
+  }
+
+  const alias = e.aliases?.get(text);
+
+  if (alias) {
+    return alias;
+  }
+
+  return (
+    e.values.find((v) => {
+      const member = squash(v);
+
+      return (
+        member === text || (e.affix && member.replace(e.affix, "") === text)
+      );
+    }) ?? null
+  );
+};
+
+/** A member as a fix writes it: a schema.org URL, or the bare value for employmentType. */
+const memberCode = (e: Enumeration, member: string): string =>
+  json(e.url ? `https://schema.org/${member}` : member);
+
+/** The strings a property holds: a string, a list of them, or the @id of an object that names a member. */
+const enumStrings = (value: JsonValue | undefined): string[] | null => {
+  if (isString(value)) {
+    return [value];
+  }
+
+  if (isJsonObject(value) && isString(value["@id"])) {
+    return [value["@id"]];
+  }
+
+  return Array.isArray(value) && value.every(isString) ? value : null;
+};
+
+const enumerationProblems = (node: JsonObject): ValueProblem[] =>
+  [...ENUMERATIONS].flatMap(([property, e]): ValueProblem[] => {
+    const value = node[property];
+    const strings = enumStrings(value);
+
+    if (!strings || strings.every((s) => isMember(e, memberName(s)))) {
+      return [];
+    }
+
+    const choices = e.values.join(", ");
+    const pick = `"${e.url ? "https://schema.org/" : ""}${slot(`one of ${choices}`)}"`;
+
+    // Members stay as written; a value with a plain match takes it, any other a slot.
+    const code = strings.map((s) => {
+      if (isMember(e, memberName(s))) {
+        return json(s);
+      }
+
+      const member = memberFor(e, s);
+
+      return member ? memberCode(e, member) : pick;
+    });
+
+    const bad = strings.filter((s) => !isMember(e, memberName(s)));
+
+    return [
+      {
+        text: `${property} ${show(bad.length === 1 ? bad[0] : bad)} is not one of the values Google reads (${e.values.slice(0, 3).join(", ")}${e.values.length > 3 ? ", ..." : ""}${e.caseSensitive ? ", in capitals as shown" : ""})`,
+        fixes: [
+          {
+            property,
+            current: value,
+            value: Array.isArray(value)
+              ? `[${code.join(", ")}]`
+              : (code[0] ?? pick),
+            write: code.some((c) => c.includes("{{"))
+              ? `The value from Google's list that says what the page says: ${choices}.`
+              : undefined,
+          },
+        ],
+      },
+    ];
+  });
+
 /** A breadcrumb trail's crumbs, each with its index in itemListElement as written. */
 const crumbsOf = (node: JsonObject): { e: JsonObject; at: string }[] => {
   const raw = node["itemListElement"];
@@ -489,7 +752,7 @@ const breadcrumbProblems = (
 };
 
 /** The edit that sets one property: in place when the script quotes it as written, else added to its object. */
-const valueEdit = (
+export const valueEdit = (
   fix: ValueFix,
   item: StructuredDataItem,
   type: string,
@@ -530,6 +793,14 @@ const valueEdit = (
 const docsFor = (types: string[]): string => {
   if (types.includes("BreadcrumbList")) {
     return `${SD}breadcrumb`;
+  }
+
+  if (types.includes("Event")) {
+    return `${SD}event`;
+  }
+
+  if (types.includes("JobPosting")) {
+    return `${SD}job-posting`;
   }
 
   return types.some((t) => t.endsWith("Rating"))
@@ -596,18 +867,43 @@ export const structuredDataValueRules = [
       category: "structured-data",
       severity: "info",
       description:
-        "The page has structured data for a rich result Google no longer shows: FAQPage, HowTo, SpecialAnnouncement, ClaimReview, or the sitelinks search box's SearchAction.",
+        "The page has structured data for a rich result Google no longer shows: FAQPage, HowTo, SpecialAnnouncement, ClaimReview, the sitelinks search box's SearchAction, Estimated Salary (Occupation), Learning Video (LearningResource on a VideoObject) or Book Actions (ReadAction, BorrowAction on a Book).",
       recommendation:
         "Do not spend effort on this markup for Google: it no longer earns a rich result, and its missing properties are not reported. Keep it if something else reads it (answer engines read FAQPage, for instance), or remove it if it only served the rich result.",
       docs: "https://developers.google.com/search/updates",
     },
     ({ page }, make) => {
       const found = new Map<string, number>();
+      const reasons = new Map(RETIRED_RICH_RESULTS);
+      const actions = new Set<JsonObject>();
+
+      const tally = (type: string) =>
+        found.set(type, (found.get(type) ?? 0) + 1);
 
       eachObject(page.structuredData, (node) => {
-        for (const type of typesOf(node["@type"])) {
+        const types = typesOf(node["@type"]);
+
+        for (const type of types) {
           if (RETIRED_RICH_RESULTS.has(type)) {
-            found.set(type, (found.get(type) ?? 0) + 1);
+            tally(type);
+          }
+        }
+
+        if (
+          types.includes("LearningResource") &&
+          types.includes("VideoObject")
+        ) {
+          reasons.set("LearningResource", LEARNING_VIDEO);
+          tally("LearningResource");
+        }
+
+        if (types.includes("Book")) {
+          for (const [action, type] of bookActionsBelow(node)) {
+            if (!actions.has(action)) {
+              actions.add(action);
+              reasons.set(type, BOOK_ACTION);
+              tally(type);
+            }
           }
         }
       });
@@ -615,7 +911,7 @@ export const structuredDataValueRules = [
       // Nothing on the page needs to change: answer engines and other tools still read this
       // markup (FAQPage feeds AI answers), so the finding informs and has no edit.
       return [...found].map(([type, count]) =>
-        make(`${type} markup: ${RETIRED_RICH_RESULTS.get(type)}`, {
+        make(`${type} markup: ${reasons.get(type)}`, {
           fix: [],
           key: type,
           selector: 'script[type="application/ld+json"]',
@@ -630,9 +926,9 @@ export const structuredDataValueRules = [
       category: "structured-data",
       severity: "warning",
       description:
-        "A structured data value is in a form Google cannot use: a price with a currency symbol or a decimal comma, a currency that is not an ISO 4217 code, a rating outside its scale, or a breadcrumb trail with fewer than two items, odd positions or crumbs without a URL.",
+        "A structured data value is in a form Google cannot use: a price with a currency symbol or a decimal comma, a currency that is not an ISO 4217 code, a rating outside its scale, a breadcrumb trail with fewer than two items, odd positions or crumbs without a URL, or an availability, itemCondition, eventStatus, eventAttendanceMode or employmentType that is not one of the values Google lists.",
       recommendation:
-        'Write prices as plain numbers with a dot ("19.99") and the currency in priceCurrency ("EUR"); set bestRating when ratings are not out of 5; number breadcrumb positions 1, 2, 3 and give every crumb but the last an item URL.',
+        'Write prices as plain numbers with a dot ("19.99") and the currency in priceCurrency ("EUR"); set bestRating when ratings are not out of 5; number breadcrumb positions 1, 2, 3 and give every crumb but the last an item URL; write availability, itemCondition, eventStatus and eventAttendanceMode as schema.org values ("https://schema.org/InStock"), and employmentType as FULL_TIME, PART_TIME, CONTRACTOR, ... in capitals.',
       docs: GOOGLE_DOCS.structuredData,
     },
     ({ page, source }, make) => {
@@ -644,6 +940,7 @@ export const structuredDataValueRules = [
 
         const problems = [
           ...priceProblems(node),
+          ...enumerationProblems(node),
           ...ratingProblems(node, types),
           ...breadcrumbProblems(
             node,

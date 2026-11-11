@@ -6,6 +6,7 @@
 import { DEFAULT_USER_AGENT } from "./fetch.js";
 import { quote } from "./html/dom.js";
 import { robotsUserAgentToken, ruleLineMatcher } from "./robots.js";
+import { isLocalHost } from "./rules/canonical.js";
 import {
   addEdit,
   escapeAttribute,
@@ -18,7 +19,8 @@ import {
 } from "./rules/fix.js";
 import { isoDate } from "./rules/structured-data-fixes.js";
 import type { PageRecord } from "./site-rules.js";
-import type { SitemapLayout } from "./sitemap.js";
+import { isAbsoluteHttpUrl, MAX_LOC_LENGTH } from "./sitemap.js";
+import type { InvalidLoc, LastmodGap, SitemapLayout } from "./sitemap.js";
 import type { FixEdit, ImageInfo, LinkInfo } from "./types.js";
 import { resolveUrl } from "./url.js";
 
@@ -174,6 +176,49 @@ const USER_AGENT_LINE = /^\s*user-agent\s*:/iu;
  * robots-parser, so line numbers match the ones it reports.
  */
 export const linesOf = (text: string): string[] => text.split(/\r\n|\r|\n/u);
+
+/** The most lines of robots.txt a rule reads: Google's 500 KiB of short lines. */
+const MAX_ROBOTS_LINES = 50_000;
+
+/** One `field: value` line of robots.txt. */
+export interface RobotsField {
+  /** Its line number, from 0. */
+  index: number;
+  /** The line as written, trimmed, with its comment. */
+  raw: string;
+  /** The line without its comment, trimmed. */
+  line: string;
+  /** The field, lower-cased: "disallow". */
+  field: string;
+  /** The field as written: "Disallow". */
+  name: string;
+  /** What follows the colon, trimmed. */
+  value: string;
+}
+
+/** The `field: value` lines of robots.txt, comments left out, as the robots.txt rules read them. */
+export const robotsFields = (text: string): RobotsField[] =>
+  linesOf(text)
+    .slice(0, MAX_ROBOTS_LINES)
+    .flatMap((written, index): RobotsField[] => {
+      const line = written.replace(/#.*$/u, "").trim();
+      const name = /^(?<field>[a-z-]+)\s*:/iu.exec(line)?.groups?.field;
+
+      return name
+        ? [
+            {
+              index,
+              raw: written.trim(),
+              line,
+              field: name.toLowerCase(),
+              name,
+              value: line.slice(line.indexOf(":") + 1).trim(),
+            },
+          ]
+        : [];
+    });
+
+const bareHost = (host: string): string => host.replace(/^www\./iu, "");
 
 /**
  * The first `User-agent:` line of the group that holds line `index` (0-based): the line an agent
@@ -385,6 +430,218 @@ export const robotsUnsupportedFix = (
             "Only if it was meant for Google, which ignores it. Bing and Yandex read crawl-delay: keep it if their crawl rate matters.",
         })
       );
+    }
+  }
+
+  return edits.slice(0, MAX_EDITS);
+};
+
+/**
+ * Why crawlers cannot use a robots.txt line: an Allow or Disallow path that starts with neither /
+ * nor * (RFC 9309: matching starts at the path's first character, which is "/"), a full URL in its
+ * place, a rule above the first User-agent line, which belongs to no group, or a Sitemap that is
+ * not a full URL.
+ */
+export type RobotsLineProblem = "path" | "url" | "outside-group" | "sitemap";
+
+export interface InvalidRobotsLine extends RobotsField {
+  problem: RobotsLineProblem;
+}
+
+const isFullUrl = (value: string): boolean => /^https?:\/\//iu.test(value);
+
+/** A rule path crawlers can match: one that starts with / or *. */
+const isRulePath = (value: string): boolean =>
+  value.startsWith("/") || value.startsWith("*");
+
+const lineProblem = (
+  f: RobotsField,
+  inGroup: boolean
+): RobotsLineProblem | null => {
+  if (f.field === "sitemap") {
+    return f.value && !isAbsoluteHttpUrl(f.value) ? "sitemap" : null;
+  }
+
+  // An empty Disallow allows everything, wherever it is.
+  if ((f.field !== "allow" && f.field !== "disallow") || !f.value) {
+    return null;
+  }
+
+  if (!inGroup) {
+    return "outside-group";
+  }
+
+  if (isFullUrl(f.value)) {
+    return "url";
+  }
+
+  return isRulePath(f.value) ? null : "path";
+};
+
+/** The lines of robots.txt crawlers cannot use, in file order. */
+export const invalidRobotsLines = (text: string): InvalidRobotsLine[] => {
+  const out: InvalidRobotsLine[] = [];
+  let inGroup = false;
+
+  for (const f of robotsFields(text)) {
+    if (f.field === "user-agent") {
+      inGroup = true;
+      continue;
+    }
+
+    const problem = lineProblem(f, inGroup);
+
+    if (problem) {
+      out.push({ ...f, problem });
+    }
+  }
+
+  return out;
+};
+
+/** A slot for the production origin, where the audit ran on a local host. */
+const ORIGIN_SLOT = slot("the site's origin, such as https://www.example.com");
+
+const ORIGIN_SLOT_WRITE =
+  "The site's production origin (protocol and host, such as https://www.example.com) before the path.";
+
+/** A Disallow that keeps every crawler out of the whole site once it is in a group. */
+const blocksEverything = (f: RobotsField): boolean =>
+  f.field === "disallow" && ["/", "/*", "*", "/$"].includes(f.value);
+
+/** An Allow or Disallow rewritten with a path crawlers match, or a removal when it names another host. */
+const rulePathEdit = (
+  f: RobotsField,
+  robotsUrl: string,
+  at: string | undefined
+): FixEdit => {
+  const site = parse(robotsUrl);
+
+  if (isFullUrl(f.value)) {
+    const target = parse(f.value);
+    const path = target ? `${target.pathname}${target.search}` : null;
+
+    if (
+      target &&
+      path &&
+      site &&
+      bareHost(target.hostname) === bareHost(site.hostname)
+    ) {
+      return replaceEdit("robots.txt", quote(f.line), `${f.name}: ${path}`, {
+        url: robotsUrl,
+        at,
+        write:
+          "A rule names a path on the host that serves the robots.txt, not a full URL.",
+      });
+    }
+
+    return removeEdit("robots.txt", quote(f.raw), {
+      url: robotsUrl,
+      at,
+      write: `It matches nothing: a rule names a path on the host that serves the robots.txt. To keep crawlers off ${quote(f.value).slice(0, 200)}, write ${f.name}: ${path ?? "its path"} in the robots.txt of ${target?.origin ?? "that host"}.`,
+    });
+  }
+
+  // "?sort=" and ".pdf" were meant to match anywhere in a URL; "wp-admin/" from the root.
+  const path =
+    f.value.startsWith("?") || f.value.startsWith(".")
+      ? `/*${f.value}`
+      : `/${f.value}`;
+
+  return replaceEdit("robots.txt", quote(f.line), `${f.name}: ${path}`, {
+    url: robotsUrl,
+    at,
+    write:
+      "A path starts with / (or *); without it the rule matches no URL, since every URL's path starts with /.",
+  });
+};
+
+/** A Sitemap line with the full URL of the sitemap it names. */
+const sitemapLineEdit = (f: RobotsField, robotsUrl: string): FixEdit => {
+  const base = parse(robotsUrl);
+  let target: URL | null = null;
+
+  try {
+    // "www.example.com/sitemap.xml" names a host; anything else is a path on robots.txt's host.
+    target = new URL(
+      /^www\./iu.test(f.value) && base
+        ? `${base.protocol}//${f.value}`
+        : f.value,
+      robotsUrl
+    );
+  } catch {
+    target = null;
+  }
+
+  if (!target || !/^https?:$/u.test(target.protocol)) {
+    return replaceEdit(
+      "robots.txt",
+      quote(f.line),
+      `${f.name}: ${slot("full URL of the sitemap")}`,
+      {
+        url: robotsUrl,
+        write:
+          "The sitemap's full URL, with protocol and host: https://www.example.com/sitemap.xml.",
+      }
+    );
+  }
+
+  return isLocalHost(target.href)
+    ? replaceEdit(
+        "robots.txt",
+        quote(f.line),
+        `${f.name}: ${ORIGIN_SLOT}${target.pathname}${target.search}`,
+        { url: robotsUrl, write: ORIGIN_SLOT_WRITE }
+      )
+    : replaceEdit("robots.txt", quote(f.line), `${f.name}: ${target.href}`, {
+        url: robotsUrl,
+        write: "Search engines read a Sitemap line only as a full URL.",
+      });
+};
+
+/**
+ * Rules above the first User-agent line in a group for every crawler, as they were meant to be;
+ * a Disallow there that would block the whole site is removed instead, since today it blocks
+ * nothing. Rule paths and Sitemap lines are rewritten so crawlers can use them.
+ */
+export const robotsInvalidFix = (
+  robotsUrl: string,
+  text: string,
+  invalid: InvalidRobotsLine[]
+): FixEdit[] => {
+  const lines = linesOf(text);
+  const edits: FixEdit[] = [];
+  const outside = invalid.filter((f) => f.problem === "outside-group");
+  const kept = outside.filter((f) => !blocksEverything(f));
+
+  if (kept.length > 0) {
+    edits.push(
+      addEdit("robots.txt", "start of file", "User-agent: *", {
+        url: robotsUrl,
+        write: `${quote(kept[0]?.line ?? "").slice(0, 200)} (line ${(kept[0]?.index ?? 0) + 1}) and every rule above the first User-agent line belong to no group, so crawlers ignore them. This line puts them in a group for every crawler: check each one, since from then on they apply.`,
+      })
+    );
+  }
+
+  for (const f of invalid.slice(0, MAX_EDITS * 2)) {
+    if (f.problem === "sitemap") {
+      edits.push(sitemapLineEdit(f, robotsUrl));
+    } else if (f.problem === "outside-group" && blocksEverything(f)) {
+      edits.push(
+        removeEdit("robots.txt", quote(f.raw), {
+          url: robotsUrl,
+          write:
+            "It sits above every User-agent line, so it blocks nothing today; in a group it would keep crawlers out of the whole site. Keep a rule like it only on a staging host, under User-agent: *.",
+        })
+      );
+    } else if (!isRulePath(f.value)) {
+      // A rule outside any group with a path crawlers cannot match needs both edits.
+      const at =
+        f.problem === "outside-group"
+          ? undefined
+          : (groupHeader(lines, f.index) ?? undefined);
+
+      edits.push(rulePathEdit(f, robotsUrl, at));
     }
   }
 
@@ -678,9 +935,6 @@ export const splitSitemapFix = (
   );
 };
 
-/** The longest URL the sitemap protocol allows. */
-const MAX_LOC_LENGTH = 2048;
-
 /** Lists a nested index's sitemaps in the index above it, in place of the nested index. */
 export const nestedIndexFix = (
   layout: SitemapLayout,
@@ -810,8 +1064,6 @@ export const lastmodFix = (
     ];
   });
 
-const bareHost = (host: string): string => host.replace(/^www\./iu, "");
-
 /**
  * URLs on another host: the www or bare-domain spelling of the site's own host is a slip, written
  * as the site's host; another host may list them when its own robots.txt names the sitemap.
@@ -856,6 +1108,110 @@ export const otherHostFix = (
 
   return edits;
 };
+
+/** A relative <loc> as the full URL it stands for, resolved against the sitemap. */
+const absoluteLoc = (loc: string, sitemap: string): URL | null => {
+  const base = parse(sitemap);
+
+  if (!base) {
+    return null;
+  }
+
+  try {
+    // "www.example.com/about/" names a host; anything else is a path on the sitemap's host.
+    const target = new URL(
+      /^www\./iu.test(loc) ? `${base.protocol}//${loc}` : loc,
+      base
+    );
+
+    return /^https?:$/u.test(target.protocol) ? target : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Rewrites a <loc> search engines drop: a relative one as its full URL, a long one as a slot. */
+export const invalidLocFix = (examples: InvalidLoc[]): FixEdit[] =>
+  examples.slice(0, MAX_EDITS).map((e) => {
+    const current = quote(locOf(e.loc));
+
+    if (e.reason === "too-long") {
+      return replaceEdit(
+        "sitemap",
+        current,
+        `<loc>${slot("a URL of this page under 2,048 characters")}</loc>`,
+        {
+          url: e.sitemap,
+          write: `This <loc> is ${e.length} characters, and the sitemap protocol allows fewer than 2,048. Give the page a shorter URL (a shorter slug, fewer query parameters), redirect the long one to it with a 301, and list the short one here.`,
+        }
+      );
+    }
+
+    const target = absoluteLoc(e.loc, e.sitemap);
+
+    if (!target) {
+      return replaceEdit(
+        "sitemap",
+        current,
+        `<loc>${slot("full URL of the page")}</loc>`,
+        {
+          url: e.sitemap,
+          write:
+            "The page's full URL, with protocol and host: https://www.example.com/about/. Search engines crawl sitemap URLs exactly as listed and drop any other.",
+        }
+      );
+    }
+
+    return isLocalHost(target.href)
+      ? replaceEdit(
+          "sitemap",
+          current,
+          `<loc>${ORIGIN_SLOT}${xmlText(`${target.pathname}${target.search}`)}</loc>`,
+          {
+            url: e.sitemap,
+            write: `${ORIGIN_SLOT_WRITE} Have the sitemap generator write every <loc> from the production site URL.`,
+          }
+        )
+      : replaceEdit("sitemap", current, locOf(target.href), {
+          url: e.sitemap,
+          write:
+            "Search engines crawl sitemap URLs exactly as listed and drop a relative one. Have the sitemap generator write every <loc> from the production site URL.",
+        });
+  });
+
+const LASTMOD_SLOT = slot("date the page last changed");
+
+/** Adds a <lastmod> after the first entries of each sitemap that has none. */
+export const missingLastmodFix = (gaps: LastmodGap[]): FixEdit[] =>
+  gaps
+    .flatMap((g) =>
+      g.locs.map((loc) =>
+        addEdit("sitemap", locOf(loc), `<lastmod>${LASTMOD_SLOT}</lastmod>`, {
+          url: g.sitemap,
+          write: `After this <loc>, in the same <url>: when ${loc.slice(0, 200)} last changed in substance (its main content, structured data or links), as 2026-11-09 or 2026-11-09T10:00:00+01:00. Take it from the content (the CMS's modified date, the file's last commit), never the time the sitemap is built, and have the generator write one for each of the sitemap's ${g.urls} URLs.`,
+        })
+      )
+    )
+    .slice(0, MAX_EDITS);
+
+/** Replaces the one lastmod every entry shares with each page's own date, for the first entries. */
+export const uniformLastmodFix = (gaps: LastmodGap[]): FixEdit[] =>
+  gaps
+    .flatMap((g) =>
+      g.locs.map((loc) =>
+        replaceEdit(
+          "sitemap",
+          `<lastmod>${xmlText(g.lastmod ?? "")}</lastmod>`,
+          `<lastmod>${LASTMOD_SLOT}</lastmod>`,
+          {
+            url: g.sitemap,
+            at: locOf(loc),
+            write: `When ${loc.slice(0, 200)} last changed in substance, as 2026-11-09 or 2026-11-09T10:00:00+01:00, from the content (the CMS's modified date, the file's last commit, its front matter), not ${g.lastmod ?? "the build time"}, which all ${g.urls} URLs share. Have the generator do the same for every entry.`,
+          }
+        )
+      )
+    )
+    .slice(0, MAX_EDITS);
 
 /* pages a site rule names */
 

@@ -93,6 +93,38 @@ const CASES: Case[] = [
     input: live(PAGE),
   },
   {
+    name: "structured data Google reads but cannot use",
+    html: doc(
+      `<script type="application/ld+json">{"@context":"https://schema.org","@type":"NewsArticle","headline":"Blue widgets","isAccessibleForFree":false,"hasPart":{"@type":"WebPageElement","isAccessibleForFree":false,"cssSelector":"#paywall"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Red widgets","isAccessibleForFree":"False","hasPart":{"@type":"WebPageElement","isAccessibleForFree":false,"cssSelector":".members-only"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","headline":"Green widgets","isAccessibleForFree":false}</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "LocalBusiness",
+  "@id": "https://www.example.com/#business",
+  "name": "Acme Widgets",
+  "address": "1 Main Street, Springfield",
+  "aggregateRating": { "@type": "AggregateRating", "ratingValue": 4.8, "reviewCount": 120 },
+  "review": [{ "@type": "Review", "author": { "@type": "Person", "name": "Ann" }, "reviewRating": { "@type": "Rating", "ratingValue": 5 } }]
+}
+</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Event","name":"Widget fair","startDate":"2026-05-01","location":{"@type":"Place","name":"Hall","address":"Main Street"},"eventStatus":"cancelled","eventAttendanceMode":"https://schema.org/OfflineEventAttendanceMode","offers":{"@type":"Offer","price":"10.00","priceCurrency":"EUR","availability":"sold out"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"JobPosting","title":"Widget maker","employmentType":"Full-time"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Occupation","name":"Widget maker"}</script>`,
+      `<h1>Blue widgets</h1><div class="paywall"><p>${words(320)}</p></div>`
+    ),
+    input: live(PAGE),
+  },
+  {
+    name: "a home page with structured data but no WebSite item",
+    html: doc(
+      '<meta property="og:site_name" content="Acme"><script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"Acme","url":"https://www.example.com/"}</script>',
+      `<h1>Blue widgets</h1><p>${words(320)}</p>`
+    ),
+    input: live(HOME),
+  },
+  {
     name: "no structured data",
     html: doc("", `<h1>Blue widgets</h1><p>${words(320)}</p>`),
     input: live(PAGE),
@@ -366,6 +398,18 @@ describe("fixes of the loading, response, social, structured data, URL, content 
           current: '"position":0',
           code: '"position": 1',
         }),
+        expect.objectContaining({
+          current: '"eventStatus":"cancelled"',
+          code: '"eventStatus": "https://schema.org/EventCancelled"',
+        }),
+        expect.objectContaining({
+          current: '"availability":"sold out"',
+          code: '"availability": "https://schema.org/SoldOut"',
+        }),
+        expect.objectContaining({
+          current: '"employmentType":"Full-time"',
+          code: '"employmentType": "FULL_TIME"',
+        }),
       ])
     );
     expect({
@@ -393,6 +437,66 @@ describe("fixes of the loading, response, social, structured data, URL, content 
 
     expect(retired?.rule).toBe("structured-data.retired-type");
     expect(retired).not.toHaveProperty("fix");
+    expect(fixOf(all, "structured-data.missing-required")?.[0]).toMatchObject({
+      action: "add",
+      code: expect.stringContaining('"name": "Blue widget X"'),
+    });
+  });
+
+  it("names the paywalled section, drops self-serving review markup and adds the site name", async () => {
+    const all = await auditAll();
+
+    const paywall = all
+      .flatMap((c) => c.findings)
+      .filter((f) => f.rule === "structured-data.paywall-invalid");
+
+    expect(paywall.map((f) => [f.severity, f.fix?.[0]])).toStrictEqual([
+      [
+        "warning",
+        {
+          in: "html",
+          action: "replace",
+          at: 'script[type="application/ld+json"] > WebPageElement at hasPart',
+          current: '"cssSelector":"#paywall"',
+          code: '"cssSelector": ".{{class of the paywalled section, e.g. paywall}}"',
+          write: expect.stringContaining("Google reads only a .class selector"),
+        },
+      ],
+      [
+        "warning",
+        expect.objectContaining({
+          action: "add",
+          at: 'script[type="application/ld+json"] > BlogPosting',
+          code: expect.stringContaining(
+            '"hasPart": { "@type": "WebPageElement"'
+          ),
+        }),
+      ],
+      [
+        "info",
+        expect.objectContaining({
+          action: "add",
+          at: "body",
+          code: '<div class="members-only">{{the paywalled part of the article, as it is now}}</div>',
+        }),
+      ],
+    ]);
+
+    expect(fixOf(all, "structured-data.self-serving-review")).toStrictEqual([
+      expect.objectContaining({
+        action: "remove",
+        current:
+          ',\n  "aggregateRating": { "@type": "AggregateRating", "ratingValue": 4.8, "reviewCount": 120 }',
+      }),
+      expect.objectContaining({
+        action: "remove",
+        current: expect.stringMatching(/^,\n {2}"review": \[/u),
+      }),
+    ]);
+
+    expect(fixOf(all, "structured-data.site-name-missing")?.[0]?.code).toBe(
+      '<script type="application/ld+json">\n{\n  "@context": "https://schema.org",\n  "@type": "WebSite",\n  "name": "Acme",\n  "url": "https://www.example.com/"\n}\n</script>'
+    );
     expect(fixOf(all, "structured-data.missing-required")?.[0]).toMatchObject({
       action: "add",
       code: expect.stringContaining('"name": "Blue widget X"'),

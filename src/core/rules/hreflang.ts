@@ -1,6 +1,6 @@
 import type { ExtractedPage, HreflangInfo } from "../types.js";
 import { normalizeUrl } from "../url.js";
-import { isLocalHost } from "./canonical.js";
+import { isLocalHost, pointCanonical, selfUrl } from "./canonical.js";
 import {
   addHtml,
   escapeAttribute,
@@ -27,6 +27,28 @@ const hyphenated = (lang: string): string | null => {
 
   return fixed !== lang && HREFLANG_CODE.test(fixed) ? fixed : null;
 };
+
+/** A URL to compare within an hreflang set: no trailing slash, and paths only on a local or file page. */
+const setKey = (url: string, pathOnly: boolean): string | null => {
+  const normalized = normalizeUrl(url);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const { origin, pathname, search } = new URL(normalized);
+
+  const path =
+    pathname.length > 1 && pathname.endsWith("/")
+      ? pathname.slice(0, -1)
+      : pathname;
+
+  return pathOnly ? `${path}${search}` : `${origin}${path}${search}`;
+};
+
+/** The language of a code without its script or region: "en" for "en-GB". */
+const languageOf = (code: string): string =>
+  code.toLowerCase().split(/[-_]/u)[0] ?? "";
 
 export const hreflangRules = [
   defineRule(
@@ -257,5 +279,79 @@ export const hreflangRules = [
             selector: 'link[rel="alternate"][hreflang]',
           })
         : null
+  ),
+  defineRule(
+    {
+      id: "hreflang.canonical-other-language",
+      category: "international",
+      severity: "warning",
+      description:
+        "The canonical points to an hreflang alternate in another language, so search engines treat this page as a copy of that one and leave it out of the index.",
+      recommendation:
+        "Give each language version a canonical that names its own URL, and let hreflang link the versions. Google asks for a canonical in the same language as the page.",
+      docs: GOOGLE_DOCS.canonical,
+    },
+    ({ page, source }, make) => {
+      if (!page.canonical || page.hreflang.length === 0) {
+        return null;
+      }
+
+      const pathOnly = source !== "url" || isLocal(page);
+      const canonical = setKey(page.canonical, pathOnly);
+      const self = setKey(page.url, pathOnly);
+
+      if (canonical === null || canonical === self) {
+        return null;
+      }
+
+      const named = (h: HreflangInfo, key: string | null) =>
+        h.url !== null &&
+        h.lang.toLowerCase() !== "x-default" &&
+        setKey(h.url, pathOnly) === key;
+
+      const target = page.hreflang.find((h) => named(h, canonical));
+
+      // The page's language by its own hreflang entry and by <html lang>. Both must differ from the
+      // canonical's: a page not translated yet often keeps the original's text and its <html lang>.
+      const own = [
+        page.hreflang.find((h) => named(h, self))?.lang,
+        page.lang,
+      ].filter(
+        (code): code is string =>
+          typeof code === "string" &&
+          code.toLowerCase() !== "x-default" &&
+          HREFLANG_CODE.test(code)
+      );
+
+      if (
+        !target ||
+        own.length === 0 ||
+        own.some((code) => languageOf(code) === languageOf(target.lang))
+      ) {
+        return null;
+      }
+
+      const [ownLang = ""] = own;
+
+      return make(
+        `This ${ownLang} page names its ${target.lang} version, ${page.canonical}, as canonical.`,
+        {
+          fix: [
+            pointCanonical(
+              page,
+              selfUrl(page),
+              `If this page still shows the ${target.lang} text because it has not been translated yet, keep the canonical and take the page out of the hreflang set until it is.`
+            ),
+          ],
+          selector: 'head > link[rel="canonical"]',
+          evidence: {
+            page: page.url,
+            language: ownLang,
+            canonical: page.canonical,
+            canonicalLanguage: target.lang,
+          },
+        }
+      );
+    }
   ),
 ];
