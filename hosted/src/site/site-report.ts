@@ -1,15 +1,20 @@
 /**
  * The report of a site audit as HTML (issue #45): the SEO and AEO audits of a crawl from a site's
- * homepage, each with its score, its findings across the site and its findings on the pages
- * grouped by rule, then the homepage's own findings with their edits, and every page with its
- * scores. Also the lines the form's answer shows while the crawl runs. Everything quoted from the
- * site is escaped.
+ * homepage, in sections as a page's report is. The overview has the crawl, the site's AEO facts
+ * and an index of the findings; each audit's section has its findings across the site and its
+ * findings on the pages by rule, grouped by category; then the homepage's own findings with their
+ * edits, every page with its scores, and the AI crawlers. Also the lines the form's answer shows
+ * while the crawl runs. Everything quoted from the site is escaped.
  */
 import type { SiteAudits } from "../../../src/core/aeo/audit.js";
 import type { ProgressEvent } from "../../../src/core/audit.js";
 import { HOSTED_LIMITS } from "../../../src/core/hosted.js";
-import { band, plural } from "../../../src/core/report/labels.js";
-import { AEO_PAGE_RULES } from "../../../src/core/rules/index.js";
+import {
+  band,
+  CATEGORY_LABEL,
+  plural,
+} from "../../../src/core/report/labels.js";
+import { sortFindings } from "../../../src/core/rules/index.js";
 import type {
   AeoAudit,
   Finding,
@@ -20,21 +25,27 @@ import { icon } from "../ui/icons.js";
 import type { FailureKind } from "./home.js";
 import { esc } from "./html.js";
 import {
+  AEO_PAGE_RULE_IDS,
   aeoFacts,
+  byCategory,
+  categoryGroups,
+  chip,
   code,
-  crawlersHtml,
+  crawlersSection,
   facts,
-  findingsHtml,
+  findingGroup,
+  findingsIndex,
+  overviewPart,
+  partsHtml,
   reportData,
   reportFrame,
   scoreCard,
+  sectionsHtml,
   seoFacts,
   severityChip,
   statusTone,
 } from "./report.js";
-
-/** The AEO rules that look at one page, as against those that look at the site's files. */
-const AEO_PAGE_RULE_IDS = new Set(AEO_PAGE_RULES.map((rule) => rule.meta.id));
+import type { FindingGroup, FindingPart, ReportSection } from "./report.js";
 
 /**
  * A crawled page as a link to the form with its address in the field: one more run gives that
@@ -57,80 +68,136 @@ const issueHtml = (issue: IssueRollup): string => {
 </details>`;
 };
 
-const issuesHtml = (issues: IssueRollup[]): string =>
-  issues.length === 0
-    ? `<p class="empty">${icon("check")}No findings on the pages.</p>`
-    : `<div class="findings">${issues.map(issueHtml).join("\n")}</div>`;
-
-const crawlSection = (seo: SiteAudit): string => {
-  const { crawl, robotsTxt, sitemaps } = seo;
-
-  return `<div class="report-section" id="crawl">
-<div class="report-section-head"><h3>The crawl</h3><span class="chip">${plural(crawl.pagesCrawled, "page")}</span></div>
-${facts("tiles", [
-  ["Pages audited", `${crawl.pagesCrawled} of ${crawl.pagesDiscovered} found`],
-  [
-    "Page limit",
-    crawl.hitPageLimit
-      ? `Reached at ${crawl.maxPages}`
-      : `Not reached (${crawl.maxPages})`,
-  ],
-  ["Links deep", `Up to ${crawl.maxDepth}`],
-  ["Links checked", String(crawl.linksChecked)],
-  [
-    "robots.txt",
-    robotsTxt?.found ? "found" : "missing",
-    robotsTxt?.found ? "good" : null,
-  ],
-  [
-    "Sitemap URLs",
-    sitemaps.sources.length > 0
-      ? sitemaps.urlCount.toLocaleString("en")
-      : "No sitemap",
-    sitemaps.sources.length > 0 ? "good" : null,
-  ],
-  ["Took", `${Math.max(1, Math.round(crawl.durationMs / 1000))} s`],
-])}
-</div>`;
-};
-
-/** One audit's findings across the site, with their fixes, and its findings on the pages by rule. */
-const siteSection = (
-  anchor: string,
-  title: string,
-  factsHtml: string,
-  siteFindings: Finding[],
+/** Findings on the pages by rule as one group, or no group when there are none. */
+const issueGroup = (
+  id: string,
+  label: string,
   issues: IssueRollup[]
-): string => `<div class="report-section" id="${anchor}">
-<div class="report-section-head"><h3>${title}</h3><span class="chip">${plural(siteFindings.length, "site finding")}</span><span class="chip">${plural(issues.length, "rule")} on the pages</span></div>
-${factsHtml}
-<h4 class="report-sub">Across the site</h4>
-${findingsHtml(siteFindings, "No findings across the site.")}
-<h4 class="report-sub">On the pages, by rule</h4>
-${issuesHtml(issues)}
-</div>`;
+): FindingGroup[] =>
+  issues.length === 0
+    ? []
+    : [
+        {
+          id,
+          label,
+          severities: issues.map((issue) => issue.severity),
+          html: `<div class="findings">${issues.map(issueHtml).join("\n")}</div>`,
+        },
+      ];
+
+/** Findings on the pages by rule, grouped by category at the anchors `<prefix>-<category>`. */
+const issueGroups = (prefix: string, issues: IssueRollup[]): FindingGroup[] =>
+  byCategory(issues).flatMap(([category, group]) =>
+    issueGroup(`${prefix}-${category}`, CATEGORY_LABEL[category], group)
+  );
 
 /**
- * The homepage's own findings with their edits, as its page report has them. Its AEO findings
- * about robots.txt and llms.txt are the site's, which the AEO section shows already.
+ * One audit's findings across the site, with their fixes, then its findings on the pages: by
+ * category, or with `categories` false in one group, as the AEO rules all share one category.
  */
-const homeSection = (start: SiteAudits["start"]): string => {
+const siteParts = (
+  prefix: string,
+  siteFindings: Finding[],
+  issues: IssueRollup[],
+  categories = true
+): FindingPart[] => {
+  const across = findingGroup(
+    `${prefix}-site`,
+    "Across the site",
+    siteFindings
+  );
+
+  return categories
+    ? [
+        { groups: across },
+        {
+          title: "On the pages, by rule",
+          groups: issueGroups(`${prefix}-pages`, issues),
+        },
+      ]
+    : [
+        {
+          groups: [
+            ...across,
+            ...issueGroup(`${prefix}-pages`, "On the pages, by rule", issues),
+          ],
+        },
+      ];
+};
+
+const crawlFacts = (seo: SiteAudit): string => {
+  const { crawl, robotsTxt, sitemaps } = seo;
+
+  return facts("tiles", [
+    [
+      "Pages audited",
+      `${crawl.pagesCrawled} of ${crawl.pagesDiscovered} found`,
+    ],
+    [
+      "Page limit",
+      crawl.hitPageLimit
+        ? `Reached at ${crawl.maxPages}`
+        : `Not reached (${crawl.maxPages})`,
+    ],
+    ["Links deep", `Up to ${crawl.maxDepth}`],
+    ["Links checked", String(crawl.linksChecked)],
+    [
+      "robots.txt",
+      robotsTxt?.found ? "found" : "missing",
+      robotsTxt?.found ? "good" : null,
+    ],
+    [
+      "Sitemap URLs",
+      sitemaps.sources.length > 0
+        ? sitemaps.urlCount.toLocaleString("en")
+        : "No sitemap",
+      sitemaps.sources.length > 0 ? "good" : null,
+    ],
+    ["Took", `${Math.max(1, Math.round(crawl.durationMs / 1000))} s`],
+  ]);
+};
+
+/** What one audit's section lists: its findings across the site and its rules on the pages. */
+const listed = (
+  siteFindings: Finding[],
+  issues: IssueRollup[]
+): Pick<ReportSection, "count" | "errors" | "chips"> => ({
+  count: siteFindings.length + issues.length,
+  errors: [...siteFindings, ...issues].some(
+    (item) => item.severity === "error"
+  ),
+  chips: `${chip(plural(siteFindings.length, "site finding"))}${chip(`${plural(issues.length, "rule")} on the pages`)}`,
+});
+
+/**
+ * The homepage's own findings with their edits, as its page report has them, by category. Its AEO
+ * findings about robots.txt and llms.txt are the site's, which the AEO section shows already.
+ */
+const homeSection = (start: SiteAudits["start"]): ReportSection[] => {
   if (!start) {
-    return "";
+    return [];
   }
 
-  const seo = start.seo.findings;
-  const aeo = start.aeo.findings.filter((f) => AEO_PAGE_RULE_IDS.has(f.rule));
+  // Each audit's findings come sorted, the two together do not: sorted again, the group with the
+  // worst finding comes first whichever audit it is from.
+  const findings = sortFindings([
+    ...start.seo.findings,
+    ...start.aeo.findings.filter((f) => AEO_PAGE_RULE_IDS.has(f.rule)),
+  ]);
 
-  return `<div class="report-section" id="home">
-<div class="report-section-head"><h3>The homepage</h3><span class="chip">${plural(seo.length + aeo.length, "finding")}</span></div>
-<p class="report-lede">Every finding on ${code(start.seo.url)}, with its fix. Open a page in the list below to audit it.</p>
+  return [
+    {
+      id: "home",
+      tab: "The homepage",
+      count: findings.length,
+      errors: findings.some((finding) => finding.severity === "error"),
+      title: "The homepage",
+      chips: chip(plural(findings.length, "finding")),
+      body: `<p class="report-lede">Every finding on ${code(start.seo.url)}, with its fix. Open a page in the list of pages to audit it.</p>
 ${seoFacts(start.seo)}
-<h4 class="report-sub">SEO</h4>
-${findingsHtml(seo, "No SEO findings on the homepage.")}
-<h4 class="report-sub">AEO</h4>
-${findingsHtml(aeo, "No AEO findings on the homepage.")}
-</div>`;
+${partsHtml([{ groups: categoryGroups("home", findings) }], "No findings on the homepage.")}`,
+    },
+  ];
 };
 
 const scoreNumber = (score: number | undefined): string =>
@@ -138,7 +205,7 @@ const scoreNumber = (score: number | undefined): string =>
     ? ""
     : `<span class="score-num band-${band(score)}">${score}</span>`;
 
-const pagesSection = (seo: SiteAudit, aeo: AeoAudit): string => {
+const pagesSection = (seo: SiteAudit, aeo: AeoAudit): ReportSection => {
   const aeoScores = new Map((aeo.pages ?? []).map((p) => [p.url, p.score]));
 
   const rows = seo.pages.map((page) => {
@@ -151,12 +218,16 @@ const pagesSection = (seo: SiteAudit, aeo: AeoAudit): string => {
     return `<tr><th scope="row">${pageLink(page.url)}</th><td>${answer}</td><td>${page.depth ?? ""}</td><td>${scoreNumber(page.score)}</td><td>${scoreNumber(aeoScores.get(page.url))}</td></tr>`;
   });
 
-  return `<div class="report-section" id="pages">
-<div class="report-section-head"><h3>The pages</h3><span class="chip">${plural(seo.pages.length, "page")}</span></div>
-<div class="table-wrap"><table class="pages-table"><thead><tr><th scope="col">Page</th><th scope="col">HTTP</th><th scope="col">Depth</th><th scope="col">SEO</th><th scope="col">AEO</th></tr></thead><tbody>
+  return {
+    id: "pages",
+    tab: "Pages",
+    count: seo.pages.length,
+    title: "The pages",
+    chips: chip(plural(seo.pages.length, "page")),
+    body: `<div class="table-wrap"><table class="pages-table"><thead><tr><th scope="col">Page</th><th scope="col">HTTP</th><th scope="col">Depth</th><th scope="col">SEO</th><th scope="col">AEO</th></tr></thead><tbody>
 ${rows.join("\n")}
-</tbody></table></div>
-</div>`;
+</tbody></table></div>`,
+  };
 };
 
 /**
@@ -166,6 +237,45 @@ ${rows.join("\n")}
 export const renderSiteReport = (audits: SiteAudits, share = ""): string => {
   const { seo, aeo, start } = audits;
   const { origin, hostname } = new URL(aeo.url);
+  const aeoIssues = aeo.issues ?? [];
+  const seoParts = siteParts("seo", seo.siteFindings, seo.issues);
+  const aeoParts = siteParts("aeo", aeo.findings, aeoIssues, false);
+
+  const sections: ReportSection[] = [
+    {
+      id: "overview",
+      tab: "Overview",
+      title: "Overview",
+      body: [
+        findingsIndex(seoParts, aeoParts),
+        overviewPart("The crawl", crawlFacts(seo), "crawl"),
+        overviewPart("For AI answer engines", aeoFacts(aeo, "site")),
+      ].join("\n"),
+    },
+    {
+      id: "seo",
+      tab: "SEO",
+      ...listed(seo.siteFindings, seo.issues),
+      title: "SEO findings",
+      body: partsHtml(
+        seoParts,
+        "No SEO findings across the site or on its pages."
+      ),
+    },
+    {
+      id: "aeo",
+      tab: "AEO",
+      ...listed(aeo.findings, aeoIssues),
+      title: "AEO findings",
+      body: partsHtml(
+        aeoParts,
+        "No AEO findings across the site or on its pages."
+      ),
+    },
+    ...homeSection(start),
+    pagesSection(seo, aeo),
+    ...crawlersSection(aeo, "the homepage"),
+  ];
 
   return reportFrame({
     title: "Site audit report",
@@ -173,13 +283,8 @@ export const renderSiteReport = (audits: SiteAudits, share = ""): string => {
     share,
     data: reportData(seo, aeo, hostname),
     body: `<div class="scores">${scoreCard("seo", "SEO: search engines", seo.score, seo.counts)}${scoreCard("aeo", "AEO: AI answer engines", aeo.score, aeo.counts)}</div>
-${crawlSection(seo)}
-${siteSection("seo", "SEO findings", "", seo.siteFindings, seo.issues)}
-${siteSection("aeo", "AEO findings", aeoFacts(aeo, "site"), aeo.findings, aeo.issues ?? [])}
-${homeSection(start)}
-${pagesSection(seo, aeo)}
-${crawlersHtml(aeo, "the homepage")}
-<div class="report-note">${icon("info")}<p>Findings are grouped by rule, with up to 10 pages each; open a page for its own fixes. The crawl stops at ${HOSTED_LIMITS.maxPages} pages, ${HOSTED_LIMITS.maxDepth} links deep. For a larger site, run <code>npx @rivi-software/agentic-seo-check crawl ${esc(origin)}</code>.</p></div>`,
+${sectionsHtml(sections)}
+<div class="report-note">${icon("info")}<p>Findings on the pages are grouped by rule, with up to 10 pages each; open a page for its own fixes. The crawl stops at ${HOSTED_LIMITS.maxPages} pages, ${HOSTED_LIMITS.maxDepth} links deep. For a larger site, run <code>npx @rivi-software/agentic-seo-check crawl ${esc(origin)}</code>.</p></div>`,
   });
 };
 

@@ -47,7 +47,8 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
  * The pages' script, served at /site.js on both hostnames so that the Content-Security-Policy
  * needs no inline script. It gives every command and snippet marked data-copy a button that copies
  * it, waits for Turnstile's token before the audit form is sent, shows that an audit or a crawl is
- * running, gives the report as a JSON file or as Markdown on the clipboard, adds the system's
+ * running, shows the report one section at a time behind its tabs, gives the report as a JSON
+ * file or as Markdown on the clipboard, adds the system's
  * share sheet to the report's Share menu, and filters the rules page. On the production hostnames
  * it also loads PostHog from /ph.js for the usage analytics (issue #57), with the cookie banner,
  * and sends the closed list of events below: never an address the visitor audited, nothing they
@@ -289,6 +290,110 @@ export const SITE_JS = `(() => {
     for (const group of groups) {
       seen.observe(group);
     }
+  }
+
+  // The report's sections as tabs: the strip above them shows one at a time. A hidden section
+  // stays findable: the browser's find in page opens its tab, where it can (hidden=until-found).
+  // Without the script every section is there, one under the other, and the strip links to each.
+  const tabStrip = document.querySelector(".report-tabs");
+
+  if (tabStrip) {
+    const tabs = [...tabStrip.querySelectorAll("a")];
+    const panels = tabs.map((tab) => document.getElementById(tab.hash.slice(1)));
+    const holder = panels[0].parentElement;
+
+    const show = (index) => {
+      tabs.forEach((tab, i) => {
+        tab.setAttribute("aria-selected", String(i === index));
+        tab.tabIndex = i === index ? 0 : -1;
+        panels[i].hidden = i === index ? false : "until-found";
+      });
+
+      // On a phone the tabs scroll sideways: keep the open one on screen.
+      const tab = tabs[index];
+
+      if (
+        tab.offsetLeft < tabStrip.scrollLeft ||
+        tab.offsetLeft + tab.offsetWidth > tabStrip.scrollLeft + tabStrip.clientWidth
+      ) {
+        tabStrip.scrollTo({ left: tab.offsetLeft - 16 });
+      }
+    };
+
+    tabs.forEach((tab, i) => {
+      tab.id = "tab-" + panels[i].id;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", panels[i].id);
+      panels[i].setAttribute("role", "tabpanel");
+      panels[i].setAttribute("aria-labelledby", tab.id);
+      panels[i].addEventListener("beforematch", () => {
+        show(i);
+      });
+    });
+
+    tabStrip.setAttribute("role", "tablist");
+    tabStrip.closest(".report").classList.add("has-tabs");
+    show(0);
+
+    // Opens the tab \`index\`. When the strip is stuck to the top of the window, the section that was
+    // open is scrolled out of view above it, and the new one is shown from its start.
+    const open = (index) => {
+      show(index);
+
+      if (holder.getBoundingClientRect().top < tabStrip.getBoundingClientRect().bottom) {
+        holder.scrollIntoView({ behavior: "instant" });
+      }
+    };
+
+    // A link to a section, or to a part of one (a score, the overview's index), opens its tab.
+    document.addEventListener("click", (event) => {
+      const link = event.target.closest && event.target.closest('a[href^="#"]');
+      const target =
+        link && document.getElementById(decodeURIComponent(link.hash.slice(1)));
+      const index = target ? panels.findIndex((panel) => panel.contains(target)) : -1;
+
+      if (index === -1) {
+        return;
+      }
+
+      event.preventDefault();
+
+      // A tab opens its section where it is; a link to a part of one scrolls to it.
+      if (link.parentElement === tabStrip) {
+        open(index);
+      } else {
+        show(index);
+        target.scrollIntoView();
+      }
+    });
+
+    // The arrow keys, Home and End move between the tabs; Space opens one, as Enter does.
+    tabStrip.addEventListener("keydown", (event) => {
+      const index = tabs.indexOf(document.activeElement);
+
+      if (index === -1) {
+        return;
+      }
+
+      if (event.key === " ") {
+        event.preventDefault();
+        tabs[index].click();
+        return;
+      }
+
+      const next = {
+        ArrowRight: (index + 1) % tabs.length,
+        ArrowLeft: (index - 1 + tabs.length) % tabs.length,
+        Home: 0,
+        End: tabs.length - 1,
+      }[event.key];
+
+      if (next !== undefined) {
+        event.preventDefault();
+        open(next);
+        tabs[next].focus();
+      }
+    });
   }
 
   // The report's Share menu: the system's share sheet where the browser has one, and the menu
