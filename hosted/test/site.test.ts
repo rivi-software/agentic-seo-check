@@ -211,6 +211,30 @@ const tabsOf = (report: string): string[] => {
 const missingPanels = (report: string, ids: string[]): string[] =>
   ids.filter((id) => !report.includes(`class="report-panel" id="${id}"`));
 
+/** The overview's "Fix first" card, up to the end of its list. */
+const fixFirstCard = (report: string): string => {
+  const card = report.slice(report.indexOf('id="fix-first"'));
+
+  return card.slice(0, card.indexOf("</ol>"));
+};
+
+/** The rows of the "Fix first" card: the severity of each, and the anchor it links to. */
+const fixFirstLinks = (report: string) =>
+  [
+    ...fixFirstCard(report).matchAll(
+      /class="fix-row sev-(?<severity>[a-z]+)" href="#(?<id>[a-z0-9-]+)"/gu
+    ),
+  ].map((match) => match.groups ?? {});
+
+/** The "Fix first" rows that name no finding of the report under their own severity. */
+const deadFixLinks = (report: string) =>
+  fixFirstLinks(report).filter(
+    (link) =>
+      !report.includes(
+        `<details class="finding sev-${link.severity}" id="${link.id}"`
+      )
+  );
+
 describe("the report of a page audit", () => {
   it("shows both audits' scores and findings with their fixes", async () => {
     const url = "https://shop.example.com/";
@@ -250,7 +274,45 @@ describe("the report of a page audit", () => {
     expect(
       titles.slice(0, titles.indexOf('class="finding-group"', 1))
     ).toContain("<code>title.generic</code>");
-    expect(report).toContain('<a href="#seo-title">');
+    // The overview's index has a tile for the category, which links to its card.
+    expect(report).toMatch(
+      /<a class="index-tile is-[a-z]+" href="#seo-title">/u
+    );
+  });
+
+  it("lists the errors and warnings to fix first, each a link to its finding, and names each score's band", async () => {
+    const url = "https://shop.example.com/";
+
+    const html = readFileSync(
+      new URL("../../test/fixtures/bad-page.html", import.meta.url),
+      "utf-8"
+    );
+
+    const report = renderReport(
+      await auditHtml(html, { url, source: "url", target: url }),
+      await auditAeoHtml(html, { url })
+    );
+
+    const links = fixFirstLinks(report);
+
+    expect(links).toHaveLength(5);
+    expect(links[0]?.severity).toBe("error");
+    expect(links.map((link) => link.severity)).not.toContain("info");
+    // Every link names a finding the report has, under the same severity.
+    expect(deadFixLinks(report)).toStrictEqual([]);
+    expect(report).toContain('<span class="verdict">Poor</span>');
+  });
+
+  it("says so when a page has nothing to fix first", async () => {
+    const url = "https://shop.example.com/";
+
+    const report = renderReport(
+      { ...(await auditHtml("<html></html>", { url })), findings: [] },
+      { ...(await auditAeoHtml("<html></html>", { url })), findings: [] }
+    );
+
+    expect(report).toContain("No errors and no warnings");
+    expect(report).not.toContain('class="fix-row');
   });
 
   it("never lets the audited page's text become markup", async () => {
@@ -334,6 +396,23 @@ describe("the report of a site audit", () => {
     expect(seo).toContain('<div class="finding-group" id="seo-pages-');
     // The AEO rules share one category, so its findings on the pages are one group.
     expect(report).not.toContain('id="aeo-pages-aeo"');
+  });
+
+  it("lists what to fix first across the site and on its pages, each a link to its finding", () => {
+    const links = fixFirstLinks(report);
+    const ids = links.map((link) => link.id ?? "");
+
+    expect(links.map((link) => link.severity)).not.toContain("info");
+    // A finding across the site, and a rule on the pages with how many pages have it.
+    expect(
+      [/^seo-site-/u, /^(?:seo|aeo)-pages-/u].filter(
+        (group) => !ids.some((id) => group.test(id))
+      )
+    ).toStrictEqual([]);
+    expect(fixFirstCard(report)).toMatch(
+      /<span class="chip">\d+ pages?<\/span>/u
+    );
+    expect(deadFixLinks(report)).toStrictEqual([]);
   });
 
   it("links each page to the form with its address, and runs nothing", () => {
