@@ -123,7 +123,7 @@ try {
       "--input-type=module",
       "--eval",
       `const m = await import("@rivi-software/agentic-seo-check");
-       for (const name of ["auditUrl", "auditSite", "auditDirectory", "auditHtml", "renderMarkdown", "auditAeoTarget", "renderAeoMarkdown"])
+       for (const name of ["auditUrl", "auditSite", "auditDirectory", "auditHtml", "renderMarkdown", "auditAeoTarget", "renderAeoMarkdown", "renderText", "renderAeoText"])
          if (typeof m[name] !== "function") throw new Error(name + " is not exported");
        console.log(Object.keys(m).length);`,
     ],

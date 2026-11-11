@@ -8,6 +8,15 @@ import { compactAeoAudit } from "../../../src/core/aeo/audit.js";
 import { compactAudit } from "../../../src/core/audit.js";
 import { HOSTED_LIMITS } from "../../../src/core/hosted.js";
 import {
+  ACTION_LABEL,
+  band,
+  countLabel,
+  plural,
+  PURPOSE_LABEL,
+  SEVERITIES,
+  TARGET_LABEL,
+} from "../../../src/core/report/labels.js";
+import {
   renderAeoMarkdown,
   renderMarkdown,
 } from "../../../src/core/report/markdown.js";
@@ -31,56 +40,14 @@ const SEVERITY_LABEL: Record<Severity, string> = {
   info: "Info",
 };
 
-const SEVERITIES: Severity[] = ["error", "warning", "info"];
-
-const ACTION_LABEL: Record<FixEdit["action"], string> = {
-  add: "Add",
-  replace: "Replace",
-  remove: "Remove",
-};
-
-const TARGET_LABEL: Record<FixEdit["in"], string> = {
-  html: "the page's HTML",
-  http: "the HTTP response",
-  "robots.txt": "robots.txt",
-  sitemap: "the sitemap",
-  "llms.txt": "llms.txt",
-  asset: "a file the site serves",
-};
-
-/** What each kind of AI crawler fetches pages for, as the report groups them. */
-export const PURPOSE_LABEL: Record<AiBotAccess["purpose"], string> = {
-  search: "Search index",
-  answer: "AI answers",
-  training: "Model training",
-};
-
 /** The most characters of a finding's evidence the report prints. */
 const MAX_EVIDENCE_CHARS = 4000;
-
-export const plural = (count: number, noun: string): string =>
-  `${count} ${noun}${count === 1 ? "" : "s"}`;
-
-const COUNT_NOUN: Record<Severity, (count: number) => string> = {
-  error: (count) => plural(count, "error"),
-  warning: (count) => plural(count, "warning"),
-  info: (count) => `${count} info`,
-};
 
 export const code = (text: string): string => `<code>${esc(text)}</code>`;
 
 /** The severity as a coloured label, as the report and the rules page show it. */
 export const severityChip = (severity: Severity): string =>
   `<span class="sev">${icon(severity)}${SEVERITY_LABEL[severity]}</span>`;
-
-/** Lighthouse's bands: 90 and up is good, under 50 is poor. */
-export const band = (score: number): string => {
-  if (score >= 90) {
-    return "good";
-  }
-
-  return score >= 50 ? "fair" : "poor";
-};
 
 /** A score out of 100 as a ring that fills to it, coloured by its band. */
 export const scoreRing = (score: number, size = ""): string =>
@@ -102,7 +69,7 @@ const countsHtml = (counts: SeverityCounts): string => {
 
   return `<span class="counts">${SEVERITIES.map(
     (severity) =>
-      `<span class="is-${severity}">${COUNT_NOUN[severity](counts[severity])}</span>`
+      `<span class="is-${severity}">${countLabel(severity, counts[severity])}</span>`
   ).join("")}</span><span class="sev-bar" aria-hidden="true">${
     total === 0 ? '<i class="is-clear" style="--n:1"></i>' : parts.join("")
   }</span>`;

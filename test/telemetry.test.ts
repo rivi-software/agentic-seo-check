@@ -293,6 +293,7 @@ describe("telemetry", () => {
       const site = await auditSite(`${server.origin}/`, { maxPages: 10 });
       const run = startCliRun("crawl", ["--max-pages", "--format"]);
       run.target = await targetKind(`${server.origin}/`);
+      run.format = "text";
       run.report = runReport(site);
 
       const event = cliEvent(run, 1);
@@ -305,6 +306,7 @@ describe("telemetry", () => {
           command: "crawl",
           flags: ["--max-pages", "--format"],
           target: "localhost",
+          format: "text",
           exit_code: 1,
           pages: site.pages.length,
           errors: site.counts.error,

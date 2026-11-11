@@ -3,6 +3,7 @@
  * `seo_list_rules` list them, for a person, a search engine or an agent to read.
  */
 import { MAKER, PRODUCT_NAME } from "../../../src/brand.js";
+import { CATEGORY_LABEL } from "../../../src/core/report/labels.js";
 import { ALL_RULES } from "../../../src/core/rules/index.js";
 import type {
   Category,
@@ -10,7 +11,6 @@ import type {
   RuleMeta,
 } from "../../../src/core/types.js";
 import { icon } from "../ui/icons.js";
-import { CATEGORY_LABEL } from "./home.js";
 import { esc, safeHref } from "./html.js";
 import { layout, publisher, SITE_ORIGIN } from "./layout.js";
 import { severityChip } from "./report.js";

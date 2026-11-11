@@ -6,8 +6,12 @@
 import { MAKER, PRODUCT_NAME, REPOSITORY_URL } from "../../../src/brand.js";
 import { AI_BOTS } from "../../../src/core/aeo/bots.js";
 import { HOSTED_LIMITS, LOCAL_SERVER } from "../../../src/core/hosted.js";
+import {
+  CATEGORY_LABEL,
+  PURPOSE_LABEL,
+} from "../../../src/core/report/labels.js";
 import { AEO_RULES, SEO_RULES } from "../../../src/core/rules/index.js";
-import type { Category, Severity } from "../../../src/core/types.js";
+import type { Severity } from "../../../src/core/types.js";
 import { ORIGIN as MCP_ORIGIN, rateLimit } from "../limits.js";
 import {
   CLAUDE_DIRECTORY_URL,
@@ -24,7 +28,7 @@ import {
   publisher,
   SITE_ORIGIN,
 } from "./layout.js";
-import { PURPOSE_LABEL, scoreRing, severityChip } from "./report.js";
+import { scoreRing, severityChip } from "./report.js";
 
 /**
  * What kind of refusal the form answered with, as the page's `audit_failed` event names it (issue
@@ -38,29 +42,6 @@ export type FailureKind =
   | "paused"
   | "refused"
   | "fetch";
-
-/** The name of each rule category, as the homepage and the rules page head it. */
-export const CATEGORY_LABEL: Record<Category, string> = {
-  title: "Titles",
-  meta: "Meta descriptions",
-  headings: "Headings",
-  canonical: "Canonical URLs",
-  indexing: "Indexing and robots",
-  document: "The document",
-  social: "Open Graph and Twitter cards",
-  images: "Images",
-  links: "Links",
-  international: "hreflang and languages",
-  "structured-data": "Structured data",
-  content: "Content",
-  keyword: "Keywords",
-  response: "The HTTP response",
-  rendering: "JavaScript rendering",
-  performance: "Performance",
-  site: "Site-wide checks",
-  aeo: "AI answer engines",
-  tool: "The audit itself",
-};
 
 export interface HomeState {
   /** The audit form is on: Turnstile is set up and the server is not paused. */
