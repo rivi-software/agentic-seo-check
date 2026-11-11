@@ -26,6 +26,24 @@ const KEPT_HEADERS = [
   "content-security-policy",
 ];
 
+/**
+ * What kept a request back, from a fixed list, for the hosted server's analytics (issue #84):
+ * the hosted address rules, robots.txt (disallowed, unreadable, or a Crawl-delay past the crawl's
+ * budget), the site's answer (403, 429, a challenge page), or the Worker's limits (requests per
+ * site, and the sites a caller may audit in a day).
+ */
+export type RefusalReason =
+  | "address"
+  | "robots_txt"
+  | "robots_unreadable"
+  | "crawl_delay"
+  | "http_403"
+  | "http_429"
+  | "challenge"
+  | "site_requests"
+  | "caller_sites"
+  | "platform_sites";
+
 /** Why a request was not sent, or why its answer is not the page: see `RequestGate`. */
 export interface Refusal {
   /** What happened and what the person who asked for the audit can do, in a sentence or two. */
@@ -35,6 +53,8 @@ export interface Refusal {
    * later request.
    */
   scope: "url" | "host" | "all";
+  /** Why, from a fixed list: the message says it to a person, this to the analytics. */
+  reason?: RefusalReason;
 }
 
 /**
@@ -43,6 +63,7 @@ export interface Refusal {
  */
 export class RequestRefusedError extends ExpectedError {
   readonly scope: Refusal["scope"];
+  readonly reason: RefusalReason | undefined;
   /** The request that was refused: the URL asked for, or a redirect it led to. */
   readonly url: string;
 
@@ -50,6 +71,7 @@ export class RequestRefusedError extends ExpectedError {
     super(refusal.message);
     this.name = "RequestRefusedError";
     this.scope = refusal.scope;
+    this.reason = refusal.reason;
     this.url = url;
   }
 

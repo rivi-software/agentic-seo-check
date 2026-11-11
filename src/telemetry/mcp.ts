@@ -4,9 +4,11 @@
  * (https://posthog.com/docs/mcp-analytics/installation/other-languages). This module watches a
  * server's transport; the local server (telemetry/local.ts) and the hosted server
  * (hosted/src/analytics.ts) say where the events go. It reads the name of the tool and whether the
- * answer is an error, never the arguments or the answer itself, so nothing a caller sent and
- * nothing a page said reaches an event. A failed call's message stays out too: the messages name
- * the audited URL.
+ * answer is an error, never the arguments' values or the answer itself, so nothing a caller sent
+ * and nothing a page said reaches an event. A failed call's message stays out too: the messages
+ * name the audited URL. The hosted server's tools add what they found and why a call stopped, in
+ * counts and fixed lists (`noteCall`), and its events name the arguments a call gave and carry the
+ * agent's `context`, cleaned (issue #84).
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -20,6 +22,7 @@ import {
   isJSONRPCResultResponse,
 } from "@modelcontextprotocol/sdk/types.js";
 import type {
+  CallToolRequest,
   CallToolResult,
   IsomorphicHeaders,
   JSONRPCMessage,
@@ -30,7 +33,9 @@ import { z } from "zod";
 
 import { MCP_SERVER_NAME } from "../brand.js";
 import type { CaughtErrorContext } from "../core/errors.js";
+import { ALL_RULES } from "../core/rules/index.js";
 import { VERSION } from "../version.js";
+import { cleanMessage } from "./exceptions.js";
 import { BASE_PROPERTIES, short } from "./posthog.js";
 import type { PostHogEvent, PropertyValue } from "./posthog.js";
 
@@ -55,6 +60,12 @@ export type McpErrorType =
   | "rate_limited"
   | "internal";
 
+/**
+ * What a tool adds to its call's event (`noteCall`): counts, and values from fixed lists, such as
+ * a score, the rule ids that fired or why the call stopped. Never a URL or anything from a page.
+ */
+export type CallProperties = Record<string, PropertyValue | undefined>;
+
 export interface McpToolCall extends McpCaller {
   tool: string;
   startedAt: Date;
@@ -66,6 +77,12 @@ export interface McpToolCall extends McpCaller {
    * `$mcp_tool_call` never carries it.
    */
   error?: unknown;
+  /** The names of the arguments the call gave, from the tool's schema, sorted; never their values. */
+  arguments?: string[];
+  /** The agent's `context` argument, cleaned: what it says the call is for (`$mcp_intent`). */
+  intent?: string;
+  /** What the tool noted of its call. */
+  properties?: CallProperties;
   /** Errors the core caught within the call (`noteCaughtInCall`), sent with its event (issue #85). */
   caught?: CaughtInCall[];
 }
@@ -84,11 +101,15 @@ export interface McpAnalytics {
   initialize: (caller: McpCaller) => void;
 }
 
-/** The call a tool is answering, what the tool said of its own failure, and what the core caught. */
+/**
+ * The call a tool is answering, what the tool said of it and of its own failure, and what the core
+ * caught.
+ */
 interface Slot {
   tool: string;
   errorType?: McpErrorType;
   error?: unknown;
+  properties: CallProperties;
   caught: CaughtInCall[];
 }
 
@@ -117,6 +138,18 @@ export const withErrorType = <T extends CallToolResult>(
   }
 
   return result;
+};
+
+/**
+ * Adds `properties` to the event of the call a tool is answering; a later note of the same name
+ * wins. Outside a call the transport watches, it notes nothing.
+ */
+export const noteCall = (properties: CallProperties): void => {
+  const slot = slots.getStore();
+
+  if (slot) {
+    Object.assign(slot.properties, properties);
+  }
 };
 
 /** The tool whose call is running here, if any: for an error the core caught within it. */
@@ -170,12 +203,90 @@ export const clientToken = (value: string | undefined): string | undefined =>
 /** A revision of the protocol, such as `2025-11-25`: the only form a client's own value keeps. */
 const ProtocolVersion = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u);
 
+/**
+ * The tools a server's analytics count, by name. A map also names each tool's arguments: a call's
+ * event then lists those it gave, and its `context`, if the tool has one, is the call's intent.
+ */
+export type CountedTools =
+  | ReadonlySet<string>
+  | ReadonlyMap<string, ReadonlySet<string>>;
+
+/** The ids of the tool's own rules: an agent names the ones it fixed, and they say nothing of the user. */
+const RULE_IDS: ReadonlySet<string> = new Set(ALL_RULES.map((rule) => rule.id));
+
+/** A word shaped as a rule id, such as `meta-description.missing`, which reads as a hostname too. */
+const RULE_ID_WORD =
+  /(?<![\w.-])[a-z][\da-z-]{0,40}(?:\.[\da-z-]{1,60}){1,3}(?![\w-])/gu;
+
+/**
+ * The marks a kept rule id waits behind while the rest is cleaned: characters of the Unicode
+ * private use area, which no pattern of `cleanMessage` takes, and which are taken out of the text
+ * first, so it cannot write a mark of its own.
+ */
+const MARK_CHARS = /[\uE000\uE001]/gu;
+const MARK = /\uE000(?<index>\d+)\uE001/gu;
+
+/** As long as an intent may be: as an error's message. */
+const MAX_INTENT = 300;
+
+/**
+ * The agent's `context`, as the event carries it: cleaned as an error message is, so a URL, a
+ * path, quoted text, an email, an IP address or a hostname in it never leaves, and cut short. The
+ * ids of the tool's own rules stay, though they read as hostnames.
+ */
+export const intentOf = (context: string): string | undefined => {
+  const kept: string[] = [];
+
+  const marked = context
+    .replaceAll(MARK_CHARS, "")
+    .trim()
+    .replaceAll(RULE_ID_WORD, (word) =>
+      RULE_IDS.has(word) ? `\uE000${kept.push(word) - 1}\uE001` : word
+    );
+
+  const intent = cleanMessage(marked)
+    .replaceAll(MARK, (_, index: string) => kept[Number(index)] ?? "")
+    // A mark the cut split in two.
+    .replaceAll(/[\uE000\uE001]\d*/gu, "");
+
+  if (intent === "") {
+    return undefined;
+  }
+
+  return intent.length > MAX_INTENT
+    ? `${intent.slice(0, MAX_INTENT - 1)}…`
+    : intent;
+};
+
+/** A call's `context`: only text is read, whatever else a caller sends in its place. */
+const ContextArgument = z.string();
+
+/** What a call's request gave: the names of its arguments the tool has, and its intent. */
+const givenOf = (
+  names: ReadonlySet<string> | undefined,
+  given: CallToolRequest["params"]["arguments"]
+): Pick<McpToolCall, "arguments" | "intent"> => {
+  if (!names) {
+    return {};
+  }
+
+  return {
+    arguments: Object.keys(given ?? {})
+      .filter((name) => names.has(name))
+      .toSorted(),
+    intent: names.has("context")
+      ? ContextArgument.transform(intentOf).safeParse(given?.context).data
+      : undefined,
+  };
+};
+
 /** A tool call the server has received and not answered yet. */
 interface Pending {
   tool: string;
   startedAt: Date;
   started: number;
   caller: McpCaller;
+  given: Pick<McpToolCall, "arguments" | "intent">;
   slot: Slot;
 }
 
@@ -188,7 +299,7 @@ interface Pending {
 export const instrumentTransport = (
   transport: Transport,
   analytics: McpAnalytics,
-  tools: ReadonlySet<string>
+  tools: CountedTools
 ): void => {
   const receive = transport.onmessage;
 
@@ -253,11 +364,13 @@ export const instrumentTransport = (
       ).data ??
       ProtocolVersion.safeParse(header(headers, "mcp-protocol-version")).data;
 
-    const slot: Slot = { tool: call.data.params.name, caught: [] };
+    const { name, arguments: given } = call.data.params;
+    const slot: Slot = { tool: name, properties: {}, caught: [] };
 
     pending.set(message.id, {
-      tool: call.data.params.name,
+      tool: name,
       slot,
+      given: givenOf("get" in tools ? tools.get(name) : undefined, given),
       startedAt: new Date(),
       started: performance.now(),
       caller: {
@@ -301,6 +414,8 @@ export const instrumentTransport = (
       isError,
       errorType: isError ? errorType : undefined,
       error: isError ? call.slot.error : undefined,
+      ...call.given,
+      properties: call.slot.properties,
       caught: call.slot.caught.length > 0 ? call.slot.caught : undefined,
       ...call.caller,
     });
@@ -375,6 +490,11 @@ export const toolCallEvent = (
     $mcp_is_error: call.isError,
     $mcp_duration_ms: call.durationMs,
     $mcp_error_type: call.errorType,
+    $mcp_intent: call.intent,
+    $mcp_intent_source:
+      call.intent === undefined ? undefined : "context_parameter",
+    arguments: call.arguments,
+    ...call.properties,
     ...context.properties,
   },
 });

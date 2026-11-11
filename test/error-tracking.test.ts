@@ -227,6 +227,29 @@ describe("error tracking", () => {
       ]);
     });
 
+    it("takes out hostnames and emails in any script, and IPv6 addresses (issue #84)", () => {
+      expect(
+        [
+          "audit café.fr before launch",
+          "re-check bäckerei-müller.de and www.żółw.pl",
+          // Combining marks: Devanagari, Thai, and Latin in NFD.
+          "see उदाहरण.भारत, ตัวอย่าง.ไทย and cafe\u0301.fr",
+          "write to jürgen@bäckerei-müller.de and ju\u0308rgen@example.de",
+          "connect ECONNREFUSED 2001:db8::1:443",
+          "from 2001:0db8:85a3:0000:0000:8a2e:0370:7334 and fe80::1",
+        ].map((message) => cleanMessage(message))
+      ).toStrictEqual([
+        "audit <host> before launch",
+        "re-check <host> and <host>",
+        "see <host>, <host> and <host>",
+        "write to <email> and <email>",
+        "connect ECONNREFUSED <ip>",
+        "from <ip> and <ip>",
+      ]);
+      // A time of day is no address.
+      expect(cleanMessage("at 12:30:45 UTC")).toBe("at 12:30:45 UTC");
+    });
+
     it("keeps what is code, such as a property's name", () => {
       expect(
         cleanMessage("Cannot read properties of undefined (reading 'href')")

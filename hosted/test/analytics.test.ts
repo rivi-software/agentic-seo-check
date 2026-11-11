@@ -220,3 +220,76 @@ describe("the hosted server's sessions", () => {
     });
   });
 });
+
+describe("the hosted server's tool calls (issue #84)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends what a call found, the arguments it gave and the agent's intent", async () => {
+    const { events, ctx, settled } = capture();
+
+    const tracking = hostedAnalytics(
+      { POSTHOG_HOST: POSTHOG },
+      ctx,
+      callerOf("203.0.113.5", [])
+    );
+
+    tracking?.observe({
+      tool: "seo_crawl_site",
+      outcome: "ok",
+      requests: 31,
+      pages: 25,
+    });
+    tracking?.analytics.toolCall({
+      tool: "seo_crawl_site",
+      startedAt: new Date(),
+      durationMs: 4200,
+      isError: false,
+      arguments: ["context", "url"],
+      intent: "first audit before a redesign",
+      properties: {
+        target: "url",
+        score: 81,
+        errors: 1,
+        warnings: 4,
+        infos: 7,
+        rules: ["meta-description.missing", "site.broken-link"],
+        format: "json",
+        detail: "compact",
+        page_detail: "summary",
+        recheck: false,
+      },
+    });
+    tracking?.analytics.toolCall({
+      tool: "seo_list_rules",
+      startedAt: new Date(),
+      durationMs: 1,
+      isError: false,
+      arguments: [],
+      properties: {},
+    });
+    await settled();
+
+    const [crawl, rules] = events;
+
+    expect(crawl?.properties).toMatchObject({
+      $mcp_tool_name: "seo_crawl_site",
+      $mcp_intent: "first audit before a redesign",
+      $mcp_intent_source: "context_parameter",
+      arguments: ["context", "url"],
+      target: "url",
+      score: 81,
+      errors: 1,
+      rules: ["meta-description.missing", "site.broken-link"],
+      page_detail: "summary",
+      recheck: false,
+      outcome: "ok",
+      requests: 31,
+      pages: 25,
+      platform: "none",
+    });
+    expect(rules?.properties).not.toHaveProperty("$mcp_intent");
+    expect(rules?.properties).not.toHaveProperty("$mcp_intent_source");
+  });
+});

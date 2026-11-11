@@ -6,6 +6,7 @@
  */
 import type { RequestGate } from "../../src/core/fetch.js";
 import { LOCAL_SERVER } from "../../src/core/hosted.js";
+import { CallLimitError } from "../../src/mcp-hosted.js";
 import type {
   HostedCallEnd,
   HostedCallInfo,
@@ -72,6 +73,10 @@ const tryAgain = (period: string): string =>
   `Try again in ${period === "minute" ? "a minute" : period}.`;
 
 const NO_LIMITS = `Or use the local server, which has no limits: ${LOCAL_SERVER}`;
+
+/** Whose limit a caller is under: its own, or its platform's, which all its users share. */
+const scopeOf = (caller: Caller): "caller" | "platform" =>
+  caller.platform ? "platform" : "caller";
 
 /** Who a caller is, in a refusal. */
 const PLATFORMS: Record<NonNullable<Caller["platform"]>, string> = {
@@ -217,12 +222,16 @@ const admit = async (
   call: HostedCallInfo
 ): Promise<void> => {
   if (env.MODE === "closed") {
-    throw new Error(`The hosted server is paused. ${NO_LIMITS}`);
+    throw new CallLimitError(
+      `The hosted server is paused. ${NO_LIMITS}`,
+      "paused"
+    );
   }
 
   if (call.crawl && env.MODE === "no-crawls") {
-    throw new Error(
-      `The hosted server does not crawl sites at the moment; audits of single pages still work. ${NO_LIMITS}`
+    throw new CallLimitError(
+      `The hosted server does not crawl sites at the moment; audits of single pages still work. ${NO_LIMITS}`,
+      "no_crawls"
     );
   }
 
@@ -233,8 +242,10 @@ const admit = async (
   const calls = caller.platform ? env.PLATFORM_CALLS : env.CALLER_CALLS;
   const callAllowed = await calls.limit({ key: caller.key });
 
+  const scope = scopeOf(caller);
+
   if (!callAllowed.success) {
-    throw new Error(callsRefusal(caller, false));
+    throw new CallLimitError(callsRefusal(caller, false), `${scope}_calls`);
   }
 
   if (call.crawl) {
@@ -242,17 +253,23 @@ const admit = async (
     const crawlAllowed = await crawls.limit({ key: caller.key });
 
     if (!crawlAllowed.success) {
-      throw new Error(callsRefusal(caller, true));
+      throw new CallLimitError(callsRefusal(caller, true), `${scope}_crawls`);
     }
   }
 
   if (call.fetches && (await requestsToday(env)) >= env.DAILY_REQUESTS) {
-    throw new Error(dailyRefusal(env.DAILY_REQUESTS));
+    throw new CallLimitError(
+      dailyRefusal(env.DAILY_REQUESTS),
+      "daily_requests"
+    );
   }
 
   // Last, so that a call another limit refuses uses up no site.
   if (call.fetches && call.host && !(await admitSite(env, caller, call.host))) {
-    throw new Error(sitesRefusal(caller, sitesLimit(env, caller)));
+    throw new CallLimitError(
+      sitesRefusal(caller, sitesLimit(env, caller)),
+      `${scope}_sites`
+    );
   }
 };
 
@@ -367,6 +384,7 @@ const siteGate = (
     if (reaches && !(await reaches.site(url.hostname))) {
       return {
         scope: "host",
+        reason: `${scopeOf(reaches.caller)}_sites`,
         message: `The page led to ${url.hostname}, another site than the one audited. ${sitesRefusal(reaches.caller, sitesLimit(env, reaches.caller))}`,
       };
     }
@@ -374,7 +392,11 @@ const siteGate = (
     const allowed = await env.SITE_REQUESTS.limit({ key: url.hostname });
 
     if (!allowed.success) {
-      return { scope: "host", message: siteRefusal(url.hostname) };
+      return {
+        scope: "host",
+        reason: "site_requests",
+        message: siteRefusal(url.hostname),
+      };
     }
 
     sent.requests += 1;

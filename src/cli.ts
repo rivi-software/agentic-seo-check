@@ -28,13 +28,13 @@ import {
   noteCliError,
   prepareTelemetry,
   reportCrashes,
-  runReport,
   sendCliRun,
   startCliRun,
   targetKind,
   telemetryCommand,
 } from "./telemetry/local.js";
 import type { CliRun } from "./telemetry/local.js";
+import { runReport } from "./telemetry/report.js";
 import {
   endQuietlyOnClosedPipe,
   formatFor,

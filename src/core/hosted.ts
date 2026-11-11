@@ -64,6 +64,8 @@ export const HOSTED_LIMITS = {
   maxBaselineIds: 5000,
   maxBaselineIdChars: 300,
   maxKeywordChars: 200,
+  /** `context`, the sentence an agent may write on what a call is for (issue #84). */
+  maxContextChars: 1000,
   /**
    * How long robots.txt's Crawl-delay may add to one crawl, the delays of its requests to every
    * site added up: past it, the crawl stops requesting the site it would wait for, rather than keep
@@ -125,6 +127,7 @@ export const siteRefusal = (
   if (response.headers.get("cf-mitigated")?.toLowerCase() === "challenge") {
     return {
       scope: "host",
+      reason: "challenge",
       message: `${url.hostname} answered the hosted server with a challenge page (cf-mitigated: challenge), so the hosted server did not audit it.`,
     };
   }
@@ -132,6 +135,7 @@ export const siteRefusal = (
   if (response.status === 429) {
     return {
       scope: "host",
+      reason: "http_429",
       message: `${url.hostname} answered the hosted server with HTTP 429 (Too Many Requests), so the hosted server sent it no more requests.`,
     };
   }
@@ -139,6 +143,7 @@ export const siteRefusal = (
   if (response.status === 403) {
     return {
       scope: "url",
+      reason: "http_403",
       message: `${url.href} answered the hosted server with HTTP 403 (Forbidden), so the hosted server did not audit it.`,
     };
   }
@@ -172,9 +177,17 @@ const challengeRefusal = (
     ? undefined
     : {
         scope: "host",
+        reason: "challenge",
         message: `${url.hostname} answered the hosted server with a challenge page ("${title}", HTTP ${result.status}), so the hosted server did not audit it.`,
       };
 };
+
+/** A refusal of the hosted address rules (`hostedUrlProblem`), for the URL alone. */
+const addressRefusal = (problem: string): Refusal => ({
+  scope: "url",
+  reason: "address",
+  message: problem,
+});
 
 /**
  * The URL rules and the site refusals, then the Worker's own gate (its request limits), which only
@@ -184,9 +197,7 @@ const siteGate = (limits?: RequestGate): RequestGate => ({
   beforeRequest: (url) => {
     const problem = hostedUrlProblem(url);
 
-    return problem
-      ? { scope: "url", message: problem }
-      : limits?.beforeRequest(url);
+    return problem ? addressRefusal(problem) : limits?.beforeRequest(url);
   },
   afterResponse: (url, response) =>
     siteRefusal(url, response) ?? limits?.afterResponse?.(url, response),
@@ -226,6 +237,7 @@ const disallowed = (
 
     return {
       scope: "host",
+      reason: "robots_unreadable",
       message: `${robots.info.url} ${answer}, and a crawler that cannot read robots.txt takes it to disallow everything (RFC 9309), so the hosted server did not request ${url.href}.`,
     };
   }
@@ -239,6 +251,7 @@ const disallowed = (
 
   return {
     scope: "url",
+    reason: "robots_txt",
     message: `${robots.info.url} keeps ${token} from ${url.href}${rule ? ` (line ${line}: "${rule}")` : ""}, so the hosted server did not request it.`,
   };
 };
@@ -311,6 +324,7 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
     if (delayedMs + delayMs > HOSTED_LIMITS.crawlDelayBudgetMs) {
       return {
         scope: "host",
+        reason: "crawl_delay",
         message: `${robots.info.url} asks ${token} to wait ${robots.crawlDelay} s between requests (Crawl-delay), and a crawl on the hosted server waits at most ${HOSTED_LIMITS.crawlDelayBudgetMs / 1000} s in all for Crawl-delay, so it sent ${url.hostname} no more requests.`,
       };
     }
@@ -348,7 +362,7 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
       // the page's own answer decides. A refusal of the host or of everything holds for the page.
       return error.scope === "url"
         ? undefined
-        : { scope: error.scope, message: error.message };
+        : { scope: error.scope, message: error.message, reason: error.reason };
     }
 
     return disallowed(url, robots, token) ?? pace(url, robots);
@@ -360,7 +374,7 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
       const problem = hostedUrlProblem(url);
 
       if (problem) {
-        return { scope: "url", message: problem };
+        return addressRefusal(problem);
       }
 
       const refusal =
