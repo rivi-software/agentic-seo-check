@@ -19,6 +19,7 @@
   <a href="https://www.npmjs.com/package/@rivi-software/agentic-seo-check"><img src="https://img.shields.io/npm/v/@rivi-software/agentic-seo-check?color=0b6b3a" alt="npm version"></a>
   <a href="https://www.npmjs.com/package/@rivi-software/agentic-seo-check"><img src="https://img.shields.io/npm/dm/@rivi-software/agentic-seo-check?color=0b6b3a" alt="Monthly npm downloads"></a>
   <a href="https://github.com/rivi-software/agentic-seo-check/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b6b3a" alt="MIT License"></a>
+  <a href="https://claude.ai/directory/agentic-seo-check"><img src="https://img.shields.io/badge/Claude_Directory-listed-0b6b3a" alt="Listed in the Claude Directory"></a>
 </p>
 
 <p align="center">
@@ -42,7 +43,7 @@
 Agentic SEO Check is one core with two interfaces:
 
 - **CLI** `agentic-seo-check` with JSON (default when piped) or Markdown output and CI-friendly exit codes.
-- **MCP server** exposing six tools for Claude Code, Cursor, Codex and any other MCP client. A [hosted server](#hosted-server) serves four of them at `https://mcp.agentic-seo.rivi.software/mcp`, free and without an install, for claude.ai, ChatGPT and any client that connects over HTTP.
+- **MCP server** exposing six tools for Claude Code, Cursor, Codex and any other MCP client. A [hosted server](#hosted-server) serves four of them at `https://mcp.agentic-seo.rivi.software/mcp`, free and without an install, for claude.ai, ChatGPT and any client that connects over HTTP. It is listed in the [Claude Directory](https://claude.ai/directory/agentic-seo-check).
 
 It audits **URLs** (production, staging, `localhost` dev servers), **static build output** (`dist/`, `out/`, `build/`) and **raw HTML**, and returns findings an agent can act on: a stable rule id, severity, what is wrong, the fix, a CSS selector for where it lives, and evidence with the current values. Each finding carries the exact edits that fix it, quoting the code to replace, and an id, so an agent can re-check only the rules it fixed and see which findings are gone, still open or new.
 
@@ -173,7 +174,7 @@ The same server is behind the form on [agentic-seo.rivi.software](https://agenti
 | Client | Setup |
 | --- | --- |
 | Claude Code | `claude mcp add --transport http agentic-seo-check https://mcp.agentic-seo.rivi.software/mcp` |
-| claude.ai, Cowork, the Claude apps | Settings, Connectors: add a custom connector with the URL above, no sign-in |
+| claude.ai, Cowork, the Claude apps | Connect it from [its listing in the Claude Directory](https://claude.ai/directory/agentic-seo-check), or in Settings, Connectors, add a custom connector with the URL above; no sign-in either way |
 | ChatGPT | a custom app (connector) with the URL above and no authentication, which needs developer mode (Settings, Apps, Advanced settings) |
 | Cursor | `{ "mcpServers": { "agentic-seo-check": { "url": "https://mcp.agentic-seo.rivi.software/mcp" } } }` in `.cursor/mcp.json` |
 | VS Code | `{ "servers": { "agentic-seo-check": { "type": "http", "url": "https://mcp.agentic-seo.rivi.software/mcp" } } }` in `.vscode/mcp.json` |

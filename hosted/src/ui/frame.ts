@@ -26,6 +26,17 @@ export const NPM_URL =
 /** RIVI Software's account on X, which a card names and a post made from a report mentions. */
 export const X_ACCOUNT = "rivi_software";
 
+/** The hosted server's listing in the Claude Directory, where claude.ai adds it in one step. */
+export const CLAUDE_DIRECTORY_URL =
+  "https://claude.ai/directory/agentic-seo-check";
+
+/**
+ * A link to the listing drawn as a badge, like the README's. Words only: Anthropic's trademark
+ * guidelines allow Claude's logo only where Anthropic approved it beforehand.
+ */
+export const directoryBadge = (): string =>
+  `<a class="badge" href="${CLAUDE_DIRECTORY_URL}"><span class="badge-key">Claude Directory</span><span class="badge-value">${icon("check")}Listed</span></a>`;
+
 /** RIVI Software's page of the code it publishes, which lists this project. */
 const OPEN_SOURCE_URL = `${MAKER_URL}/open-source`;
 
@@ -71,6 +82,7 @@ const FOOTER: [heading: string, links: [href: string, label: string][]][] = [
       [`${SITE_ORIGIN}/`, "Audit a page"],
       [`${SITE_ORIGIN}/rules`, "The rules"],
       [`${MCP_ORIGIN}/`, "Hosted MCP server"],
+      [CLAUDE_DIRECTORY_URL, "In the Claude Directory"],
       [`${SITE_ORIGIN}/llms.txt`, "llms.txt"],
     ],
   ],

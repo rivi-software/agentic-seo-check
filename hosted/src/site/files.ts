@@ -5,6 +5,7 @@
 import { PRODUCT_NAME } from "../../../src/brand.js";
 import { HOSTED_LIMITS, LOCAL_SERVER } from "../../../src/core/hosted.js";
 import { ORIGIN as MCP_ORIGIN } from "../limits.js";
+import { CLAUDE_DIRECTORY_URL } from "../ui/frame.js";
 import { icon } from "../ui/icons.js";
 import { SITE_ORIGIN } from "./layout.js";
 
@@ -32,6 +33,7 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
 
 - [Audit a page or a site in the browser](${SITE_ORIGIN}/): one public page, or a site's homepage for a crawl of up to ${HOSTED_LIMITS.maxPages} pages, free
 - [The hosted MCP server](${MCP_ORIGIN}/): \`${MCP_ORIGIN}/mcp\`, free, with no account and no key
+- [The hosted MCP server in the Claude Directory](${CLAUDE_DIRECTORY_URL}): its listing, from which claude.ai connects it
 - [The package on npm](https://www.npmjs.com/package/@rivi-software/agentic-seo-check): the command \`npx @rivi-software/agentic-seo-check audit <url>\` and the local MCP server \`${LOCAL_SERVER}\`
 
 ## Reference

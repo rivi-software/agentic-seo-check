@@ -9,6 +9,7 @@ import { HOSTED_LIMITS, LOCAL_SERVER } from "../../../src/core/hosted.js";
 import { AEO_RULES, SEO_RULES } from "../../../src/core/rules/index.js";
 import type { Category, Severity } from "../../../src/core/types.js";
 import { ORIGIN as MCP_ORIGIN, rateLimit } from "../limits.js";
+import { CLAUDE_DIRECTORY_URL, directoryBadge } from "../ui/frame.js";
 import { GITHUB_MARK, icon } from "../ui/icons.js";
 import type { IconName } from "../ui/icons.js";
 import { esc } from "./html.js";
@@ -343,7 +344,7 @@ const ROUTES: [
   [
     "cloud",
     "The hosted MCP server",
-    "For Claude, ChatGPT, Cursor and VS Code, with no install, no account and no key.",
+    `For Claude, ChatGPT, Cursor and VS Code, with no install, no account and no key. In claude.ai, connect it from <a href="${CLAUDE_DIRECTORY_URL}">the Claude Directory</a>.`,
     `<code>${MCP_ORIGIN}/mcp</code>`,
     [HOSTED_PAGE, "How to add it"],
   ],
@@ -484,6 +485,7 @@ ${botChips()}
 <h2 id="cta-title">Audit, fix and check again <span class="hero-accent">from your assistant.</span></h2>
 <p>Add the hosted server to Claude, ChatGPT, Cursor or VS Code with one address: <code>${MCP_ORIGIN}/mcp</code></p>
 <div class="cta-actions"><a class="btn btn-primary" href="${HOSTED_PAGE}#add">Add it to your assistant${icon("arrow", "arrow")}</a><a class="btn btn-secondary" href="${REPOSITORY_URL}">${GITHUB_MARK}Read the code</a></div>
+${directoryBadge()}
 </div>
 </div>
 </section>`,

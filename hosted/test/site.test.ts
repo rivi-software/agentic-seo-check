@@ -21,6 +21,7 @@ import {
   progressLine,
   renderSiteReport,
 } from "../src/site/site-report.ts";
+import { CLAUDE_DIRECTORY_URL } from "../src/ui/frame.ts";
 import { OG_IMAGE, SERVER_CARD, SITE_CARD } from "../src/ui/og.ts";
 
 const OPEN = {
@@ -173,6 +174,20 @@ describe("the website's pages", () => {
     expect(SITE_ROBOTS_TXT).toContain("Disallow: /audit");
     expect(LLMS_TXT.startsWith("# Agentic SEO Check\n\n> ")).toBeTruthy();
     expect(notFoundPage()).toContain("Not found");
+  });
+
+  it("link the hosted server's listing in the Claude Directory, as a badge where it is offered", () => {
+    const link = `href="${CLAUDE_DIRECTORY_URL}"`;
+
+    for (const html of [rulesPage(), crawlerPage(), notFoundPage()]) {
+      expect(html).toContain(link);
+    }
+
+    for (const html of [homePage(OPEN), landingPage(100_000)]) {
+      expect(html).toContain(`<a class="badge" ${link}>`);
+    }
+
+    expect(LLMS_TXT).toContain(`](${CLAUDE_DIRECTORY_URL})`);
   });
 });
 

@@ -94,6 +94,12 @@ const CONTROLS = `
 .kicker::before{content:"";width:14px;height:3px;border-radius:2px;background:var(--signal);box-shadow:0 0 10px #3be08a80}
 .chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border:1px solid var(--line);border-radius:6px;background:#ffffff08;color:var(--text-muted);font-size:.75rem;font-weight:500;line-height:1;white-space:nowrap}
 .chip .icon{width:13px;height:13px}
+.badge{display:inline-flex;align-items:stretch;height:30px;border:1px solid var(--line-strong);border-radius:var(--radius-btn);overflow:hidden;font-size:.8125rem;font-weight:500;line-height:1;white-space:nowrap;text-decoration:none;transition:border-color .16s}
+.badge:hover{border-color:var(--signal)}
+.badge>span{display:inline-flex;align-items:center;gap:6px;padding:0 10px}
+.badge-key{background:#ffffff0f;color:var(--text)}
+.badge-value{background:var(--signal-soft);color:var(--signal-text)}
+.badge .icon{width:14px;height:14px}
 .label{font-size:.6875rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint)}
 .link-arrow{display:inline-flex;align-items:center;gap:6px;min-height:36px;color:var(--text);font-size:.9375rem;font-weight:500;text-decoration:underline;text-decoration-color:transparent;text-underline-offset:5px}
 .link-arrow:hover{text-decoration-color:var(--signal)}
