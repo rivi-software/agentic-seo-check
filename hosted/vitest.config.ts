@@ -13,5 +13,11 @@ export default defineConfig({
     testTimeout: 60_000,
     // Starting workerd and building the Worker takes a few seconds.
     hookTimeout: 120_000,
+    env: {
+      // A test that leaves the body of an answer from workerd unread while it awaits something
+      // else fails at once, instead of now and then: undici may find the body cancelled by the
+      // time it is read, and says "Body has already been read" (CI, 2026-11-11).
+      MINIFLARE_ASSERT_BODIES_CONSUMED: "true",
+    },
   },
 });
