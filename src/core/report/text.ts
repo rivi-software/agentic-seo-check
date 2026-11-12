@@ -61,7 +61,14 @@ const BAR_CELLS = 20;
 const DEFAULT_WIDTH = 80;
 const MIN_WIDTH = 40;
 
-type Style = "bold" | "dim" | "red" | "yellow" | "green" | "cyan" | "blue";
+export type Style =
+  | "bold"
+  | "dim"
+  | "red"
+  | "yellow"
+  | "green"
+  | "cyan"
+  | "blue";
 
 /** Each style's ANSI code, and the code that ends it alone, so styles nest. */
 const SGR: Record<Style, readonly [number, number]> = {
@@ -73,6 +80,12 @@ const SGR: Record<Style, readonly [number, number]> = {
   blue: [34, 39],
   cyan: [36, 39],
 };
+
+/** `text` in `style` when `color` is on, and as it is otherwise; the CLI's own lines use it too. */
+export const paint = (color: boolean, style: Style, text: string): string =>
+  color && text !== ""
+    ? `\u001B[${SGR[style][0]}m${text}\u001B[${SGR[style][1]}m`
+    : text;
 
 const SEVERITY_STYLE: Record<Severity, Style> = {
   error: "red",
@@ -151,10 +164,7 @@ const writer = (options: TextOptions, origin: string | null): Writer => {
   const color = options.color === true;
 
   return {
-    style: (style, text) =>
-      color && text !== ""
-        ? `\u001B[${SGR[style][0]}m${text}\u001B[${SGR[style][1]}m`
-        : text,
+    style: (style, text) => paint(color, style, text),
     link: (text, url) =>
       options.links === true && url
         ? `\u001B]8;;${terminalSafe(url)}\u001B\\${text}\u001B]8;;\u001B\\`
@@ -223,20 +233,48 @@ const sharedOrigin = (urls: readonly string[]): string | null => {
     : null;
 };
 
-const heading = (text: string, w: Writer, count?: number): string =>
-  w.style("bold", count === undefined ? text : `${text} (${count})`);
+/** The shortest rule a heading draws after itself; a heading with less room left draws none. */
+const MIN_RULE = 3;
+
+/**
+ * "Errors (3) ──────────": a section's heading, in bold and in `style` when given, with a dim rule
+ * to the width after it, so each section stands out when a long report scrolls past.
+ */
+const heading = (
+  text: string,
+  w: Writer,
+  { count, style }: { count?: number; style?: Style } = {}
+): string => {
+  const title = count === undefined ? text : `${text} (${count})`;
+  const strong = w.style("bold", style ? w.style(style, title) : title);
+  const rest = w.width - title.length - 1;
+
+  return rest >= MIN_RULE
+    ? `${strong} ${w.style("dim", "─".repeat(rest))}`
+    : strong;
+};
 
 const titleLine = (kind: string, target: string, w: Writer): string =>
   `${w.style("bold", kind)}${w.style("dim", " · ")}${terminalSafe(target)}`;
 
-/** "Score 72/100  ━━━━━━━━━━━━━━──────  fair" */
-const scoreLine = (label: string, score: number, w: Writer): string => {
+/** What an audit's score is called: the SEO and the AEO audit score apart. */
+const scoreLabel = (audit: Audit | AeoAudit): string =>
+  audit.kind === "aeo" ? "AEO score" : "Score";
+
+/** "72/100" and "fair", each in the band's colour, with `between` them: a space or the bar. */
+const scoreText = (score: number, w: Writer, between = " "): string => {
   const b = band(score);
-  const filled = Math.round((score / 100) * BAR_CELLS);
 
-  const bar = `${w.style(BAND_STYLE[b], "━".repeat(filled))}${w.style("dim", "─".repeat(BAR_CELLS - filled))}`;
+  return `${w.style("bold", w.style(BAND_STYLE[b], `${score}/100`))}${between}${w.style(BAND_STYLE[b], b)}`;
+};
 
-  return `  ${label} ${w.style("bold", w.style(BAND_STYLE[b], `${score}/100`))}  ${bar}  ${w.style(BAND_STYLE[b], b)}`;
+/** "Score 72/100  ━━━━━━━━━━━━━━──────  fair" */
+const scoreLine = (audit: Audit | AeoAudit, w: Writer): string => {
+  const filled = Math.round((audit.score / 100) * BAR_CELLS);
+
+  const bar = `${w.style(BAND_STYLE[band(audit.score)], "━".repeat(filled))}${w.style("dim", "─".repeat(BAR_CELLS - filled))}`;
+
+  return `  ${scoreLabel(audit)} ${scoreText(audit.score, w, `  ${bar}  `)}`;
 };
 
 /** "3 errors · 19 warnings · 13 info", each coloured when there are any. */
@@ -404,10 +442,10 @@ const findingSections = (findings: readonly Finding[], w: Writer): string[] => {
         : group.flatMap((f) => findingLines(f, w));
 
     return [
-      w.style(
-        SEVERITY_STYLE[severity],
-        heading(HEADING[severity], w, group.length)
-      ),
+      heading(HEADING[severity], w, {
+        count: group.length,
+        style: SEVERITY_STYLE[severity],
+      }),
       "",
       ...body,
     ];
@@ -425,7 +463,7 @@ const issueLines = (issues: readonly IssueRollup[], w: Writer): string[] => {
   );
 
   return [
-    heading("On the pages, by rule", w, issues.length),
+    heading("On the pages, by rule", w, { count: issues.length }),
     "",
     ...issues.flatMap((issue) =>
       findingHead(issue, w, "  ", {
@@ -492,11 +530,9 @@ const pageRows = (
   }
 
   return [
-    heading(
-      rest.length > 0 ? `${title}, lowest scores first` : title,
-      w,
-      pages.length
-    ),
+    heading(rest.length > 0 ? `${title}, lowest scores first` : title, w, {
+      count: pages.length,
+    }),
     "",
     ...lines,
     "",
@@ -551,13 +587,23 @@ const command = (label: string, run: string, w: Writer): string[] =>
 const the = (severity: "error" | "warning", count: number): string =>
   count === 1 ? `the ${severity}` : `the ${countLabel(severity, count)}`;
 
-/** What to fix first, and the commands to run next. */
-const nextLines = (
-  counts: SeverityCounts,
+/** "Score 72/100 fair · 3 errors · 19 warnings · 13 info" */
+const verdictLine = (audit: Audit | AeoAudit, w: Writer): string =>
+  `${scoreLabel(audit)} ${scoreText(audit.score, w)}${w.style("dim", " · ")}${countsText(audit.counts, w)}`;
+
+/**
+ * The verdict again, what to fix first, and the commands to run next. A terminal shows the end of
+ * what was printed, so this is what is in view once the report has scrolled past. `rule` is the
+ * one `agentic-seo-check rules --rule` is suggested for; `detail` says what `-o report.md` adds.
+ */
+const summaryLines = (
+  audit: Audit | AeoAudit,
   rule: string | undefined,
   detail: string,
   w: Writer
 ): string[] => {
+  const { counts } = audit;
+
   const advice = (): string => {
     if (counts.error > 0) {
       return counts.warning > 0
@@ -574,7 +620,13 @@ const nextLines = (
       : "Nothing to fix.";
   };
 
-  const lines = [heading("Next", w), "", `  ${advice()}`];
+  const lines = [
+    heading("Summary", w),
+    "",
+    `  ${verdictLine(audit, w)}`,
+    "",
+    `  ${advice()}`,
+  ];
 
   if (w.nextSteps) {
     lines.push(
@@ -722,7 +774,7 @@ const pageText = (audit: PageAudit, w: Writer): string[] => {
   return [
     titleLine("SEO audit", audit.url, w),
     "",
-    scoreLine("Score", audit.score, w),
+    scoreLine(audit, w),
     `  ${dotted(
       [
         countsText(audit.counts, w),
@@ -738,8 +790,8 @@ const pageText = (audit: PageAudit, w: Writer): string[] => {
     ...renderingLines(audit, w),
     ...(audit.baseline ? baselineLines(audit.baseline, w) : []),
     ...findingSections(audit.findings, w),
-    ...nextLines(
-      audit.counts,
+    ...summaryLines(
+      audit,
       firstRule(audit.findings),
       "Every fix in full, with its evidence",
       w
@@ -784,7 +836,7 @@ const siteFindingLines = (
   );
 
   return [
-    heading(title, w, findings.length),
+    heading(title, w, { count: findings.length }),
     "",
     ...sorted.flatMap((f) =>
       f.severity === "info" ? findingHead(f, w, "  ") : findingLines(f, w)
@@ -799,7 +851,7 @@ const siteText = (audit: SiteAudit, w: Writer): string[] => {
   return [
     titleLine("SEO site audit", audit.target, w),
     "",
-    scoreLine("Score", audit.score, w),
+    scoreLine(audit, w),
     `  ${countsText(audit.counts, w)}`,
     `  ${dotted(
       [
@@ -824,8 +876,8 @@ const siteText = (audit: SiteAudit, w: Writer): string[] => {
     ...(audit.siteFindings.length === 0 && audit.issues.length === 0
       ? [`  ${w.style("green", "✓ No issues found.")}`, ""]
       : []),
-    ...nextLines(
-      audit.counts,
+    ...summaryLines(
+      audit,
       firstRule([...audit.siteFindings, ...audit.issues]),
       "Every page's fixes",
       w
@@ -946,7 +998,13 @@ const crawlerLines = (audit: AeoAudit, w: Writer): string[] => {
   ]);
 
   return [
-    `${heading("AI crawlers", w)}${w.style("dim", ` · robots.txt ${crawlers.status}${crawlers.httpStatus ? ` (HTTP ${crawlers.httpStatus})` : ""} · ${allowed} of ${crawlers.bots.length} may fetch ${audit.pages ? "the start page" : "this page"}`)}`,
+    heading("AI crawlers", w),
+    "",
+    ...block(
+      `robots.txt ${crawlers.status}${crawlers.httpStatus ? ` (HTTP ${crawlers.httpStatus})` : ""} · ${allowed} of ${crawlers.bots.length} may fetch ${audit.pages ? "the start page" : "this page"}`,
+      "  ",
+      w
+    ).map((line) => w.style("dim", line)),
     "",
     ...groups,
     "",
@@ -993,7 +1051,7 @@ const aeoText = (audit: AeoAudit, w: Writer): string[] => {
   return [
     titleLine("AEO audit", site ? audit.target : audit.url, w),
     "",
-    scoreLine("AEO score", audit.score, w),
+    scoreLine(audit, w),
     `  ${dotted([countsText(audit.counts, w), `${plural(audit.summary.pages, "page")} audited`], w)}`,
     "",
     ...crawlerLines(audit, w),
@@ -1016,8 +1074,8 @@ const aeoText = (audit: AeoAudit, w: Writer): string[] => {
             : []),
         ]
       : findingSections(findings, w)),
-    ...nextLines(
-      audit.counts,
+    ...summaryLines(
+      audit,
       firstRule([...findings, ...(audit.issues ?? [])]),
       site ? "Every page's fixes" : "Every fix in full, with its evidence",
       w
@@ -1055,6 +1113,15 @@ export const renderAeoText = (
 
   return finish(aeoText(audit, w), w);
 };
+
+/**
+ * "Score 72/100 fair · 3 errors · 19 warnings · 13 info" on its own, for the CLI to say what a
+ * report it wrote to a file found.
+ */
+export const renderVerdict = (
+  audit: Audit | AeoAudit,
+  options: TextOptions = {}
+): string => verdictLine(audit, writer(options, null));
 
 /** One rule in full: what it checks, what to do, when it runs and where it is documented. */
 const ruleDetail = (rule: RuleMeta, w: Writer): string[] => [
@@ -1097,15 +1164,19 @@ export const renderRulesText = (
     groups.set(rule.category, [...(groups.get(rule.category) ?? []), rule]);
   }
 
-  const idWidth = Math.max(...rules.map((r) => r.id.length));
-  const column = 2 + idWidth + 2 + "warning".length + 2;
-  // Below 30 columns of description, the description goes under the id instead.
-  const beside = w.width - column >= 30;
-
   const lines: string[] = [];
 
   for (const [category, group] of groups) {
-    lines.push(heading(CATEGORY_LABEL[category], w, group.length), "");
+    lines.push(
+      heading(CATEGORY_LABEL[category], w, { count: group.length }),
+      ""
+    );
+
+    // Each category sizes its own id column: one long id elsewhere leaves this one's descriptions
+    // the room. Below 40 columns of description, the description goes under the id instead.
+    const idWidth = Math.max(...group.map((r) => r.id.length));
+    const column = 2 + idWidth + 2 + "warning".length + 2;
+    const beside = w.width - column >= 40;
 
     for (const rule of group) {
       const description = `${rule.description}${rule.requires ? ` ${REQUIREMENT[rule.requires]}` : ""}`;

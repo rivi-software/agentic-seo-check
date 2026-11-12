@@ -3,7 +3,7 @@
  * how wide it is, and a progress line that rewrites itself. Only `cli.ts` imports this; the core and
  * the text report never read `process`.
  */
-import { terminalSafe } from "./core/report/text.js";
+import { paint, terminalSafe } from "./core/report/text.js";
 import type { TextOptions } from "./core/report/text.js";
 
 /** The report's formats: text for a person, Markdown, JSON for a program. */
@@ -160,26 +160,74 @@ export interface StatusLine {
   clear: () => void;
 }
 
+/** The spinner's frames: it turns while the line is shown, so a slow request does not look stuck. */
+const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+
+/** How often the spinner turns. */
+const TICK_MS = 80;
+
+/** From when the line says how long the run has taken: a quick audit never shows a time. */
+const SHOW_ELAPSED_MS = 2000;
+
+/** "12 s", then "2 min 5 s". */
+const elapsed = (milliseconds: number): string => {
+  const seconds = Math.floor(milliseconds / 1000);
+
+  return seconds < 60
+    ? `${seconds} s`
+    : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+};
+
+/** The spinner and the space after it, which the line's text does not get. */
+const SPINNER_COLUMNS = 2;
+
+/**
+ * "⠹ Crawling 12/50 · 200 https://example.com/pricing  14 s": a spinner, the step the run is at,
+ * and from two seconds on, the time since the first `show`. The spinner's frame and the time are
+ * both read off the clock, which a timer redraws; the timer never keeps Node running.
+ */
 export const statusLine = (stream: Terminal): StatusLine => {
-  const dim = colorFor(stream);
-  let shown = false;
+  const color = colorFor(stream);
+  let text: string | null = null;
+  let started = 0;
+  let timer: ReturnType<typeof setInterval> | undefined;
+
+  const draw = (): void => {
+    if (text === null) {
+      return;
+    }
+
+    const took = Date.now() - started;
+    const frame = SPINNER[Math.floor(took / TICK_MS) % SPINNER.length] ?? "";
+    const time = took >= SHOW_ELAPSED_MS ? `  ${elapsed(took)}` : "";
+
+    // One column short of the width, so the line never wraps and `\r` returns to its start.
+    const columns = stream.columns > 0 ? stream.columns : 80;
+    const room = Math.max(1, columns - 1 - SPINNER_COLUMNS - time.length);
+    const line = text.length <= room ? text : `${text.slice(0, room - 1)}…`;
+
+    stream.write(
+      `\r\u001B[2K${paint(color, "cyan", frame)} ${paint(color, "dim", `${line}${time}`)}`
+    );
+  };
 
   return {
-    show: (text) => {
-      const columns = stream.columns > 0 ? stream.columns : 80;
-      const safe = terminalSafe(text).replaceAll("\n", " ");
+    show: (next) => {
+      if (text === null) {
+        started = Date.now();
+        timer = setInterval(draw, TICK_MS);
+        timer.unref();
+      }
 
-      // One column short of the width, so the line never wraps and `\r` returns to its start.
-      const line =
-        safe.length < columns ? safe : `${safe.slice(0, columns - 2)}…`;
-
-      stream.write(`\r\u001B[2K${dim ? `\u001B[2m${line}\u001B[22m` : line}`);
-      shown = true;
+      text = terminalSafe(next).replaceAll("\n", " ");
+      draw();
     },
     clear: () => {
-      if (shown) {
+      clearInterval(timer);
+
+      if (text !== null) {
         stream.write("\r\u001B[2K");
-        shown = false;
+        text = null;
       }
     },
   };
