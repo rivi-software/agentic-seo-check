@@ -69,8 +69,8 @@ Work on a branch in your fork. One pull request makes one change. Two unrelated 
 
 ### Opening the pull request
 
-- **Title.** It follows [Conventional Commits](https://www.conventionalcommits.org), scoped to the area it changes: `fix(rules): …`, `feat(crawl): …`, `feat(mcp): …`, `docs: …`, `ci: …`, `chore(deps): …`. The scopes are `rules`, `crawl`, `render`, `lighthouse`, `report`, `mcp`, `cli`, `skill`, `deps`, `ci` and `repo`. Pull requests are squash-merged, and the title becomes the commit on `main`.
-- **Description.** Say what changes and why, and link the issue it closes (`Closes #123`). Show how you know it works: the tests you added or ran, and the audit output before and after on a real page where that helps. The template has the sections.
+- **Title.** It follows [Conventional Commits](https://www.conventionalcommits.org), scoped to the area it changes: `fix(rules): …`, `feat(crawl): …`, `feat(mcp): …`, `docs: …`, `ci: …`, `chore(deps): …`. The scopes are `rules`, `fixes`, `crawl`, `render`, `lighthouse`, `report`, `cli`, `mcp`, `hosted`, `site`, `telemetry`, `skill`, `deps`, `ci` and `repo`. Keep it lowercase, without a full stop, and under 72 characters. Pull requests are squash-merged, and the title becomes the commit on `main`.
+- **Description.** The [template](.github/pull_request_template.md) has the sections, and asks for a description that stands on its own in about 150 words: who is affected and what is wrong for them, with the issue it closes (`Closes #123`); what they now see or do differently; how you know it works, with the audit output before and after on a real page where that helps; what it means for a release; and the docs it changed. Its last sections are for an agent's work, and its closing comment holds the rules for agents.
 - **Allow edits by maintainers.** Leave it checked. A maintainer can then push a small fix to your branch, such as a missing changeset, instead of asking you for it.
 - **Draft.** Open the pull request as a draft if you want feedback before it is done.
 
@@ -87,7 +87,7 @@ The repository is [MIT](LICENSE) licensed. When you open a pull request, you agr
 
 ### AI tools
 
-You may use AI tools to write an issue or a pull request, and you are its author all the same. Understand every line you submit, run `pnpm run verify` yourself, and say in the pull request what you checked. A maintainer may close a pull request that reads as unreviewed generated output, or a report that nobody can reproduce. [AGENTS.md](AGENTS.md) is the brief for coding agents working in this repository.
+You may use AI tools to write an issue or a pull request, and you are its author all the same. Understand every line you submit, run `pnpm run verify` yourself, and say in the pull request what you checked. Fill in the template's Agent context: the tool, the model and the skills that ran. A maintainer may close a pull request that reads as unreviewed generated output, or a report that nobody can reproduce. [AGENTS.md](AGENTS.md) is the brief for coding agents working in this repository.
 
 ## For maintainers
 
