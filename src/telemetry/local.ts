@@ -436,27 +436,34 @@ export const noteCliError = (
 };
 
 /** A run's `cli_command` event, with the run's id: no two runs can be linked. */
-export const cliEvent = (run: CliRun, exitCode: number): PostHogEvent => ({
-  event: "cli_command",
-  timestamp: run.startedAt.toISOString(),
-  properties: {
-    ...BASE_PROPERTIES,
-    distinct_id: run.id,
-    surface: "cli",
-    command: run.command,
-    flags: run.flags,
-    target: run.target,
-    format: run.format,
-    exit_code: exitCode,
-    duration_ms: Math.round(performance.now() - run.started),
-    pages: run.report?.pages,
-    errors: run.report?.counts.error,
-    warnings: run.report?.counts.warning,
-    infos: run.report?.counts.info,
-    rules: run.report?.rules,
-    ...environment(),
-  },
-});
+export const cliEvent = (run: CliRun, exitCode: number): PostHogEvent => {
+  // A comparison counts gaps where an audit counts findings (issue #129).
+  const counts =
+    run.report && "counts" in run.report ? run.report.counts : undefined;
+
+  return {
+    event: "cli_command",
+    timestamp: run.startedAt.toISOString(),
+    properties: {
+      ...BASE_PROPERTIES,
+      distinct_id: run.id,
+      surface: "cli",
+      command: run.command,
+      flags: run.flags,
+      target: run.target,
+      format: run.format,
+      exit_code: exitCode,
+      duration_ms: Math.round(performance.now() - run.started),
+      pages: run.report?.pages,
+      errors: counts?.error,
+      warnings: counts?.warning,
+      infos: counts?.info,
+      rules: run.report?.rules,
+      gaps: run.report && "gaps" in run.report ? run.report.gaps : undefined,
+      ...environment(),
+    },
+  };
+};
 
 /** The longest a run waits for its event to be sent, after its output is written. */
 export const CLI_SEND_TIMEOUT_MS = 1000;

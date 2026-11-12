@@ -877,6 +877,23 @@ export const auditUrl = async (
   return finishPage(audit, options);
 };
 
+/**
+ * The SEO audit of a page a caller has fetched and extracted, as auditUrl gives it without
+ * `render` or `lighthouse`: comparePages (issue #129) reads each page once for both audits.
+ */
+export const auditPageRecord = async (
+  record: PageRecord,
+  given: AuditOptions
+): Promise<PageAudit> => {
+  const options = withFieldData(checkOptions(given));
+
+  const fieldData = record.response
+    ? await pageFieldData(record.url, record.response, options)
+    : undefined;
+
+  return finishPage(auditRecord(record, "url", options, fieldData), options);
+};
+
 /** Audit a single .html file from disk. */
 export const auditFile = async (
   filePath: string,

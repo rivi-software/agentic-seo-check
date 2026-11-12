@@ -1,5 +1,6 @@
 import { MAKER, MAKER_URL, PRODUCT_NAME, REPOSITORY_URL } from "../../brand.js";
 import { VERSION } from "../../version.js";
+import { competitorCounts, keptOut, NOTHING_COMPARED } from "../compare.js";
 import {
   FIELD_LABELS,
   FIELD_METRICS,
@@ -15,6 +16,7 @@ import type {
   AiCrawlerReport,
   Audit,
   BaselineComparison,
+  Comparison,
   FieldData,
   NoFieldData,
   Finding,
@@ -24,6 +26,7 @@ import type {
   SiteAudit,
 } from "../types.js";
 import { withoutControls } from "./controls.js";
+import { plural } from "./labels.js";
 
 const cell = (value: string | null | undefined): string => {
   if (!value) {
@@ -606,6 +609,91 @@ const finish = (body: string): string =>
 /** The Markdown report of an AEO audit. */
 export const renderAeoMarkdown = (audit: AeoAudit): string =>
   finish(aeoMarkdown(audit));
+
+const yesNo = (value: boolean | null): string => {
+  if (value === null) {
+    return "—";
+  }
+
+  return value ? "yes" : "no";
+};
+
+/** A compared page's row of the table: its scores and signals, or why it was skipped. */
+const comparedRow = (p: Comparison["pages"][number]): string => {
+  const who = `${p.role === "page" ? "**This page**" : "Competitor"}: ${cell(p.url)}`;
+
+  if (!("signals" in p)) {
+    // Why it was skipped fills the SEO column; the 11 after it stay empty, as it has no signals.
+    return `| ${who} | ${cell(`skipped: ${p.skipped.message}`)} |${" |".repeat(11)}`;
+  }
+
+  const s = p.signals;
+  const bots = keptOut(s);
+
+  return `| ${who} | ${p.score.seo} | ${p.score.aeo} | ${s.words} | ${s.headings.h2} | ${s.headings.answered}/${s.headings.questions} | ${s.tables} | ${s.lists} | ${s.author} | ${cell(s.structuredData.join(", "))} | ${bots === null ? "—" : cell(bots.join(", ") || "none")} | ${yesNo(s.llmsTxt)} | ${ms(s.responseMs)} |`;
+};
+
+const comparisonMarkdown = (c: Comparison): string => {
+  const { of, read } = competitorCounts(c);
+
+  const lines: string[] = [
+    `# Comparison: ${c.url}`,
+    "",
+    `${plural(c.gaps.length, "gap")} · ${plural(c.leads.length, "lead")} · ${read} of ${plural(of, "competitor page")} read${c.keyword ? ` · keyword ${codeSpan(c.keyword)}` : ""}`,
+    "",
+    "A gap is what at least half of the competitors read have and this page lacks; a lead the reverse. Neither is a finding: they change no score.",
+    "",
+    "## Pages",
+    "",
+    "| Page | SEO | AEO | Words | H2 | Questions answered | Tables | Lists | Author | Structured data | AI crawlers kept out | llms.txt | Response |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ...c.pages.map(comparedRow),
+    "",
+    `## Gaps (${c.gaps.length})`,
+    "",
+  ];
+
+  if (c.gaps.length === 0) {
+    lines.push(
+      read === 0
+        ? NOTHING_COMPARED
+        : "None: this page has what most competitors have.",
+      ""
+    );
+  }
+
+  for (const gap of c.gaps) {
+    lines.push(
+      `- **\`${gap.signal}\`${gap.type ? ` ${cell(gap.type)}` : ""}** ${gap.message}`,
+      `  - Competitors: ${gap.competitors.map(cell).join(", ")}`,
+      gap.rules.length > 0
+        ? `  - Closed by: ${gap.rules.map((r) => `\`${r}\``).join(", ")}`
+        : "  - No edit: no rule's fix closes it on this page, so what to add is the author's to write."
+    );
+
+    for (const e of gap.fix) {
+      lines.push(...editLines(e));
+    }
+  }
+
+  lines.push("", `## Leads (${c.leads.length})`, "");
+
+  if (c.leads.length === 0) {
+    lines.push("None.", "");
+  }
+
+  for (const lead of c.leads) {
+    lines.push(
+      `- **\`${lead.signal}\`${lead.type ? ` ${cell(lead.type)}` : ""}** ${lead.message}`
+    );
+  }
+
+  return lines.join("\n");
+};
+
+/** The Markdown report of a comparison with competitors' pages (issue #129). */
+export const renderComparisonMarkdown = (comparison: Comparison): string =>
+  finish(comparisonMarkdown(comparison));
 
 export const renderMarkdown = (audit: Audit): string =>
   finish(audit.kind === "page" ? pageMarkdown(audit) : siteMarkdown(audit));
