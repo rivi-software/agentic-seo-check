@@ -23,6 +23,7 @@ import type {
   SiteAudit,
   Audit,
 } from "../types.js";
+import { withoutControls } from "./controls.js";
 import {
   ACTION_LABEL,
   band,
@@ -110,31 +111,12 @@ const REQUIREMENT: Record<Requirement, string> = {
 const AEO_PAGE_RULE_IDS = new Set(AEO_PAGE_RULES.map((rule) => rule.meta.id));
 
 /**
- * Whether a character may not reach the terminal: the C0 controls but newline (tab is turned into
- * spaces first), DEL and the C1 controls, which start escape sequences, and the bidirectional
- * overrides and isolates, which reorder what is shown.
- */
-const unsafe = (code: number): boolean =>
-  (code < 0x20 && code !== 0x0a) ||
-  (code >= 0x7f && code <= 0x9f) ||
-  (code >= 0x20_2a && code <= 0x20_2e) ||
-  (code >= 0x20_66 && code <= 0x20_69);
-
-/**
  * `text` without the characters that would let a page move the cursor, retitle the window or hide
- * text in the terminal. Everything this report prints goes through it: messages quote the page too.
+ * text in the terminal, and with its tabs as spaces, so the report can count a line's width.
+ * Everything this report prints goes through it: messages quote the page too.
  */
-export const terminalSafe = (text: string): string => {
-  let out = "";
-
-  for (const char of text.replaceAll("\t", "  ")) {
-    if (!unsafe(char.codePointAt(0) ?? 0)) {
-      out += char;
-    }
-  }
-
-  return out;
-};
+export const terminalSafe = (text: string): string =>
+  withoutControls(text.replaceAll("\t", "  "));
 
 /** What the report is written with: the options, settled. */
 interface Writer {

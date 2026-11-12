@@ -130,6 +130,23 @@ describe("MCP server", () => {
     expect(firstText(result)).toContain("# SEO audit");
   });
 
+  it("returns markdown without the page's escape sequences", async () => {
+    const { client } = await connect();
+
+    const result = await client.callTool({
+      name: "seo_audit_page",
+      arguments: {
+        html: "<html><head><title>Shop&#27;]0;PWNED&#7;&#27;[2J</title></head><body></body></html>",
+        format: "markdown",
+      },
+    });
+
+    const text = firstText(result);
+    expect(text).toContain("Shop]0;PWNED[2J");
+    expect(text).not.toContain("\u001B");
+    expect(text).not.toContain("\u0007");
+  });
+
   it("lists and filters rules", async () => {
     const { client } = await connect();
 
