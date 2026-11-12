@@ -12,6 +12,7 @@ import {
   FIELD_METRICS,
   fieldBand,
   fieldValue,
+  NO_FIELD_DATA_LABELS,
   sharePercent,
 } from "../field-data.js";
 import type { FieldBand, FieldMetricKey } from "../field-data.js";
@@ -795,8 +796,14 @@ const siteFieldDataLines = (audit: SiteAudit, w: Writer): string[] => {
       const field = p.fieldData;
       const path = terminalSafe(pathOf(p.url, w.origin));
 
-      if (!field || field.source === null) {
-        return [`  ${path}  ${w.style("dim", "no record")}`];
+      if (!field) {
+        return [];
+      }
+
+      if (field.source === null) {
+        return [
+          `  ${path}  ${w.style("dim", NO_FIELD_DATA_LABELS[field.reason])}`,
+        ];
       }
 
       const vitals = CORE_VITALS.map((key) => vital(field, key));

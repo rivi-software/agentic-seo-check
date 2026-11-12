@@ -1,9 +1,17 @@
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import nodePath from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 
-import { auditHtml, auditSite, auditUrl } from "../src/core/audit.js";
+import {
+  auditDirectory,
+  auditHtml,
+  auditSite,
+  auditUrl,
+} from "../src/core/audit.js";
 import {
   CRUX_ENDPOINT,
   FieldDataKeyError,
@@ -303,6 +311,37 @@ describe("field data (issue #130)", () => {
         "perf.field-inp-poor",
         "perf.field-lcp-poor",
       ]);
+    });
+
+    it("says a directory's first pages have no URL to ask for, and names the reason in the report", async () => {
+      vi.stubEnv("CRUX_API_KEY", "");
+      serve({});
+      const dir = await mkdtemp(nodePath.join(tmpdir(), "agentic-seo-field-"));
+
+      onTestFinished(async () => {
+        await rm(dir, { recursive: true, force: true });
+      });
+
+      await writeFile(
+        nodePath.join(dir, "index.html"),
+        page('<a href="/a.html">A</a>')
+      );
+      await writeFile(nodePath.join(dir, "a.html"), page());
+
+      const audit = await auditDirectory(dir, {
+        baseUrl: PAGE_URL,
+        fieldData: { maxPages: 1 },
+      });
+
+      expect(
+        audit.pages
+          .map((p) =>
+            p.fieldData?.source === null ? p.fieldData.reason : "none"
+          )
+          .toSorted()
+      ).toStrictEqual(["none", "not-public"]);
+      expect(renderMarkdown(audit)).toMatch(/\| not sent \| — \| — \| — \|/u);
+      expect(queries).toStrictEqual([]);
     });
 
     it("says HTML has no URL to ask for, without a key or a query", async () => {
@@ -711,7 +750,7 @@ describe("field data (issue #130)", () => {
       expect(markdown).toContain(
         `| ${SITE}/a | url | 1,800 ms (good) | 120 ms (good) | 0.40 (poor) |`
       );
-      expect(markdown).toContain(`| ${SITE}/ | none | — | — | — |`);
+      expect(markdown).toContain(`| ${SITE}/ | no record | — | — | — |`);
       expect(text).toContain("Field data (Chrome UX Report, phones) (2)");
       expect(text).toContain("/a  LCP 1,800 ms · INP 120 ms · CLS 0.40");
     });

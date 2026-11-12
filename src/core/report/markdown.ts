@@ -5,6 +5,7 @@ import {
   FIELD_METRICS,
   fieldBand,
   fieldValue,
+  NO_FIELD_DATA_LABELS,
   sharePercent,
 } from "../field-data.js";
 import type { CORE_VITALS } from "../field-data.js";
@@ -241,7 +242,7 @@ const siteFieldDataLines = (audit: SiteAudit): string[] => {
 
       return field && field.source !== null
         ? `| ${p.url} | ${field.source} | ${vital(field, "lcpMs")} | ${vital(field, "inpMs")} | ${vital(field, "cls")} |`
-        : `| ${p.url} | none | — | — | — |`;
+        : `| ${p.url} | ${NO_FIELD_DATA_LABELS[field?.reason ?? "no-data"]} | — | — | — |`;
     }),
     "",
   ];

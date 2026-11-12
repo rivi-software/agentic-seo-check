@@ -20,6 +20,7 @@ import {
   fieldDataForCrawl,
   fieldDataForPage,
   fieldDataOptions,
+  fieldDataPages,
   htmlFieldData,
   isFieldRecord,
 } from "./field-data.js";
@@ -355,6 +356,22 @@ const pageFieldData = async (
 
   return await fieldDataForPage(url, fieldOptions, sendsHeaders(options));
 };
+
+/**
+ * With `fieldData`, a directory's first pages say why they have none, where a crawl's would have
+ * their records: a file has no address the Chrome UX Report could know.
+ */
+const directoryFieldData = (
+  result: CrawlResult,
+  options: CrawlOptions
+): Map<string, NoFieldData> | undefined =>
+  options.fieldData
+    ? new Map(
+        result.records
+          .slice(0, fieldDataPages(options.fieldData))
+          .map((r) => [r.url, htmlFieldData()])
+      )
+    : undefined;
 
 /** The field data of a crawl's first pages, by URL, when the audit asks for it. */
 const crawlFieldData = async (
@@ -963,7 +980,13 @@ export const auditDirectory = async (
     userAgent: options.fetch?.userAgent,
   });
 
-  const site = buildSiteAudit(result, "directory", dir, options);
+  const site = buildSiteAudit(
+    result,
+    "directory",
+    dir,
+    options,
+    directoryFieldData(result, options)
+  );
 
   return applyPageDetail(
     finishSite(site, options, recordUrls(result.records)),

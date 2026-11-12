@@ -120,6 +120,19 @@ export const fieldValue = (key: FieldMetricKey, value: number): string =>
     ? value.toFixed(2)
     : `${Math.round(value).toLocaleString("en-US")} ms`;
 
+/** Why a page has no field data, in the words of a report's list of pages. */
+export const NO_FIELD_DATA_LABELS: Record<NoFieldData["reason"], string> = {
+  "no-data": "no record",
+  "not-public": "not sent",
+  unavailable: "unavailable",
+};
+
+/** The pages of a crawl or a directory that field data covers: `maxPages`, or the first 10. */
+export const fieldDataPages = (
+  value: boolean | FieldDataOptions | undefined
+): number =>
+  (value && value !== true ? value.maxPages : undefined) ?? FIELD_DATA_PAGES;
+
 /** A share of visits as a report shows it: "82%". */
 export const sharePercent = (share: number): string =>
   `${Math.round(share * 100)}%`;
@@ -536,7 +549,7 @@ export const fieldDataForCrawl = async (
   const chosen = records
     .filter((r) => answeredOk(r.response))
     .toSorted((a, b) => a.depth - b.depth)
-    .slice(0, options.maxPages ?? FIELD_DATA_PAGES);
+    .slice(0, fieldDataPages(options));
 
   const start = chosen.find((r) => r.depth === 0);
 
