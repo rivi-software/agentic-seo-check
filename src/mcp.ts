@@ -42,6 +42,7 @@ import {
   InputError,
   LIST_RULES,
   listRules,
+  readOnlyAnnotations,
   respond,
   respondAeo,
   toOptions,
@@ -178,12 +179,9 @@ export const createMcpServer = (
           .describe("Lighthouse device emulation."),
         ...commonOptions,
       },
-      annotations: {
-        title: "Audit one page for SEO",
-        readOnlyHint: true,
-        openWorldHint: true,
-        idempotentHint: true,
-      },
+      annotations: readOnlyAnnotations("Audit one page for SEO", {
+        openWorld: true,
+      }),
     },
     async (input) => {
       try {
@@ -290,11 +288,9 @@ export const createMcpServer = (
           ),
         ...commonOptions,
       },
-      annotations: {
-        title: "Crawl a site and audit every page",
-        readOnlyHint: true,
-        openWorldHint: true,
-      },
+      annotations: readOnlyAnnotations("Crawl a site and audit every page", {
+        openWorld: true,
+      }),
     },
     async (input) => {
       try {
@@ -354,12 +350,10 @@ export const createMcpServer = (
           ),
         ...commonOptions,
       },
-      annotations: {
-        title: "Audit a static build output directory",
-        readOnlyHint: true,
-        openWorldHint: false,
-        idempotentHint: true,
-      },
+      annotations: readOnlyAnnotations(
+        "Audit a static build output directory",
+        { openWorld: false }
+      ),
     },
     async (input) => {
       try {
@@ -402,11 +396,9 @@ export const createMcpServer = (
           ),
         format,
       },
-      annotations: {
-        title: "Run Lighthouse on a URL",
-        readOnlyHint: true,
-        openWorldHint: true,
-      },
+      annotations: readOnlyAnnotations("Run Lighthouse on a URL", {
+        openWorld: true,
+      }),
     },
     async (input) => {
       try {
@@ -530,11 +522,10 @@ export const createMcpServer = (
         format,
         detail,
       },
-      annotations: {
-        title: "Audit a page or site for answer engines (AEO)",
-        readOnlyHint: true,
-        openWorldHint: true,
-      },
+      annotations: readOnlyAnnotations(
+        "Audit a page or site for answer engines (AEO)",
+        { openWorld: true }
+      ),
     },
     async (input) => {
       try {

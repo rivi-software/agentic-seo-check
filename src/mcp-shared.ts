@@ -1,4 +1,5 @@
 /** What the local MCP server (mcp.ts) and the hosted one (mcp-hosted.ts) share: options and answers. */
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import { PRODUCT_NAME, REPOSITORY_URL, WEBSITE_URL } from "./brand.js";
@@ -142,6 +143,25 @@ export const respondAeo = (
 export const docsNote = (server: "local" | "hosted"): string =>
   `Documentation: ${REPOSITORY_URL}#${server === "hosted" ? "hosted-server" : "mcp-server"}. Every rule, with the search engine documentation it follows: ${WEBSITE_URL}/rules.`;
 
+/**
+ * The annotations of a tool that only reads, with all four hints set. OpenAI's plugin guidelines
+ * want `readOnlyHint`, `destructiveHint` and `openWorldHint` as explicit booleans on every tool,
+ * and a tool that is safe to retry to say so, which `idempotentHint` does. Reading deletes
+ * nothing, and a second call has no further effect, as an HTTP GET is idempotent though the page
+ * it returns may change. `openWorld` is whether the tool requests pages on the web, rather than
+ * reading files or its own rules.
+ */
+export const readOnlyAnnotations = (
+  title: string,
+  { openWorld }: { openWorld: boolean }
+): ToolAnnotations => ({
+  title,
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: openWorld,
+});
+
 /** seo_list_rules: the same tool on both servers. */
 export const LIST_RULES = {
   title: "List SEO rules",
@@ -156,12 +176,7 @@ export const LIST_RULES = {
       ),
     rule: z.string().optional().describe("Return only this rule id."),
   },
-  annotations: {
-    title: "List SEO rules",
-    readOnlyHint: true,
-    openWorldHint: false,
-    idempotentHint: true,
-  },
+  annotations: readOnlyAnnotations("List SEO rules", { openWorld: false }),
 };
 
 export const listRules = (input: { category?: string; rule?: string }) => {

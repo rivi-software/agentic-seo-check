@@ -34,6 +34,7 @@ import {
   InputError,
   LIST_RULES,
   listRules,
+  readOnlyAnnotations,
   respond,
   respondAeo,
   toOptions,
@@ -634,12 +635,9 @@ const AUDIT_PAGE = {
       "hosted"
     )}`,
   inputSchema: AUDIT_PAGE_INPUT,
-  annotations: {
-    title: "Audit one page for SEO",
-    readOnlyHint: true,
-    openWorldHint: true,
-    idempotentHint: true,
-  },
+  annotations: readOnlyAnnotations("Audit one page for SEO", {
+    openWorld: true,
+  }),
 };
 
 /** seo_crawl_site: a site, up to the hosted crawl's limits. */
@@ -652,11 +650,9 @@ const CRAWL_SITE = {
       HOSTED_NOTE
     }${docsNote("hosted")}`,
   inputSchema: CRAWL_SITE_INPUT,
-  annotations: {
-    title: "Crawl a site and audit every page",
-    readOnlyHint: true,
-    openWorldHint: true,
-  },
+  annotations: readOnlyAnnotations("Crawl a site and audit every page", {
+    openWorld: true,
+  }),
 };
 
 /** seo_aeo_audit: a page or a site, for answer engines. */
@@ -672,11 +668,10 @@ const AEO_AUDIT = {
       "hosted"
     )}`,
   inputSchema: AEO_AUDIT_INPUT,
-  annotations: {
-    title: "Audit a page or site for answer engines (AEO)",
-    readOnlyHint: true,
-    openWorldHint: true,
-  },
+  annotations: readOnlyAnnotations(
+    "Audit a page or site for answer engines (AEO)",
+    { openWorld: true }
+  ),
 };
 
 /** What send_feedback answers: the feedback was kept, and nothing else changed. */

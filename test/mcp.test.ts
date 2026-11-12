@@ -75,7 +75,6 @@ describe("MCP server", () => {
     expect([...LOCAL_TOOLS].toSorted()).toStrictEqual(names);
     const page = tools.find((t) => t.name === "seo_audit_page");
     assert(page, "seo_audit_page is listed");
-    expect(page.annotations?.readOnlyHint).toBeTruthy();
     expect(page.inputSchema).toMatchObject({ type: "object" });
     expect(JSON.stringify(page.inputSchema)).toContain('"render"');
   });
@@ -83,9 +82,19 @@ describe("MCP server", () => {
   it("names every tool in its annotations and links each audit to its docs", async () => {
     const { client } = await connect();
     const { tools } = await client.listTools();
+    // Only the directory audit and the rule list stay on this machine.
+    const local = new Set(["seo_audit_directory", "seo_list_rules"]);
 
     for (const tool of tools) {
-      expect(tool.annotations?.title).toBe(tool.title);
+      // Every tool reads, and sets all four hints, as OpenAI's plugin guidelines ask.
+      expect({ tool: tool.name, ...tool.annotations }).toStrictEqual({
+        tool: tool.name,
+        title: tool.title,
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: !local.has(tool.name),
+      });
     }
 
     for (const tool of tools.filter((t) => t.name !== "seo_list_rules")) {
