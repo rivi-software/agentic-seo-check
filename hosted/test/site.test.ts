@@ -24,7 +24,7 @@ import {
 } from "../src/site/site-report.ts";
 import { CLAUDE_DIRECTORY_URL } from "../src/ui/frame.ts";
 import { OG_IMAGE, SERVER_CARD, SITE_CARD } from "../src/ui/og.ts";
-import { STYLE } from "../src/ui/style.ts";
+import { FONT_PATHS, STYLE } from "../src/ui/style.ts";
 
 /** The daily limits as wrangler.jsonc sets them. */
 const DAILY = {
@@ -133,9 +133,13 @@ describe("the website's pages", () => {
 
     for (const html of [...site, ...server]) {
       expect(html).toContain('<script src="/site.js" defer></script>');
-      expect(html).toContain(
-        '<link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>'
-      );
+
+      // The headings' font and the copy's: every page opens with both.
+      for (const font of [FONT_PATHS.display, FONT_PATHS.sans]) {
+        expect(html).toContain(
+          `<link rel="preload" href="${font}" as="font" type="font/woff2" crossorigin>`
+        );
+      }
     }
 
     // Each hostname links the other's pages in its header and footer.

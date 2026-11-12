@@ -30,6 +30,7 @@ import {
   SERVER_CONFIG,
   SITE_CONFIG,
 } from "../scripts/defines.ts";
+import { FONT_PATHS } from "../src/ui/style.ts";
 
 const ORIGIN = "https://mcp.agentic-seo.rivi.software";
 const SITE = "https://agentic-seo.rivi.software";
@@ -713,6 +714,7 @@ describe("the hosted Worker in workerd", () => {
           "/site.js",
           "/ph.js",
           "/og.png",
+          "/fonts/bricolage-grotesque-latin.woff2",
           "/fonts/geist-latin.woff2",
           "/fonts/geist-mono-latin.woff2",
           "/nope",
@@ -732,6 +734,7 @@ describe("the hosted Worker in workerd", () => {
         ["/site.js", 200, "text/javascript; charset=utf-8"],
         ["/ph.js", 200, "text/javascript; charset=utf-8"],
         ["/og.png", 200, "image/png"],
+        ["/fonts/bricolage-grotesque-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-mono-latin.woff2", 200, "font/woff2"],
         ["/nope", 404, "text/html; charset=utf-8"],
@@ -869,6 +872,7 @@ describe("the hosted Worker in workerd", () => {
           "/site.js",
           "/favicon.svg",
           "/og.png",
+          "/fonts/bricolage-grotesque-latin.woff2",
           "/fonts/geist-latin.woff2",
           "/fonts/geist-mono-latin.woff2",
           "/nope",
@@ -889,6 +893,7 @@ describe("the hosted Worker in workerd", () => {
         ["/site.js", 200, "text/javascript; charset=utf-8"],
         ["/favicon.svg", 200, "image/svg+xml"],
         ["/og.png", 200, "image/png"],
+        ["/fonts/bricolage-grotesque-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-mono-latin.woff2", 200, "font/woff2"],
         ["/nope", 404, "text/html; charset=utf-8"],
@@ -933,17 +938,33 @@ describe("the hosted Worker in workerd", () => {
       expect(Buffer.from(siteCard).equals(Buffer.from(serverCard))).toBeFalsy();
     });
 
-    it("serves the fonts as WOFF2 files that never change, and no MCP endpoint", async () => {
-      const font = await website.fetch(`${SITE}/fonts/geist-latin.woff2`);
-      const bytes = new Uint8Array(await font.arrayBuffer());
+    it("serves the fonts on both hostnames as WOFF2 files that never change, and no MCP endpoint", async () => {
+      const fonts = Object.values(FONT_PATHS);
+
+      const answers = await Promise.all(
+        [
+          ...fonts.map((path) => website.fetch(`${SITE}${path}`)),
+          ...fonts.map((path) => fetch(new URL(path, base))),
+        ].map(async (pending) => {
+          const font = await pending;
+          const bytes = new Uint8Array(await font.arrayBuffer());
+
+          return [
+            new TextDecoder().decode(bytes.slice(0, 4)),
+            font.headers.get("cache-control"),
+          ];
+        })
+      );
 
       const { res: mcp } = await fetchRead(website, `${SITE}/mcp`, {
         method: "POST",
       });
 
-      expect(new TextDecoder().decode(bytes.slice(0, 4))).toBe("wOF2");
-      expect(font.headers.get("cache-control")).toBe(
-        "public, max-age=31536000, immutable"
+      expect(answers).toStrictEqual(
+        [...fonts, ...fonts].map(() => [
+          "wOF2",
+          "public, max-age=31536000, immutable",
+        ])
       );
       expect(mcp.status).toBe(405);
     });

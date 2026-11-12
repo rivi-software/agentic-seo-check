@@ -159,7 +159,11 @@ const CONSENT_BANNER = `<section class="consent" id="consent" aria-labelledby="c
 <div class="consent-actions"><button class="btn btn-secondary btn-sm" type="button" data-consent="decline">Decline</button><button class="btn btn-primary btn-sm" type="button" data-consent="accept">Accept</button></div>
 </section>`;
 
-/** The whole document of `page`, on the hostname of `host`. */
+/**
+ * The whole document of `page`, on the hostname of `host`. Every page opens with a heading in
+ * Bricolage Grotesque over copy in Geist, so it preloads both: without that, the heading would
+ * paint in Geist and then reflow.
+ */
 export const frame = (host: Host, page: FramePage): string => {
   const url = `${host.origin}${page.path}`;
 
@@ -186,6 +190,7 @@ export const frame = (host: Host, page: FramePage): string => {
 <meta name="description" content="${esc(page.description)}">
 <link rel="canonical" href="${url}">${page.noindex ? '\n<meta name="robots" content="noindex">' : ""}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="${FONT_PATHS.display}" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="${FONT_PATHS.sans}" as="font" type="font/woff2" crossorigin>
 <meta name="theme-color" content="#08090a">
 <meta property="og:type" content="website">
