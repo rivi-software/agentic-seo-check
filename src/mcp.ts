@@ -38,6 +38,7 @@ import {
   detail,
   docsNote,
   fail,
+  fieldDataOption,
   format,
   InputError,
   LIST_RULES,
@@ -69,6 +70,10 @@ export interface McpServerOptions {
    */
   hosted?: HostedProfile;
 }
+
+/** Where the local server's field data key comes from, as `fieldData` describes it. */
+const LOCAL_KEY =
+  "Needs CRUX_API_KEY in the server's environment: a free Google Cloud API key with the Chrome UX Report API enabled; without one the call fails and says how to get one. Never sent for localhost, a private address, or an audit with `headers`.";
 
 const metricCell = (name: string, value: number | null): string => {
   if (value === null) {
@@ -141,6 +146,7 @@ export const createMcpServer = (
         `Provide either \`url\` (live site, staging or http://localhost dev server) or \`html\` (raw HTML string, e.g. from a template or test render). ` +
         `Set \`render: true\` to also load the page in headless Chromium and report content that only exists after JavaScript runs (SPA/CSR problems). ` +
         `Set \`lighthouse: true\` for Core Web Vitals (LCP, CLS, TBT) and Lighthouse SEO audits; this takes 20-60 seconds. ` +
+        `Set \`fieldData: true\` for the Core Web Vitals of real visits (LCP, INP, CLS) from the Chrome UX Report, which Google ranks on. ` +
         `Typical workflow: audit, apply the \`fix\` of each error and warning in the source code, then re-check with \`rules\` (the rules you fixed) and \`baseline\` (the finding ids) to confirm they are fixed and nothing new appeared. ${docsNote(
           "local"
         )}`,
@@ -177,6 +183,7 @@ export const createMcpServer = (
           .enum(["mobile", "desktop"])
           .default("mobile")
           .describe("Lighthouse device emulation."),
+        fieldData: fieldDataOption(LOCAL_KEY),
         ...commonOptions,
       },
     },
@@ -187,6 +194,7 @@ export const createMcpServer = (
           render: input.render,
           lighthouse: input.lighthouse,
           formFactor: input.formFactor,
+          fieldData: input.fieldData,
           baseUrl: input.baseUrl,
         };
 
@@ -283,6 +291,7 @@ export const createMcpServer = (
           .describe(
             "summary: per-page scores/counts only (findings are rolled up in `issues`); full: every finding on every page."
           ),
+        fieldData: fieldDataOption(LOCAL_KEY),
         ...commonOptions,
       },
     },
@@ -290,6 +299,7 @@ export const createMcpServer = (
       try {
         const audit = await auditSite(input.url, {
           ...toOptions(input),
+          fieldData: input.fieldData,
           maxPages: input.maxPages,
           maxDepth: input.maxDepth,
           concurrency: input.concurrency,

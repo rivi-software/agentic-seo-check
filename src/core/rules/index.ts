@@ -9,6 +9,7 @@ import { canonicalRules } from "./canonical.js";
 import { contentRules } from "./content.js";
 import { discoverRules } from "./discover.js";
 import { documentRules } from "./document.js";
+import { fieldRules } from "./field.js";
 import { headRules } from "./head.js";
 import { headingRules } from "./headings.js";
 import { hreflangRules } from "./hreflang.js";
@@ -44,6 +45,7 @@ export const PAGE_RULES: Rule[] = [
   ...linkRules,
   ...urlRules,
   ...loadingRules,
+  ...fieldRules,
   ...hreflangRules,
   ...structuredDataRules,
   ...structuredDataValueRules,

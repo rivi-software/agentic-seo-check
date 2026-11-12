@@ -18,6 +18,7 @@ import { auditHtml, auditSite, auditUrl } from "./core/audit.js";
 import { caughtError, ExpectedError } from "./core/errors.js";
 import { RequestRefusedError } from "./core/fetch.js";
 import type { FetchOptions, RequestGate } from "./core/fetch.js";
+import type { FieldDataOptions } from "./core/field-data.js";
 import {
   HOSTED_LIMITS,
   hostedFetch,
@@ -30,6 +31,7 @@ import {
   detail,
   docsNote,
   fail,
+  fieldDataOption,
   format,
   InputError,
   LIST_RULES,
@@ -91,6 +93,11 @@ export interface HostedProfile {
    * failure, such as its Durable Object's (issue #93).
    */
   startCall: (call: HostedCallInfo) => Promise<HostedCall>;
+  /**
+   * The server's own Chrome UX Report key, and the cache that keeps each answer for a day, for
+   * `fieldData` (issue #130). Without it, a call that asks for field data fails and says so.
+   */
+  fieldData?: FieldDataOptions;
   /**
    * The session that the request's `Mcp-Session-Id` token names, as a UUIDv7 (hosted/src/analytics.ts).
    * A call that sends no conversation back joins it, so a connection's first conversation is its
@@ -262,6 +269,11 @@ const crawlLimits = {
     .describe(`Parallel requests (at most ${LIMITS.concurrency}).`),
 };
 
+/** `fieldData` on the hosted server: its own key, so the caller needs none. */
+const fieldData = fieldDataOption(
+  "This server asks with RIVI Software's own key, so you need none, and keeps each answer for a day, as the report changes daily. The URL goes to Google's Chrome UX Report API, never to the site itself; inline `html` is never sent."
+);
+
 /** The arguments of seo_audit_page. */
 const AUDIT_PAGE_INPUT = {
   url: url.optional().describe("Absolute http(s) URL to fetch and audit."),
@@ -273,6 +285,7 @@ const AUDIT_PAGE_INPUT = {
     .describe(
       "With `html`: the URL the HTML would be served at (used to resolve links and classify them as internal/external)."
     ),
+  fieldData,
   ...hostedOptions,
   ...agentArguments,
 };
@@ -317,6 +330,7 @@ const CRAWL_SITE_INPUT = {
     .describe(
       "summary: per-page scores/counts only (findings are rolled up in `issues`); full: every finding on every page."
     ),
+  fieldData,
   ...hostedOptions,
   ...agentArguments,
 };
@@ -623,13 +637,36 @@ const auditOptions = (
   fetch: { ...fetch, timeoutMs: input.timeoutMs },
 });
 
+/**
+ * The server's key and cache when the call asks for field data; a server without a key says so
+ * before the call counts, rather than audit without what was asked for.
+ */
+const fieldDataOf = (
+  profile: HostedProfile,
+  asked: boolean
+): FieldDataOptions | undefined => {
+  if (!asked) {
+    return undefined;
+  }
+
+  if (!profile.fieldData) {
+    throw new ExpectedError(
+      "This server cannot read the Chrome UX Report yet: it has no API key. Leave out `fieldData`, or ask the local server with a key of your own (CRUX_API_KEY).",
+      { reason: "field_data" }
+    );
+  }
+
+  return profile.fieldData;
+};
+
 /** seo_audit_page: one page, by URL or as HTML. */
 const AUDIT_PAGE = {
   ...readOnlyTool("Audit one page for SEO", { openWorld: true }),
   description:
     `Audit a single page and return prioritised, actionable findings (rule id, severity, message, recommendation, CSS selector, evidence) with a \`fix\` for each: the exact edits that resolve it, quoting the code to replace (\`{{…}}\` marks words the author writes). ` +
     `Checks title, meta description, headings, canonical, robots/noindex, viewport/lang, Open Graph/Twitter cards, images, links, hreflang, structured data (JSON-LD/microdata), content quality and the HTTP response. ` +
-    `Provide either \`url\` (a public http(s) URL) or \`html\` (raw HTML string, e.g. from a template or test render). ${
+    `Provide either \`url\` (a public http(s) URL) or \`html\` (raw HTML string, e.g. from a template or test render). ` +
+    `Set \`fieldData: true\` for the Core Web Vitals of real visits (LCP, INP, CLS) from the Chrome UX Report, which Google ranks on. ${
       HOSTED_NOTE
     }Typical workflow: audit, apply the \`fix\` of each error and warning in the source code, then re-check with \`rules\` (the rules you fixed) and \`baseline\` (the finding ids) to confirm they are fixed and nothing new appeared. ${docsNote(
       "hosted"
@@ -703,9 +740,12 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
       }
 
       let host: string | null = null;
+      let field: FieldDataOptions | undefined;
 
       try {
         host = inline || !target ? null : allowedHost(target);
+        // Inline HTML is no URL the Chrome UX Report could have.
+        field = fieldDataOf(profile, input.fieldData && host !== null);
       } catch (error) {
         return fail(error);
       }
@@ -717,6 +757,8 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
           const options = {
             ...auditOptions(input, fetch),
             baseUrl: input.baseUrl,
+            // Inline HTML asks for no key: the audit answers that it has no URL to ask for.
+            fieldData: inline ? input.fieldData : field,
           };
 
           const audit =
@@ -745,9 +787,11 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
       noteOptions(input, input.pageDetail);
 
       let host: string;
+      let field: FieldDataOptions | undefined;
 
       try {
         host = allowedHost(input.url);
+        field = fieldDataOf(profile, input.fieldData);
       } catch (error) {
         return fail(error);
       }
@@ -758,6 +802,7 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
         async (fetch) => {
           const audit = await auditSite(input.url, {
             ...auditOptions(input, fetch),
+            fieldData: field,
             maxPages: input.maxPages,
             maxDepth: input.maxDepth,
             concurrency: input.concurrency,

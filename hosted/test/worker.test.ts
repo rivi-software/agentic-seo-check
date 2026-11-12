@@ -40,6 +40,44 @@ const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 /** Where the Worker sends its analytics in the tests (issue #57): never PostHog itself. */
 const POSTHOG = "https://posthog.test";
 
+/** The Chrome UX Report API (issue #130), and the key the tests give both Workers. */
+const CRUX = "https://chromeuxreport.googleapis.com/v1/records:queryRecord";
+const CRUX_KEY = "test-crux-key-not-secret";
+
+/** The queries the Workers sent the Chrome UX Report: the URL or origin each asked for. */
+const cruxQueries: string[] = [];
+
+/** The Chrome UX Report's answer: a record for /about, with a poor LCP, and none for the rest. */
+const cruxAnswer = (query: { url?: string; origin?: string }): Response =>
+  query.url === "https://shop.example.com/about"
+    ? Response.json({
+        record: {
+          metrics: {
+            largest_contentful_paint: {
+              histogram: [
+                { start: 0, end: 2500, density: 0.5 },
+                { start: 2500, end: 4000, density: 0.2 },
+                { start: 4000, density: 0.3 },
+              ],
+              percentiles: { p75: 4400 },
+            },
+          },
+          collectionPeriod: {
+            firstDate: { year: 2026, month: 10, day: 13 },
+            lastDate: { year: 2026, month: 11, day: 9 },
+          },
+        },
+      })
+    : Response.json(
+        { error: { code: 404, message: "chrome ux report data not found" } },
+        { status: 404 }
+      );
+
+const CruxQuery = z.object({
+  url: z.string().optional(),
+  origin: z.string().optional(),
+});
+
 const html = (title: string, body = "", head = "") =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>${head}</head><body><h1>${title}</h1>${body}</body></html>`;
 
@@ -282,6 +320,7 @@ const start = (
     },
     bindings: {
       POSTHOG_HOST: { type: "plain_text", value: POSTHOG },
+      CRUX_API_KEY: { type: "secret_text", value: CRUX_KEY },
       ...Object.fromEntries(
         Object.entries(vars).map(([name, value]) => [
           name,
@@ -308,6 +347,14 @@ const start = (
           );
 
           return Response.json({ status: 1 });
+        }
+
+        // The Chrome UX Report, with the key the Workers were given: Google's, never a site's.
+        if (request.url === `${CRUX}?key=${CRUX_KEY}`) {
+          const query = CruxQuery.parse(await request.json());
+          cruxQueries.push(query.url ?? query.origin ?? "");
+
+          return cruxAnswer(query);
         }
 
         // Turnstile, as the audit form asks it: only the token "a-person" passes.
@@ -613,6 +660,24 @@ describe("the hosted Worker in workerd", () => {
       expect(page?.findings?.map((f) => f.rule)).toContain(
         "response.truncated"
       );
+    });
+
+    it("reads the Chrome UX Report with its own key, and asks once a day for each URL (issue #130)", async () => {
+      const before = cruxQueries.length;
+      const url = "https://shop.example.com/about";
+      const Field = z.object({ fieldData: z.object({ source: z.string() }) });
+
+      // One after the other: the second finds what the first put in the cache.
+      const first = await audit("seo_audit_page", { url, fieldData: true });
+      const second = await audit("seo_audit_page", { url, fieldData: true });
+
+      const sources = [first, second].map(
+        ({ result }) => Field.parse(result.structuredContent).fieldData.source
+      );
+
+      expect(sources).toStrictEqual(["url", "url"]);
+      // The second answer came from the Cache API.
+      expect(cruxQueries.slice(before)).toStrictEqual([url]);
     });
 
     it("signs every request with Web Bot Auth, robots.txt first", async () => {
@@ -987,6 +1052,15 @@ describe("the hosted Worker in workerd", () => {
         url: "https://shop.example.com/about",
         userAgent: `Mozilla/5.0 (compatible; agentic-seo-check/${readVersion()}; +${ORIGIN}/crawler)`,
       });
+    });
+
+    it("shows the page's real visits from the Chrome UX Report (issue #130)", async () => {
+      const res = await sendForm("shop.example.com/about");
+      const page = await res.text();
+
+      expect(page).toContain("Real visits on phones");
+      expect(page).toContain("4,400 ms");
+      expect(page).toContain("to this page, 2026-10-13 to 2026-11-09");
     });
 
     it("gives a report a share link, whose page stays out of search and whose image is the result's", async () => {

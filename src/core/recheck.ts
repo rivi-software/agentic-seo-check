@@ -89,6 +89,12 @@ export interface RecheckScope {
   /** Whether a rule ran this time; the caller knows the options. */
   ruleRan: (rule: string) => boolean;
   /**
+   * Rules that ran on some of the audited pages only, and those pages' URLs in every form: the
+   * Chrome UX Report's rules ran where the report had a record (issue #130). Every other rule ran
+   * on every page of `urls`.
+   */
+  onlyOn?: { rules: ReadonlySet<string>; urls: Iterable<string> };
+  /**
    * Findings this audit made but left out of its output (info, with `includeInfo: false`): still
    * on the page, so never fixed, and not listed as open or new either.
    */
@@ -99,6 +105,8 @@ export interface RecheckScope {
 interface Checked {
   /** Hashes of the URLs whose findings this audit checked. */
   urls: Set<string>;
+  /** Hashes of the URLs a rule's findings were checked on: `urls`, or fewer (`RecheckScope.onlyOn`). */
+  urlsOf: (rule: string) => Set<string>;
   shownIds: Set<string>;
   hiddenIds: Set<string>;
   /** Base ids of findings numbered now (`~n`), whose ids may have swapped. */
@@ -131,7 +139,9 @@ const fixedEntry = (entry: BaselineEntry, c: Checked): FixedFinding | null => {
   }
 
   const onPage =
-    parts.url === urlPart(undefined) ? c.scope.site : c.urls.has(parts.url);
+    parts.url === urlPart(undefined)
+      ? c.scope.site
+      : c.urlsOf(rule).has(parts.url);
 
   if (!onPage) {
     return null;
@@ -184,7 +194,21 @@ export const compareWithBaseline = (
     })
   );
 
-  const checked: Checked = { urls, shownIds, hiddenIds, numbered, scope };
+  const { onlyOn } = scope;
+  const narrower = new Set([...(onlyOn?.urls ?? [])].map(urlPart));
+
+  const urlsOf = (rule: string): Set<string> =>
+    onlyOn?.rules.has(rule) ? narrower : urls;
+
+  const checked: Checked = {
+    urls,
+    urlsOf,
+    shownIds,
+    hiddenIds,
+    numbered,
+    scope,
+  };
+
   const fixed: FixedFinding[] = [];
   let notChecked = 0;
 

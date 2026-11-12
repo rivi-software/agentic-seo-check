@@ -295,6 +295,48 @@ describe("the report of a page audit", () => {
     expect(report).toContain('id="report-data"');
   });
 
+  it("shows real visits from the Chrome UX Report only when the audit has field data (issue #130)", async () => {
+    const url = "https://shop.example.com/";
+
+    const html =
+      "<html><head><title>React App</title></head><body></body></html>";
+
+    const seo = await auditHtml(html, { url, source: "url", target: url });
+    const aeo = await auditAeoHtml(html, { url });
+    const metric = { p75: 4400, good: 0.5, needsImprovement: 0.2, poor: 0.3 };
+
+    const reports = [
+      seo,
+      {
+        ...seo,
+        fieldData: {
+          source: null,
+          reason: "no-data" as const,
+          message: "The Chrome UX Report has no record for this URL.",
+        },
+      },
+      {
+        ...seo,
+        fieldData: {
+          source: "url" as const,
+          formFactor: "PHONE" as const,
+          period: { firstDate: "2026-10-13", lastDate: "2026-11-09" },
+          lcpMs: metric,
+          inpMs: null,
+          cls: null,
+          fcpMs: null,
+          ttfbMs: null,
+        },
+      },
+    ].map((withField) => renderReport(withField, aeo));
+
+    expect(
+      reports.map((report) => report.includes("Real visits on phones"))
+    ).toStrictEqual([false, true, true]);
+    expect(reports[1]).toContain("has no record for this URL");
+    expect(reports[2]).toContain("4,400 ms");
+  });
+
   it("is in sections, with a tab for each, the SEO findings by category and an index of them", async () => {
     const url = "https://shop.example.com/";
 

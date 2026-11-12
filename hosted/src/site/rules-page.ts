@@ -19,6 +19,8 @@ import { severityChip } from "./report.js";
 const REQUIREMENT: Record<Requirement, string> = {
   render: "Runs with --render, on the command or the local server.",
   lighthouse: "Runs with --lighthouse, on the command or the local server.",
+  "field-data":
+    "Runs with --field-data (fieldData), on the command and both MCP servers, and in this site's audits: it reads the Chrome UX Report's real-user data.",
   crawl: "Runs on a crawl or a build directory.",
   keyword: "Runs when the audit is given a keyword.",
   "ai-bots": "Runs with --ai-bots, on the command or the local server.",
@@ -28,6 +30,7 @@ const REQUIREMENT: Record<Requirement, string> = {
 const REQUIREMENT_TAG: Record<Requirement, string> = {
   render: "--render",
   lighthouse: "--lighthouse",
+  "field-data": "--field-data",
   crawl: "crawl",
   keyword: "keyword",
   "ai-bots": "--ai-bots",

@@ -35,6 +35,7 @@ export type Category =
 export type Requirement =
   | "render"
   | "lighthouse"
+  | "field-data"
   | "crawl"
   | "keyword"
   | "ai-bots";
@@ -576,6 +577,50 @@ export interface PerformanceResult {
   scripts?: LighthouseItem[];
 }
 
+/**
+ * One metric of the Chrome UX Report: its 75th percentile over real visits, and how the visits
+ * spread over Google's three ranges for it.
+ */
+export interface FieldMetric {
+  /** The 75th percentile: milliseconds, or the layout shift score for CLS. */
+  p75: number;
+  /** The share of visits, from 0 to 1, in each range: good, needs improvement and poor. */
+  good: number;
+  needsImprovement: number;
+  poor: number;
+}
+
+/**
+ * Real-user Core Web Vitals from the Chrome UX Report (`fieldData`, issue #130): visits in Chrome
+ * on phones over 28 days, for the page's URL or, when it has too few visits of its own, its origin.
+ */
+export interface FieldData {
+  /** Whose record it is: the page's own URL's, or its origin's. */
+  source: "url" | "origin";
+  formFactor: "PHONE";
+  /** The 28 days the record covers, as dates (2026-11-10). */
+  period: { firstDate: string; lastDate: string };
+  /** A metric is null when the record has too few visits for it, as INP has without taps. */
+  lcpMs: FieldMetric | null;
+  inpMs: FieldMetric | null;
+  cls: FieldMetric | null;
+  fcpMs: FieldMetric | null;
+  ttfbMs: FieldMetric | null;
+}
+
+/** Why an audit that asked for field data has none for a page. */
+export interface NoFieldData {
+  source: null;
+  /**
+   * `no-data`: the Chrome UX Report has no record for the URL (or its origin), as for any page
+   * with few visits, which says nothing against it; `not-public`: there is no public URL to ask
+   * for, as the audit read HTML, or never sends a URL on localhost, a private network or behind a
+   * login (`headers`); `unavailable`: the API did not answer.
+   */
+  reason: "no-data" | "not-public" | "unavailable";
+  message: string;
+}
+
 export interface RenderComparison {
   tool: "playwright";
   renderedUrl: string;
@@ -616,6 +661,11 @@ export interface PageAudit {
   score: number;
   performance?: PerformanceResult;
   rendering?: RenderComparison;
+  /**
+   * With `fieldData`: real-user Core Web Vitals from the Chrome UX Report, or why there are none.
+   * A crawl asks for its first pages only.
+   */
+  fieldData?: FieldData | NoFieldData;
   /** Crawl depth from the start URL (site audits only). */
   depth?: number;
 }

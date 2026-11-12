@@ -70,6 +70,10 @@ export { renderPage, RenderUnavailableError } from "./core/render.js";
 
 export { ExpectedError } from "./core/errors.js";
 
+export { FieldDataKeyError } from "./core/field-data.js";
+
+export type { FieldDataCache, FieldDataOptions } from "./core/field-data.js";
+
 export {
   fetchPage,
   probeUrl,

@@ -6,12 +6,24 @@
  */
 import { MAKER, MAKER_URL, PRODUCT_NAME } from "../../brand.js";
 import { VERSION } from "../../version.js";
+import {
+  CORE_VITALS,
+  FIELD_LABELS,
+  FIELD_METRICS,
+  fieldBand,
+  fieldValue,
+  NO_FIELD_DATA_LABELS,
+  sharePercent,
+} from "../field-data.js";
+import type { FieldBand, FieldMetricKey } from "../field-data.js";
 import { AEO_PAGE_RULES } from "../rules/index.js";
 import type {
   AeoAudit,
   AeoPageSummary,
   AiBotAccess,
   BaselineComparison,
+  FieldData,
+  FieldMetric,
   Finding,
   FixEdit,
   IssueRollup,
@@ -116,6 +128,7 @@ const HEADING: Record<Severity, string> = {
 const REQUIREMENT: Record<Requirement, string> = {
   render: "Runs with --render.",
   lighthouse: "Runs with --lighthouse.",
+  "field-data": "Runs with --field-data.",
   crawl: "Runs on a crawl or a directory.",
   keyword: "Runs with --keyword.",
   "ai-bots": "Runs with --ai-bots.",
@@ -125,6 +138,7 @@ const REQUIREMENT: Record<Requirement, string> = {
 const REQUIRED_FLAG: Record<Requirement, string> = {
   render: " --render",
   lighthouse: " --lighthouse",
+  "field-data": " --field-data",
   crawl: " --crawl",
   keyword: " --keyword <keyword>",
   "ai-bots": " --ai-bots",
@@ -689,6 +703,119 @@ const performanceLines = (audit: PageAudit, w: Writer): string[] => {
   ];
 };
 
+const FIELD_BAND_STYLE: Record<FieldBand, Style> = {
+  good: "green",
+  "needs improvement": "yellow",
+  poor: "red",
+};
+
+/** "2.1 s · good · 82% of visits good", or that the record has too few visits for the metric. */
+const fieldMetricText = (
+  key: FieldMetricKey,
+  metric: FieldMetric | null,
+  w: Writer
+): string => {
+  if (!metric) {
+    return w.style("dim", "too few visits");
+  }
+
+  const rating = fieldBand(key, metric.p75);
+
+  return dotted(
+    [
+      w.style(FIELD_BAND_STYLE[rating], fieldValue(key, metric.p75)),
+      w.style(FIELD_BAND_STYLE[rating], rating),
+      `${sharePercent(metric.good)} of visits good`,
+    ],
+    w
+  );
+};
+
+/** Whose record it is and the 28 days it covers. */
+const fieldRecordText = (field: FieldData): string =>
+  `${field.source === "url" ? "this URL" : "the origin, as this URL has too few visits"}, ${field.period.firstDate} to ${field.period.lastDate}`;
+
+const FIELD_HEADING = "Field data (Chrome UX Report, phones)";
+
+/** Real-user Core Web Vitals at the 75th percentile, or why the audit has none. */
+const fieldDataLines = (audit: PageAudit, w: Writer): string[] => {
+  const field = audit.fieldData;
+
+  if (!field) {
+    return [];
+  }
+
+  if (field.source === null) {
+    return [
+      heading(FIELD_HEADING, w),
+      "",
+      ...block(field.message, "  ", w),
+      "",
+    ];
+  }
+
+  return [
+    heading(FIELD_HEADING, w),
+    "",
+    ...fieldLines(
+      [
+        ["Record", fieldRecordText(field)],
+        ...FIELD_METRICS.map((key): Field => [
+          `${FIELD_LABELS[key]} (p75)`,
+          fieldMetricText(key, field[key], w),
+        ]),
+      ],
+      w
+    ),
+    "",
+  ];
+};
+
+/** The Core Web Vitals of the pages a crawl asked the Chrome UX Report for. */
+const siteFieldDataLines = (audit: SiteAudit, w: Writer): string[] => {
+  const asked = audit.pages.filter((p) => p.fieldData);
+
+  if (asked.length === 0) {
+    return [];
+  }
+
+  const vital = (field: FieldData, key: FieldMetricKey): string => {
+    const metric = field[key];
+
+    if (!metric) {
+      return w.style("dim", `${FIELD_LABELS[key]} –`);
+    }
+
+    return `${FIELD_LABELS[key]} ${w.style(FIELD_BAND_STYLE[fieldBand(key, metric.p75)], fieldValue(key, metric.p75))}`;
+  };
+
+  return [
+    heading(FIELD_HEADING, w, { count: asked.length }),
+    "",
+    ...asked.flatMap((p) => {
+      const field = p.fieldData;
+      const path = terminalSafe(pathOf(p.url, w.origin));
+
+      if (!field) {
+        return [];
+      }
+
+      if (field.source === null) {
+        return [
+          `  ${path}  ${w.style("dim", NO_FIELD_DATA_LABELS[field.reason])}`,
+        ];
+      }
+
+      const vitals = CORE_VITALS.map((key) => vital(field, key));
+
+      return [
+        `  ${path}  ${dotted([...vitals, ...(field.source === "origin" ? [w.style("dim", "origin")] : [])], w)}`,
+      ];
+    }),
+    "",
+  ];
+};
+
 const shown = (value: string | number | null): string =>
   value === null || value === "" ? "missing" : String(value);
 
@@ -780,6 +907,7 @@ const pageText = (audit: PageAudit, w: Writer): string[] => {
     "",
     ...fieldLines(pageFacts(audit), w),
     "",
+    ...fieldDataLines(audit, w),
     ...performanceLines(audit, w),
     ...renderingLines(audit, w),
     ...(audit.baseline ? baselineLines(audit.baseline, w) : []),
@@ -866,6 +994,7 @@ const siteText = (audit: SiteAudit, w: Writer): string[] => {
     ...(audit.baseline ? baselineLines(audit.baseline, w) : []),
     ...siteFindingLines("Site-wide", audit.siteFindings, w),
     ...issueLines(audit.issues, w),
+    ...siteFieldDataLines(audit, w),
     ...pageRows("Pages", audit.pages, w),
     ...(audit.siteFindings.length === 0 && audit.issues.length === 0
       ? [`  ${w.style("green", "✓ No issues found.")}`, ""]

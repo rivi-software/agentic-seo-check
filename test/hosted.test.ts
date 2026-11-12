@@ -1841,4 +1841,109 @@ describe("the hosted server", () => {
       expect(rulesOf(findings)).not.toContain("aeo.llms-txt-missing");
     });
   });
+
+  describe("its field data (issue #130)", () => {
+    const KEY = "test-crux-key";
+    const CRUX = `https://chromeuxreport.googleapis.com/v1/records:queryRecord?key=${KEY}`;
+
+    /** The Chrome UX Report's record of every URL and origin: a poor LCP. */
+    const cruxRecord = {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        record: {
+          metrics: {
+            largest_contentful_paint: {
+              histogram: [
+                { start: 0, end: 2500, density: 0.5 },
+                { start: 2500, end: 4000, density: 0.2 },
+                { start: 4000, density: 0.3 },
+              ],
+              percentiles: { p75: 4400 },
+            },
+          },
+          collectionPeriod: {
+            firstDate: { year: 2026, month: 10, day: 13 },
+            lastDate: { year: 2026, month: 11, day: 9 },
+          },
+        },
+      }),
+    };
+
+    const FieldAudit = z.object({
+      fieldData: z.object({ source: z.string().nullable() }),
+      findings: z.array(z.object({ rule: z.string() })),
+    });
+
+    it("reads the Chrome UX Report with the server's own key, for a page and a crawl", async () => {
+      const requests = serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nAllow: /\n",
+        },
+        "https://shop.example.com/": {
+          body: page("Shop home page for the fixture", "<p>Widgets.</p>"),
+        },
+        [CRUX]: cruxRecord,
+      });
+
+      const { profile } = profileWith();
+      const client = await connect({ ...profile, fieldData: { apiKey: KEY } });
+
+      const pageResult = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/", fieldData: true },
+      });
+
+      const crawlResult = await client.callTool({
+        name: "seo_crawl_site",
+        arguments: {
+          url: "https://shop.example.com/",
+          fieldData: true,
+          pageDetail: "full",
+        },
+      });
+
+      const pageAudit = FieldAudit.parse(pageResult.structuredContent);
+
+      const [start] = z
+        .object({ pages: z.array(FieldAudit) })
+        .parse(crawlResult.structuredContent).pages;
+
+      expect(pageAudit.fieldData.source).toBe("url");
+      expect(rulesOf(pageAudit.findings)).toContain("perf.field-lcp-poor");
+      expect(start?.fieldData.source).toBe("url");
+      // The Chrome UX Report is Google's: no request of it goes through the gate's robots.txt.
+      expect(
+        requests.filter((r) => r.url.startsWith("https://chromeuxreport."))
+      ).toHaveLength(2);
+    });
+
+    it("says it has no key, before the call counts, and audits inline HTML as ever", async () => {
+      serve({});
+
+      const { profile, calls: started } = profileWith();
+      const { client, calls } = await connectWatched(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/", fieldData: true },
+      });
+
+      const inline = await client.callTool({
+        name: "seo_audit_page",
+        arguments: {
+          html: page("Inline page for the fixture", ""),
+          fieldData: true,
+        },
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toContain("it has no API key");
+      expect(inline.structuredContent).toMatchObject({
+        fieldData: { source: null, reason: "not-public" },
+      });
+      expect(started.map((c) => c.fetches)).toStrictEqual([false]);
+      expect(calls[0]?.properties?.reason).toBe("field_data");
+    });
+  });
 });

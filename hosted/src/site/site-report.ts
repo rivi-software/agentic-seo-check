@@ -34,6 +34,7 @@ import {
   code,
   crawlersSection,
   facts,
+  fieldCard,
   findingGroup,
   findingsIndex,
   findingSummary,
@@ -262,6 +263,8 @@ export const renderSiteReport = (audits: SiteAudits, share = ""): string => {
           overviewPart("The crawl", crawlFacts(seo), "crawl"),
           overviewPart("For AI answer engines", aeoFacts(aeo, "site")),
         ]),
+        // The homepage's, or its origin's: the crawl asks the origin for the start page alone.
+        fieldCard(start?.seo.fieldData),
       ].join("\n"),
     },
     {

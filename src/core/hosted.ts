@@ -87,34 +87,65 @@ const LOCAL_SUFFIXES = [".localhost", ".local", ".internal"];
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/u;
 
 /**
- * Why the hosted server will not request `url`, or undefined when it may: it requests http and
- * https URLs on public hostnames only. A Worker reaches no private network anyway; the rules give
- * a clear answer instead of a failed request.
+ * What keeps `url` off the public internet, or undefined for an http(s) URL on a public hostname:
+ * another scheme, credentials in it, an IP address, or a name that resolves on a machine or a
+ * private network only, with `suffixes` as more such name endings. The hosted server's address
+ * rules and the field data's (field-data.ts) read it.
  */
-export const hostedUrlProblem = (url: URL): string | undefined => {
+export const privateUrlKind = (
+  url: URL,
+  suffixes: readonly string[] = []
+): "scheme" | "credentials" | "ip" | "local" | undefined => {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return `The hosted server requests http and https URLs only, not ${url.protocol} ones (${url.href}).`;
+    return "scheme";
   }
 
   if (url.username || url.password) {
-    return `The hosted server does not send credentials in a URL (${url.host}). A site behind a login is one for the local server, which can send your headers: ${LOCAL_SERVER}`;
+    return "credentials";
   }
 
   const host = url.hostname.replace(/\.$/u, "");
 
   if (IPV4.test(host) || host.startsWith("[")) {
-    return `The hosted server requests hostnames only, not IP addresses (${host}). ${USE_LOCAL}`;
+    return "ip";
   }
 
-  if (
-    host === "localhost" ||
+  return host === "localhost" ||
     !host.includes(".") ||
-    LOCAL_SUFFIXES.some((suffix) => host.endsWith(suffix))
-  ) {
-    return `The hosted server cannot reach ${host}: it runs on Cloudflare's network, not on your machine or your network. ${USE_LOCAL}`;
-  }
+    [...LOCAL_SUFFIXES, ...suffixes].some((suffix) => host.endsWith(suffix))
+    ? "local"
+    : undefined;
+};
 
-  return undefined;
+/**
+ * Why the hosted server will not request `url`, or undefined when it may: it requests http and
+ * https URLs on public hostnames only. A Worker reaches no private network anyway; the rules give
+ * a clear answer instead of a failed request.
+ */
+export const hostedUrlProblem = (url: URL): string | undefined => {
+  const host = url.hostname.replace(/\.$/u, "");
+
+  switch (privateUrlKind(url)) {
+    case "scheme": {
+      return `The hosted server requests http and https URLs only, not ${url.protocol} ones (${url.href}).`;
+    }
+
+    case "credentials": {
+      return `The hosted server does not send credentials in a URL (${url.host}). A site behind a login is one for the local server, which can send your headers: ${LOCAL_SERVER}`;
+    }
+
+    case "ip": {
+      return `The hosted server requests hostnames only, not IP addresses (${host}). ${USE_LOCAL}`;
+    }
+
+    case "local": {
+      return `The hosted server cannot reach ${host}: it runs on Cloudflare's network, not on your machine or your network. ${USE_LOCAL}`;
+    }
+
+    default: {
+      return undefined;
+    }
+  }
 };
 
 /**

@@ -15,6 +15,8 @@ import type {
 import { VERSION } from "../../src/version.js";
 import type { ReportTask } from "./analytics.js";
 import type { Caller } from "./callers.js";
+import { cruxOptions } from "./crux.js";
+import type { CruxEnv } from "./crux.js";
 import { requestSigner } from "./signing.js";
 import { globalState } from "./state.js";
 import type { StateEnv } from "./state.js";
@@ -148,7 +150,7 @@ export type DailyLimits = Pick<
 >;
 
 /** The bindings and variables the limits use (wrangler.jsonc, and wrangler.site.jsonc alike). */
-export interface LimitsEnv extends StateEnv<DayCounter> {
+export interface LimitsEnv extends StateEnv<DayCounter>, CruxEnv {
   MODE: string;
   DAILY_REQUESTS: number;
   /** Different sites one IP address may audit a day. */
@@ -469,6 +471,7 @@ export const hostedProfile = (
       ORIGIN,
       report && ((error) => report(error, "signing_keys"))
     ),
+    fieldData: cruxOptions(env, ORIGIN),
     startCall: async (call) => {
       const started = Date.now();
 

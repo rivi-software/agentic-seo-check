@@ -1,11 +1,22 @@
 import { MAKER, MAKER_URL, PRODUCT_NAME, REPOSITORY_URL } from "../../brand.js";
 import { VERSION } from "../../version.js";
+import {
+  FIELD_LABELS,
+  FIELD_METRICS,
+  fieldBand,
+  fieldValue,
+  NO_FIELD_DATA_LABELS,
+  sharePercent,
+} from "../field-data.js";
+import type { CORE_VITALS } from "../field-data.js";
 import type {
   AeoAudit,
   AiBotAccess,
   AiCrawlerReport,
   Audit,
   BaselineComparison,
+  FieldData,
+  NoFieldData,
   Finding,
   FixEdit,
   LlmsTxtInfo,
@@ -173,6 +184,70 @@ const findingsSection = (findings: Finding[], heading: string): string[] => {
   return lines;
 };
 
+const FIELD_HEADING = "Field data (Chrome UX Report, phones)";
+
+/** Whose record it is and the 28 days it covers. */
+const fieldRecordLine = (field: FieldData): string =>
+  `Real Chrome visits ${field.source === "url" ? "to this URL" : "to the whole origin, as this URL has too few of its own"}, ${field.period.firstDate} to ${field.period.lastDate}, at the 75th percentile.`;
+
+/** Real-user Core Web Vitals at the 75th percentile, or why the audit has none. */
+const fieldDataLines = (
+  field: FieldData | NoFieldData,
+  heading: string
+): string[] => {
+  if (field.source === null) {
+    return [`${heading}# ${FIELD_HEADING}`, "", field.message, ""];
+  }
+
+  return [
+    `${heading}# ${FIELD_HEADING}`,
+    "",
+    fieldRecordLine(field),
+    "",
+    "| Metric | p75 | Rating | Good | Needs improvement | Poor |",
+    "| --- | --- | --- | --- | --- | --- |",
+    ...FIELD_METRICS.map((key) => {
+      const m = field[key];
+
+      return m
+        ? `| ${FIELD_LABELS[key]} | ${fieldValue(key, m.p75)} | ${fieldBand(key, m.p75)} | ${sharePercent(m.good)} | ${sharePercent(m.needsImprovement)} | ${sharePercent(m.poor)} |`
+        : `| ${FIELD_LABELS[key]} | — | too few visits | — | — | — |`;
+    }),
+    "",
+  ];
+};
+
+/** A Core Web Vital of a crawled page: "2.1 s (good)". */
+const vital = (field: FieldData, key: (typeof CORE_VITALS)[number]): string => {
+  const m = field[key];
+
+  return m ? `${fieldValue(key, m.p75)} (${fieldBand(key, m.p75)})` : "—";
+};
+
+/** The Core Web Vitals of the pages a crawl asked the Chrome UX Report for. */
+const siteFieldDataLines = (audit: SiteAudit): string[] => {
+  const asked = audit.pages.filter((p) => p.fieldData);
+
+  if (asked.length === 0) {
+    return [];
+  }
+
+  return [
+    `## ${FIELD_HEADING}`,
+    "",
+    "| URL | Record | LCP | INP | CLS |",
+    "| --- | --- | --- | --- | --- |",
+    ...asked.map((p) => {
+      const field = p.fieldData;
+
+      return field && field.source !== null
+        ? `| ${p.url} | ${field.source} | ${vital(field, "lcpMs")} | ${vital(field, "inpMs")} | ${vital(field, "cls")} |`
+        : `| ${p.url} | ${NO_FIELD_DATA_LABELS[field?.reason ?? "no-data"]} | — | — | — |`;
+    }),
+    "",
+  ];
+};
+
 const pageMarkdown = (audit: PageAudit, heading = "#"): string => {
   const lines: string[] = [
     `${heading} SEO audit: ${audit.url}`,
@@ -207,6 +282,10 @@ const pageMarkdown = (audit: PageAudit, heading = "#"): string => {
     } |`,
     ""
   );
+
+  if (audit.fieldData) {
+    lines.push(...fieldDataLines(audit.fieldData, heading));
+  }
 
   if (audit.performance) {
     const m = audit.performance.metrics;
@@ -314,6 +393,7 @@ const siteMarkdown = (audit: SiteAudit): string => {
   }
 
   lines.push(
+    ...siteFieldDataLines(audit),
     "## Pages",
     "",
     "| Score | E/W/I | URL | Title |",

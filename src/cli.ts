@@ -75,6 +75,7 @@ const OVERVIEW_EXAMPLES = [
 
 const AUDIT_EXAMPLES = [
   "audit https://www.example.com/pricing",
+  "audit https://www.example.com/pricing --field-data",
   "audit http://localhost:3000 --crawl --ignore-robots",
   "audit ./dist --base-url https://www.example.com",
   "audit https://www.example.com -o report.md",
@@ -263,6 +264,10 @@ const addAuditOptions = (cmd: Command, mode: Mode): Command => {
         new Option("--form-factor <type>", "Lighthouse device emulation")
           .choices(["mobile", "desktop"])
           .default("mobile")
+      )
+      .option(
+        "--field-data",
+        "Real-user Core Web Vitals from the Chrome UX Report, for a URL and the first pages of a crawl (needs a free API key in CRUX_API_KEY)"
       );
   }
 
@@ -326,6 +331,7 @@ interface CliOptions {
   render?: boolean;
   lighthouse?: boolean;
   formFactor?: "mobile" | "desktop";
+  fieldData?: boolean;
   aiBots?: boolean;
   baseUrl?: string;
   ignoreRobots?: boolean;
@@ -435,6 +441,7 @@ const auditFor = async (
     render: opts.render,
     lighthouse: opts.lighthouse,
     formFactor: opts.formFactor,
+    fieldData: opts.fieldData,
     baseUrl: opts.baseUrl,
     respectRobots: !opts.ignoreRobots,
     includeSubdomains: opts.includeSubdomains,

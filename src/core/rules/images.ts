@@ -17,6 +17,40 @@ const imageAt = (image: ImageInfo, fallback: string): string =>
     ? withAttributeSelector("img", "src", image.src)
     : fallback;
 
+/** Images with a src but without a width or a height attribute, whose space the browser cannot reserve. */
+export const unsizedImages = (images: readonly ImageInfo[]): ImageInfo[] =>
+  images.filter((i) => i.src && (!i.width || !i.height));
+
+/** The width and height an image lacks, written into its tag as the page writes it. */
+export const sizeEdit = (i: ImageInfo): FixEdit => {
+  const at = imageAt(i, "img:not([width]), img:not([height])");
+  let code: string | null = i.tag;
+
+  if (!i.width) {
+    code = withAttribute(code, "width", slot("width"));
+  }
+
+  if (code && !i.height) {
+    code = withAttribute(code, "height", slot("height"));
+  }
+
+  const write =
+    "The image's size in pixels (its intrinsic width and height, or the size it is shown at with the same aspect ratio); CSS can still scale it.";
+
+  return code
+    ? replaceHtml(i.tag, code, { at, write })
+    : addHtml(
+        at,
+        [
+          i.width ? "" : `width="${slot("width")}"`,
+          i.height ? "" : `height="${slot("height")}"`,
+        ]
+          .filter(Boolean)
+          .join(" "),
+        write
+      );
+};
+
 const ALT_WRITE =
   'What the image shows, in a few words, for someone who cannot see it; leave it empty (alt="") when the image is only decoration.';
 
@@ -154,44 +188,13 @@ export const imageRules = [
       docs: GOOGLE_DOCS.cwv,
     },
     ({ page }, make) => {
-      const missing = page.images.filter(
-        (i) => i.src && (!i.width || !i.height)
-      );
-
-      const fix = missing.map((i): FixEdit => {
-        const at = imageAt(i, "img:not([width]), img:not([height])");
-        let code: string | null = i.tag;
-
-        if (!i.width) {
-          code = withAttribute(code, "width", slot("width"));
-        }
-
-        if (code && !i.height) {
-          code = withAttribute(code, "height", slot("height"));
-        }
-
-        const write =
-          "The image's size in pixels (its intrinsic width and height, or the size it is shown at with the same aspect ratio); CSS can still scale it.";
-
-        return code
-          ? replaceHtml(i.tag, code, { at, write })
-          : addHtml(
-              at,
-              [
-                i.width ? "" : `width="${slot("width")}"`,
-                i.height ? "" : `height="${slot("height")}"`,
-              ]
-                .filter(Boolean)
-                .join(" "),
-              write
-            );
-      });
+      const missing = unsizedImages(page.images);
 
       return missing.length
         ? make(
             `${missing.length} of ${page.images.length} images lack width/height attributes.`,
             {
-              fix,
+              fix: missing.map(sizeEdit),
               selector: "img:not([width]), img:not([height])",
               evidence: {
                 count: missing.length,
