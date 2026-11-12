@@ -396,9 +396,10 @@ describe(comparePages, () => {
     expect(`${text}\n${markdown}`).not.toContain(
       "has what most competitors have"
     );
-    expect(text).toContain(
-      "Nothing was compared: no competitor's page could be read."
-    );
+    // Said once: the text report lists no empty gaps or leads beside it.
+    expect(
+      text.split("Nothing was compared: no competitor's page could be read.")
+    ).toHaveLength(2);
     expect(markdown).toContain(
       "Nothing was compared: no competitor's page could be read."
     );

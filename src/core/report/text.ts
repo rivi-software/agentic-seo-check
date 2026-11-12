@@ -1351,6 +1351,20 @@ const leadLines = (lead: ComparisonLead, w: Writer): string[] =>
     { symbol: w.style("green", "✓") }
   );
 
+const gapAndLeadSections = (c: Comparison, w: Writer): string[] => [
+  heading("Gaps", w, { count: c.gaps.length, style: "yellow" }),
+  "",
+  ...(c.gaps.length === 0
+    ? [`  ${w.style("green", "✓ None.")}`, ""]
+    : c.gaps.flatMap((gap) => gapLines(gap, w))),
+  heading("Leads", w, { count: c.leads.length, style: "green" }),
+  "",
+  ...(c.leads.length === 0
+    ? [`  ${w.style("dim", "None.")}`]
+    : c.leads.flatMap((lead) => leadLines(lead, w))),
+  "",
+];
+
 const comparisonText = (c: Comparison, w: Writer): string[] => {
   const covered = c.gaps.filter((g) => g.fix.length > 0).length;
   const { read } = competitorCounts(c);
@@ -1384,22 +1398,8 @@ const comparisonText = (c: Comparison, w: Writer): string[] => {
     `  ${dotted([comparisonVerdict(c, w), c.keyword ? `keyword "${terminalSafe(c.keyword)}"` : ""], w)}`,
     "",
     ...comparedPageLines(c, w),
-    heading("Gaps", w, { count: c.gaps.length, style: "yellow" }),
-    "",
-    ...(c.gaps.length === 0
-      ? [
-          read === 0
-            ? `  ${w.style("dim", NOTHING_COMPARED)}`
-            : `  ${w.style("green", "✓ None.")}`,
-          "",
-        ]
-      : c.gaps.flatMap((gap) => gapLines(gap, w))),
-    heading("Leads", w, { count: c.leads.length, style: "green" }),
-    "",
-    ...(c.leads.length === 0
-      ? [`  ${w.style("dim", "None.")}`]
-      : c.leads.flatMap((lead) => leadLines(lead, w))),
-    "",
+    // With no competitor read there is nothing to list: the Summary says so, once.
+    ...(read === 0 ? [] : gapAndLeadSections(c, w)),
     heading("Summary", w),
     "",
     `  ${comparisonVerdict(c, w)}`,

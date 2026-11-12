@@ -520,7 +520,7 @@ describe("the hosted server's limits", () => {
     expect(JSON.stringify(points)).not.toMatch(/\/a|b=c|203\.0\.113\.9/u);
   });
 
-  it("record each competitor's hostname a comparison sent requests to, with its requests, and no other (issue #129)", async () => {
+  it("record each other hostname a comparison sent requests to: its competitors' sites, and where a page led (issue #129)", async () => {
     const { env, ctx, points } = fakeEnv();
     const call = await hostedProfile(env, ctx, PERSON).startCall(COMPARE);
 
@@ -531,24 +531,51 @@ describe("the hosted server's limits", () => {
         "https://rival.example.org/robots.txt",
         "https://rival.example.org/widgets",
         "https://rival.example.org/llms.txt",
-        // Where the page itself redirected: a site of the call, but no competitor's.
+        // Where the page itself redirected, and where a competitor's page did: no competitor's sites.
         "https://shop.example.net/widgets",
+        "https://moved.example.io/widgets",
+        "https://moved.example.io/llms.txt",
       ].map((url) => call.gate?.beforeRequest(new URL(url)))
     );
 
     call.end?.({ outcome: "ok", pages: 2 });
 
-    expect(points).toMatchObject([
-      {
-        indexes: ["www.example.com"],
-        blobs: ["seo_compare_pages", "ok", "www.example.com"],
-        doubles: [expect.any(Number), 6, 2],
-      },
-      {
-        indexes: ["rival.example.org"],
-        blobs: ["seo_compare_pages", "ok", "rival.example.org", "competitor"],
-        doubles: [expect.any(Number), 3, 0],
-      },
+    expect(
+      points.map((p) => [
+        p.indexes?.[0],
+        p.blobs?.slice(1),
+        p.doubles?.slice(1),
+      ])
+    ).toStrictEqual([
+      ["www.example.com", ["ok", "www.example.com"], [8, 2]],
+      ["rival.example.org", ["ok", "rival.example.org", "competitor"], [3, 0]],
+      ["shop.example.net", ["ok", "shop.example.net", "redirect"], [1, 0]],
+      ["moved.example.io", ["ok", "moved.example.io", "redirect"], [2, 0]],
+    ]);
+  });
+
+  it("record where a page audit's page led, but not the sites a crawl's link checks reach", async () => {
+    const { env, ctx, points } = fakeEnv();
+    const profile = hostedProfile(env, ctx, PERSON);
+    const page = await profile.startCall(PAGE);
+    const crawl = await profile.startCall(CRAWL);
+
+    await Promise.all([
+      page.gate?.beforeRequest(new URL("https://www.example.com/")),
+      page.gate?.beforeRequest(new URL("https://shop.example.org/")),
+      crawl.gate?.beforeRequest(new URL("https://www.example.com/")),
+      crawl.gate?.beforeRequest(new URL("https://elsewhere.example.net/")),
+    ]);
+
+    page.end?.({ outcome: "ok", pages: 1 });
+    crawl.end?.({ outcome: "ok", pages: 1 });
+
+    expect(
+      points.map((p) => [p.blobs?.[0], ...(p.blobs?.slice(2) ?? [])])
+    ).toStrictEqual([
+      ["seo_audit_page", "www.example.com"],
+      ["seo_audit_page", "shop.example.org", "redirect"],
+      ["seo_crawl_site", "www.example.com"],
     ]);
   });
 

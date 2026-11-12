@@ -298,13 +298,19 @@ export interface CallRecord {
 export const MAX_INDEX_BYTES = 96;
 
 /**
+ * Why a call's record names a hostname other than the one it audits: a comparison's competitor's
+ * site, or where a page redirected.
+ */
+type HostRole = "competitor" | "redirect";
+
+/**
  * One record per tool call in Analytics Engine, which keeps it for three months: the tool, the
  * outcome, the duration, the requests sent and pages audited, and the target hostname, so that an
- * abuse report about a site can be checked against what was sent to it. A comparison (issue #129)
- * adds one record for each hostname of its competitors' sites it sent requests to, marked
- * `competitor`, with the requests that hostname got. Never a path, a query, the caller's address or anything the caller
- * sent. A record that cannot be written is logged and reported, and never fails the call it is
- * about.
+ * abuse report about a site can be checked against what was sent to it. A call that audits pages
+ * rather than a site adds one record for each other hostname it sent requests to, with the requests
+ * that hostname got (issue #129): `competitor` for a comparison's competitor's site, `redirect` for
+ * where a page led. Never a path, a query, the caller's address or anything the caller sent. A
+ * record that cannot be written is logged and reported, and never fails the call it is about.
  */
 const record = (
   env: LimitsEnv,
@@ -312,7 +318,7 @@ const record = (
   outcome: Outcome,
   numbers: { durationMs: number; requests: number; pages: number },
   report: ReportTask | undefined,
-  role?: "competitor"
+  role?: HostRole
 ): void => {
   try {
     env.CALLS.writeDataPoint({
@@ -338,7 +344,7 @@ const COUNT_BATCH = 25;
 interface Sent {
   requests: number;
   counted: number;
-  /** The requests by hostname, for a comparison's records of its competitors' sites. */
+  /** The requests by hostname, for the records of the other hostnames a call reached. */
   byHost: Map<string, number>;
 }
 
@@ -528,18 +534,18 @@ export const hostedProfile = (
 
           keep(call, outcome, { durationMs, requests: sent.requests, pages });
 
-          // A comparison's requests to its competitors' sites, so an abuse report about one of
-          // them finds what was sent to it. A site the page itself redirected to is no
-          // competitor's: the call's own record counts those requests.
-          for (const [host, requests] of sent.byHost) {
-            if (host !== call.host && competitors.has(siteOf(host))) {
+          // Each other hostname the call reached, so an abuse report about it finds what was sent
+          // there: a comparison's competitors' sites, and where a page or a competitor redirected.
+          // A crawl's other hostnames are link checks, which its own record counts.
+          for (const [host, requests] of call.crawl ? [] : sent.byHost) {
+            if (host !== call.host) {
               record(
                 env,
                 { ...call, host },
                 outcome,
                 { durationMs, requests, pages: 0 },
                 report,
-                "competitor"
+                competitors.has(siteOf(host)) ? "competitor" : "redirect"
               );
             }
           }
