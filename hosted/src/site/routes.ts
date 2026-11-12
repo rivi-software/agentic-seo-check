@@ -11,10 +11,7 @@ import { freshResponse } from "../fresh.js";
 import { fontResponse, shareImageResponse } from "../ui/assets.js";
 import { OG_IMAGE } from "../ui/og.js";
 import { posthogResponse } from "../ui/posthog-script.js";
-import {
-  PRODUCT_HUNT_BADGE_PATH,
-  productHuntBadgeResponse,
-} from "../ui/product-hunt.js";
+import { productHuntUpvotes } from "../ui/product-hunt.js";
 import { shareImage } from "../ui/share-image.js";
 import { answerAudit, formCrawls, formOpen } from "./audit.js";
 import type { SiteEnv } from "./audit.js";
@@ -85,13 +82,17 @@ const audit = async (
   env: SiteEnv,
   ctx: Pick<ExecutionContext, "waitUntil">
 ): Promise<Response> => {
-  const { status, state, rest } = await answerAudit(request, env, ctx);
+  const [{ status, state, rest }, upvotes] = await Promise.all([
+    answerAudit(request, env, ctx),
+    productHuntUpvotes(request, ctx),
+  ]);
 
   const page = (report?: string) =>
     homePage({
       open: formOpen(env),
       crawls: formCrawls(env),
       siteKey: env.TURNSTILE_SITE_KEY,
+      upvotes,
       ...state,
       ...(report === undefined ? null : { report }),
     });
@@ -193,23 +194,6 @@ const share = async (
     : image;
 };
 
-/** The images and fonts beside the pages at `path`, or null when it is none of them. */
-const asset = (
-  request: Request,
-  ctx: Pick<ExecutionContext, "waitUntil">,
-  path: string
-): Response | Promise<Response> | null => {
-  if (path === OG_IMAGE.path) {
-    return shareImageResponse(request, "site");
-  }
-
-  if (path === PRODUCT_HUNT_BADGE_PATH) {
-    return productHuntBadgeResponse(request, ctx);
-  }
-
-  return fontResponse(request, path);
-};
-
 export const siteRoute = (
   request: Request,
   env: SiteEnv,
@@ -247,15 +231,18 @@ export const siteRoute = (
 
   switch (url.pathname) {
     case "/": {
-      return file(
-        request,
-        homePage({
-          open: formOpen(env),
-          crawls: formCrawls(env),
-          siteKey: env.TURNSTILE_SITE_KEY,
-          url: prefill(url),
-        }),
-        HTML
+      return productHuntUpvotes(request, ctx).then((upvotes) =>
+        file(
+          request,
+          homePage({
+            open: formOpen(env),
+            crawls: formCrawls(env),
+            siteKey: env.TURNSTILE_SITE_KEY,
+            url: prefill(url),
+            upvotes,
+          }),
+          HTML
+        )
       );
     }
 
@@ -290,9 +277,13 @@ export const siteRoute = (
       return file(request, MARK_SVG, "image/svg+xml");
     }
 
+    case OG_IMAGE.path: {
+      return shareImageResponse(request, "site");
+    }
+
     default: {
       return (
-        asset(request, ctx, url.pathname) ??
+        fontResponse(request, url.pathname) ??
         file(request, notFoundPage(), HTML, 404)
       );
     }

@@ -38,10 +38,7 @@ import { SITE_JS } from "./site/files.js";
 import { fontResponse, shareImageResponse } from "./ui/assets.js";
 import { OG_IMAGE } from "./ui/og.js";
 import { posthogResponse } from "./ui/posthog-script.js";
-import {
-  PRODUCT_HUNT_BADGE_PATH,
-  productHuntBadgeResponse,
-} from "./ui/product-hunt.js";
+import { productHuntUpvotes } from "./ui/product-hunt.js";
 
 export { HostedState } from "./state.js";
 
@@ -203,7 +200,9 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
 
   switch (pathname) {
     case "/": {
-      return page(request, landingPage(env), HTML);
+      return productHuntUpvotes(request, ctx).then((upvotes) =>
+        page(request, landingPage(env, upvotes), HTML)
+      );
     }
 
     case "/crawler": {
@@ -234,11 +233,6 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
       return shareImageResponse(request, "server");
     }
 
-    // The listing badge the landing page shows, as the website does.
-    case PRODUCT_HUNT_BADGE_PATH: {
-      return productHuntBadgeResponse(request, ctx);
-    }
-
     case DIRECTORY_PATH: {
       return keyDirectory(request, env, ctx);
     }
@@ -267,7 +261,6 @@ const KNOWN_PATHS = new Set([
   "/site.js",
   "/ph.js",
   "/favicon.svg",
-  PRODUCT_HUNT_BADGE_PATH,
   DIRECTORY_PATH,
 ]);
 

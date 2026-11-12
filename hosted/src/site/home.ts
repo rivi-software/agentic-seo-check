@@ -56,6 +56,8 @@ export interface HomeState {
   report?: string;
   /** A crawl is running, and its answer streams in: the form waits for it. */
   crawling?: boolean;
+  /** The upvotes on Product Hunt, when the Worker could read them (`productHuntUpvotes`). */
+  upvotes?: string;
 }
 
 const AUDIT_COMMAND =
@@ -474,7 +476,7 @@ ${botChips()}
 <h2 id="cta-title">Audit, fix and check again <span class="hero-accent">from your assistant.</span></h2>
 <p>One address for Claude, ChatGPT, Cursor and VS Code: <code>${MCP_ORIGIN}/mcp</code></p>
 <div class="cta-actions"><a class="btn btn-primary" href="${HOSTED_PAGE}#add">Add it to your assistant${icon("arrow", "arrow")}</a><a class="btn btn-secondary" href="${REPOSITORY_URL}">${GITHUB_MARK}Read the code</a></div>
-${listingBadges()}
+${listingBadges(state.upvotes)}
 </div>
 </div>
 </section>`,
