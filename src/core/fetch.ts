@@ -63,15 +63,14 @@ export interface Refusal {
  */
 export class RequestRefusedError extends ExpectedError {
   readonly scope: Refusal["scope"];
-  readonly reason: RefusalReason | undefined;
+  declare readonly reason: RefusalReason | undefined;
   /** The request that was refused: the URL asked for, or a redirect it led to. */
   readonly url: string;
 
   constructor(refusal: Refusal, url: string) {
-    super(refusal.message);
+    super(refusal.message, { reason: refusal.reason });
     this.name = "RequestRefusedError";
     this.scope = refusal.scope;
-    this.reason = refusal.reason;
     this.url = url;
   }
 

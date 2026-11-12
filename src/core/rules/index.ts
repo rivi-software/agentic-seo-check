@@ -152,11 +152,10 @@ export type RuleNamesReason = "unknown_rules" | "other_audit_rules";
 /** `--rule` names that are no rule of the audit's: its message says what to name instead. */
 export class RuleNamesError extends ExpectedError {
   override name = "RuleNamesError";
-  readonly reason: RuleNamesReason;
+  declare readonly reason: RuleNamesReason;
 
   constructor(message: string, reason: RuleNamesReason) {
-    super(message);
-    this.reason = reason;
+    super(message, { reason });
   }
 }
 

@@ -7,6 +7,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, assert, beforeAll, describe, expect, it } from "vitest";
 
 import { auditSite, auditUrl } from "../src/core/audit.js";
+import { ExpectedError } from "../src/core/errors.js";
+import { RequestRefusedError } from "../src/core/fetch.js";
+import { CallLimitError } from "../src/mcp-hosted.js";
 import { createMcpServer, LOCAL_TOOLS } from "../src/mcp.js";
 import {
   cliEvent,
@@ -383,25 +386,59 @@ describe("telemetry", () => {
       // An argument the schema refuses: the SDK's answer.
       await client.callTool({
         name: "seo_audit_page",
-        arguments: { maxDepth: "deep" },
+        arguments: { url: "https://shop.example.com/", timeoutMs: "slow" },
       });
       // A directory that is not there: a failure the tool expects and explains.
       await client.callTool({
         name: "seo_audit_directory",
         arguments: { dir: "no/such/dir" },
       });
+      // A rule the SEO audit does not run, and the AEO audit's category in it (issue #121).
+      await client.callTool({
+        name: "seo_audit_page",
+        arguments: { html: "<title>x</title>", rules: ["title.too-lng"] },
+      });
+      await client.callTool({
+        name: "seo_audit_page",
+        arguments: { html: "<title>x</title>", rules: ["aeo"] },
+      });
       await client.close();
 
-      expect(calls.map((c) => [c.tool, c.isError, c.errorType])).toStrictEqual([
-        ["seo_audit_page", true, "validation"],
-        ["seo_audit_page", true, "validation"],
-        ["seo_audit_directory", true, "validation"],
+      // The reason an expected error carries, from a fixed list (issue #123); none without one.
+      expect(
+        calls.map((c) => [c.tool, c.isError, c.errorType, c.properties?.reason])
+      ).toStrictEqual([
+        ["seo_audit_page", true, "validation", "target"],
+        ["seo_audit_page", true, "validation", undefined],
+        ["seo_audit_directory", true, "validation", undefined],
+        ["seo_audit_page", true, "validation", "unknown_rules"],
+        ["seo_audit_page", true, "validation", "other_audit_rules"],
       ]);
       expect(calls.map((c) => c.error)).toStrictEqual([
         undefined,
         undefined,
         undefined,
+        undefined,
+        undefined,
       ]);
+    });
+
+    it("keeps an expected error's reason and cause, and a subclass's own reason (issue #123)", () => {
+      const cause = new Error("the browser closed");
+
+      expect(
+        new ExpectedError("No browser.", { cause, reason: "browser" })
+      ).toMatchObject({ message: "No browser.", cause, reason: "browser" });
+      expect(new ExpectedError("No reason.").reason).toBeUndefined();
+      expect(new CallLimitError("Too many calls.", "caller_calls").reason).toBe(
+        "caller_calls"
+      );
+      expect(
+        new RequestRefusedError(
+          { message: "robots.txt", scope: "host", reason: "robots_txt" },
+          "https://shop.example.com/"
+        )
+      ).toMatchObject({ reason: "robots_txt", scope: "host" });
     });
 
     it("keeps the tool's rule ids in an intent, and nothing that names a site (issue #84)", () => {

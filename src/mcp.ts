@@ -208,7 +208,9 @@ export const createMcpServer = (
         } else if (url) {
           audit = await auditUrl(url, options);
         } else {
-          throw new InputError("Provide `url` or `html`.");
+          throw new InputError("Provide `url` or `html`.", {
+            reason: "target",
+          });
         }
 
         return respond(audit, input.format, input.detail);
@@ -554,7 +556,8 @@ export const createMcpServer = (
 
         if (given.length !== 1) {
           throw new InputError(
-            "Provide exactly one of `url`, `html` or `dir`."
+            "Provide exactly one of `url`, `html` or `dir`.",
+            { reason: "target" }
           );
         }
 
@@ -573,7 +576,9 @@ export const createMcpServer = (
         } else if (input.url) {
           audit = await auditAeoUrl(input.url, options);
         } else {
-          throw new InputError("Provide `url`, `html` or `dir`.");
+          throw new InputError("Provide `url`, `html` or `dir`.", {
+            reason: "target",
+          });
         }
 
         return respondAeo(audit, input.format, input.detail);

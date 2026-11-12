@@ -5,6 +5,21 @@
  */
 export class ExpectedError extends Error {
   override name = "ExpectedError";
+  /**
+   * Why, from a fixed list of the tool's own names, such as `target` or `robots_txt`: the message
+   * says it to a person, this to the MCP servers' analytics, which `fail` gives it to (issue #123).
+   * Never a URL, an argument's value or a page's words.
+   */
+  readonly reason: string | undefined;
+
+  constructor(
+    message?: string,
+    options: ErrorOptions & { reason?: string } = {}
+  ) {
+    const { reason, ...rest } = options;
+    super(message, rest);
+    this.reason = reason;
+  }
 }
 
 /** What the core was doing when it caught an error, as far as the tool's own names say it. */
