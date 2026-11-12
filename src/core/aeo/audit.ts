@@ -151,8 +151,18 @@ const headersFor = <T extends { fetch?: FetchOptions }>(
 const userAgentOf = (options: AeoOptions): string =>
   options.fetch?.userAgent ?? DEFAULT_USER_AGENT;
 
+/** A site's robots.txt and llms.txt, each null when it was not read. */
+export interface OriginFiles {
+  robots: RobotsTxtInfo | null;
+  robotsText: string | null;
+  llmsTxt: LlmsTxtInfo | null;
+}
+
 /** robots.txt and llms.txt of the origin a page is served from. */
-const loadOrigin = async (pageUrl: string, options: AeoOptions) => {
+export const loadOriginFiles = async (
+  pageUrl: string,
+  options: AeoOptions
+): Promise<OriginFiles> => {
   const { origin } = new URL(pageUrl);
 
   options.onProgress?.({
@@ -185,7 +195,7 @@ const collectUrl = async (
 
   // A page that never answered says nothing about the site; its robots.txt would fail the same way.
   const site =
-    res.status === null ? null : await loadOrigin(res.finalUrl, options);
+    res.status === null ? null : await loadOriginFiles(res.finalUrl, options);
 
   return {
     target: url,
@@ -645,6 +655,30 @@ export const auditAeoUrl = async (
 
   return buildAudit(await collectUrl(url, options), options);
 };
+
+/**
+ * The AEO audit of a page a caller has fetched and extracted, with its site's files, as auditAeoUrl
+ * gives it: comparePages (issue #129) reads each page and each site's files once.
+ */
+export const auditAeoRecord = async (
+  record: PageRecord,
+  files: OriginFiles | null,
+  given: AeoOptions
+): Promise<AeoAudit> =>
+  await buildAudit(
+    {
+      target: record.requestedUrl,
+      url: record.url,
+      source: "url",
+      pageSource: "url",
+      records: [record],
+      robots: files?.robots ?? null,
+      robotsText: files?.robotsText ?? null,
+      llmsTxt: files?.llmsTxt ?? null,
+      live: true,
+    },
+    checkOptions(given)
+  );
 
 /** AEO audit of a site, crawled from `startUrl`. */
 export const auditAeoSite = async (

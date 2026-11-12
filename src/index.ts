@@ -30,6 +30,14 @@ export {
 
 export type { AeoOptions } from "./core/aeo/audit.js";
 
+export {
+  comparePages,
+  compactComparison,
+  MAX_COMPETITORS,
+} from "./core/compare.js";
+
+export type { CompareOptions } from "./core/compare.js";
+
 export { AI_BOTS } from "./core/aeo/bots.js";
 
 export type { AiBot } from "./core/aeo/bots.js";
@@ -51,10 +59,15 @@ export { baselineFromAudit, baselineFromIds } from "./core/recheck.js";
 
 export type { Baseline, BaselineEntry } from "./core/recheck.js";
 
-export { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
+export {
+  renderAeoMarkdown,
+  renderComparisonMarkdown,
+  renderMarkdown,
+} from "./core/report/markdown.js";
 
 export {
   renderAeoText,
+  renderComparisonText,
   renderRulesText,
   renderText,
 } from "./core/report/text.js";

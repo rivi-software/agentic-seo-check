@@ -7,6 +7,7 @@ import { z } from "zod";
 import { REPOSITORY_URL, WEBSITE_URL } from "../src/brand.js";
 import { createMcpServer, LOCAL_TOOLS } from "../src/mcp.js";
 import { VERSION } from "../src/version.js";
+import { startFixtureServer } from "./helpers/fixture-server.js";
 
 const connect = async () => {
   const server = createMcpServer();
@@ -67,6 +68,7 @@ describe("MCP server", () => {
       "seo_aeo_audit",
       "seo_audit_directory",
       "seo_audit_page",
+      "seo_compare_pages",
       "seo_crawl_site",
       "seo_lighthouse",
       "seo_list_rules",
@@ -244,7 +246,7 @@ describe("MCP server", () => {
     });
   });
 
-  it("offers field data on the page and crawl tools, and fails without a key (issue #130)", async () => {
+  it("offers field data on the page, crawl and compare tools, and fails without a key (issue #130)", async () => {
     vi.stubEnv("CRUX_API_KEY", "");
     onTestFinished(() => {
       vi.unstubAllEnvs();
@@ -270,6 +272,7 @@ describe("MCP server", () => {
 
     expect(withFieldData.toSorted()).toStrictEqual([
       "seo_audit_page",
+      "seo_compare_pages",
       "seo_crawl_site",
     ]);
     expect(result.isError).toBeTruthy();
@@ -277,6 +280,47 @@ describe("MCP server", () => {
     expect(inline.structuredContent).toMatchObject({
       fieldData: { source: null, reason: "not-public" },
     });
+  });
+
+  it("compares a page with competitors' pages, as JSON or Markdown (issue #129)", async () => {
+    const server = await startFixtureServer({
+      "/ours": { body: "<title>Ours</title><h1>Ours</h1><p>Short.</p>" },
+      "/theirs": {
+        body: "<title>Theirs</title><h1>Theirs</h1><table><tr><th>Size</th></tr><tr><td>M</td></tr></table>",
+      },
+    });
+
+    onTestFinished(async () => {
+      await server.close();
+    });
+
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+    const compare = tools.find((t) => t.name === "seo_compare_pages");
+
+    const call = (format: "json" | "markdown") =>
+      client.callTool({
+        name: "seo_compare_pages",
+        arguments: {
+          url: `${server.origin}/ours`,
+          competitors: [`${server.origin}/theirs`],
+          format,
+        },
+      });
+
+    const json = await call("json");
+    const markdown = await call("markdown");
+
+    expect(compare?.inputSchema.properties).toMatchObject({
+      competitors: { minItems: 1, maxItems: 5 },
+    });
+    expect(json.structuredContent).toMatchObject({
+      kind: "comparison",
+      gaps: [{ signal: "tables", rules: [], fix: [] }],
+    });
+    expect(firstText(markdown)).toContain(
+      `# Comparison: ${server.origin}/ours`
+    );
   });
 
   it("reports errors as isError results", async () => {

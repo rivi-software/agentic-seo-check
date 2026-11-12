@@ -912,6 +912,147 @@ export interface AeoAudit {
   issues?: IssueRollup[];
 }
 
+/**
+ * What sets a page apart in search and in AI answers, read the same way on each page of a
+ * comparison (issue #129).
+ */
+export interface PageSignals {
+  /** Words of visible text in the HTML. */
+  words: number;
+  headings: {
+    /** `<h2>` subheadings. */
+    h2: number;
+    /** Headings (and FAQ `<summary>` or `<dt>`) phrased as a question. */
+    questions: number;
+    /** Questions with a short, direct answer right under them, as aeo.question-not-answered-first reads it. */
+    answered: number;
+  };
+  /** Tables of two or more rows, outside navigation, header, footer and aside. */
+  tables: number;
+  /** Lists of two or more items, outside navigation, header, footer and aside. */
+  lists: number;
+  /** The schema.org types of the page's structured data. */
+  structuredData: string[];
+  /**
+   * The author of the page's Article markup: none (or no Article markup), a bare name, or one
+   * `linked` to who they are with a url or sameAs.
+   */
+  author: "none" | "name" | "linked";
+  /** datePublished and dateModified in the Article markup, and a date the page shows. */
+  dates: { published: boolean; modified: boolean; visible: boolean };
+  /** With a keyword: whether it is in the title, an `<h1>`, the meta description and the body text. */
+  keywordIn?: {
+    title: boolean;
+    h1: boolean;
+    description: boolean;
+    body: boolean;
+  };
+  /**
+   * The AI crawlers robots.txt lets fetch the page and keeps out, and of those kept out, the search
+   * crawlers and answer bots by name (training bots are the owner's choice). Null when robots.txt
+   * could not be read.
+   */
+  aiBots: {
+    allowed: number;
+    blocked: number;
+    searchCrawlersBlocked: string[];
+    answerBotsBlocked: string[];
+  } | null;
+  /** The site has an /llms.txt that follows the format; null when it could not be read. */
+  llmsTxt: boolean | null;
+  /** How long the HTML took to answer, from where the comparison ran: a site's distance counts too. */
+  responseMs: number | null;
+  /** The size of the HTML in KB. */
+  htmlKb: number;
+  /**
+   * With `fieldData`: the Chrome UX Report's 75th percentile of real visits on phones, the page's
+   * own or its origin's; null without a record.
+   */
+  coreWebVitals?: {
+    lcpMs: number | null;
+    inpMs: number | null;
+    cls: number | null;
+  } | null;
+}
+
+/** A page of a comparison that was read: both audits' scores and its signals. */
+export interface ComparedPage {
+  /** The URL as given. */
+  url: string;
+  role: "page" | "competitor";
+  /** Where the URL redirected to, when it did. */
+  finalUrl?: string;
+  title: string | null;
+  /** The first `<h1>`. */
+  h1: string | null;
+  /** The SEO and the AEO audit's scores of the page alone. */
+  score: { seo: number; aeo: number };
+  signals: PageSignals;
+}
+
+/** A competitor's page the comparison could not read, which it leaves out of the gaps. */
+export interface SkippedPage {
+  url: string;
+  role: "competitor";
+  skipped: {
+    /**
+     * `refused`: robots.txt, the site (a 403, a 429, a challenge) or a limit of the hosted server
+     * kept the request back; `unreachable`: no answer; `http-error`: an answer of 400 or more.
+     */
+    reason: "refused" | "unreachable" | "http-error";
+    message: string;
+  };
+}
+
+/**
+ * What at least half of the competitors read have and the page lacks. A gap is no finding: it has
+ * no severity and changes no score.
+ */
+export interface ComparisonGap {
+  /** The signal, as its path in `signals`: "author", "headings.answered", "structuredData". */
+  signal: string;
+  /** For `structuredData`: the schema.org type. */
+  type?: string;
+  message: string;
+  /** The competitors that have it, by the URL given. */
+  competitors: string[];
+  /** The rules whose findings on this page close the gap; empty when no rule covers it. */
+  rules: string[];
+  /**
+   * Those findings' fix for this page: the edits to apply. Empty when only the author can write
+   * what is missing, such as more text or a table.
+   */
+  fix: FixEdit[];
+}
+
+/** What the page has and at least half of the competitors read lack. */
+export interface ComparisonLead {
+  signal: string;
+  type?: string;
+  message: string;
+  /** The competitors that lack it, by the URL given. */
+  competitors: string[];
+}
+
+/**
+ * One page beside one to five competitors' pages (issue #129): both audits' scores and the signals
+ * of each, what the competitors have that the page lacks (`gaps`), and where the page is ahead
+ * (`leads`). The caller brings the competitors; the tool searches for none.
+ */
+export interface Comparison {
+  schemaVersion: 1;
+  kind: "comparison";
+  /** The page, as given. */
+  url: string;
+  keyword?: string;
+  auditedAt: string;
+  /** The page first, then each competitor in the order given. */
+  pages: (ComparedPage | SkippedPage)[];
+  /** Most competitors first. */
+  gaps: ComparisonGap[];
+  leads: ComparisonLead[];
+}
+
 export interface Thresholds {
   titleMinChars: number;
   titleMaxChars: number;

@@ -138,6 +138,14 @@ const CRAWL: HostedCallInfo = {
   host: "www.example.com",
 };
 
+const COMPARE: HostedCallInfo = {
+  tool: "seo_compare_pages",
+  fetches: true,
+  crawl: false,
+  host: "www.example.com",
+  competitors: ["rival.example.org", "www.other.example.net"],
+};
+
 const INLINE: HostedCallInfo = {
   tool: "seo_audit_page",
   fetches: false,
@@ -391,6 +399,27 @@ describe("the hosted server's limits", () => {
     ]);
   });
 
+  it("count each competitor's site of a comparison, and say whose site a refused one is (issue #129)", async () => {
+    const { env, ctx, sites } = fakeEnv({ CALLER_SITES: 2 });
+
+    const call = await hostedProfile(env, ctx, PERSON).startCall(COMPARE);
+
+    const go = (url: string) => call.gate?.beforeRequest(new URL(url));
+
+    await expect(
+      go("https://rival.example.org/robots.txt")
+    ).resolves.toBeUndefined();
+    await expect(go("https://www.other.example.net/a")).resolves.toStrictEqual({
+      scope: "host",
+      reason: "caller_sites",
+      message:
+        "www.other.example.net is a competitor's site, one more for today. This address has audited 2 different sites on the hosted server today, its daily limit per caller. Sites it audited today still work; others wait until 00:00 UTC. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp",
+    });
+    expect([...sites.values()].map((s) => [...s])).toStrictEqual([
+      ["example.com", "rival.example.org"],
+    ]);
+  });
+
   it("share a platform's 100 sites a day among its users, apart from other callers", async () => {
     const { env, ctx } = fakeEnv();
     const claude = hostedProfile(env, ctx, CLAUDE);
@@ -489,6 +518,65 @@ describe("the hosted server's limits", () => {
       },
     ]);
     expect(JSON.stringify(points)).not.toMatch(/\/a|b=c|203\.0\.113\.9/u);
+  });
+
+  it("record each other hostname a comparison sent requests to: its competitors' sites, and where a page led (issue #129)", async () => {
+    const { env, ctx, points } = fakeEnv();
+    const call = await hostedProfile(env, ctx, PERSON).startCall(COMPARE);
+
+    await Promise.all(
+      [
+        "https://www.example.com/robots.txt",
+        "https://www.example.com/widgets",
+        "https://rival.example.org/robots.txt",
+        "https://rival.example.org/widgets",
+        "https://rival.example.org/llms.txt",
+        // Where the page itself redirected, and where a competitor's page did: no competitor's sites.
+        "https://shop.example.net/widgets",
+        "https://moved.example.io/widgets",
+        "https://moved.example.io/llms.txt",
+      ].map((url) => call.gate?.beforeRequest(new URL(url)))
+    );
+
+    call.end?.({ outcome: "ok", pages: 2 });
+
+    expect(
+      points.map((p) => [
+        p.indexes?.[0],
+        p.blobs?.slice(1),
+        p.doubles?.slice(1),
+      ])
+    ).toStrictEqual([
+      ["www.example.com", ["ok", "www.example.com"], [8, 2]],
+      ["rival.example.org", ["ok", "rival.example.org", "competitor"], [3, 0]],
+      ["shop.example.net", ["ok", "shop.example.net", "redirect"], [1, 0]],
+      ["moved.example.io", ["ok", "moved.example.io", "redirect"], [2, 0]],
+    ]);
+  });
+
+  it("record where a page audit's page led, but not the sites a crawl's link checks reach", async () => {
+    const { env, ctx, points } = fakeEnv();
+    const profile = hostedProfile(env, ctx, PERSON);
+    const page = await profile.startCall(PAGE);
+    const crawl = await profile.startCall(CRAWL);
+
+    await Promise.all([
+      page.gate?.beforeRequest(new URL("https://www.example.com/")),
+      page.gate?.beforeRequest(new URL("https://shop.example.org/")),
+      crawl.gate?.beforeRequest(new URL("https://www.example.com/")),
+      crawl.gate?.beforeRequest(new URL("https://elsewhere.example.net/")),
+    ]);
+
+    page.end?.({ outcome: "ok", pages: 1 });
+    crawl.end?.({ outcome: "ok", pages: 1 });
+
+    expect(
+      points.map((p) => [p.blobs?.[0], ...(p.blobs?.slice(2) ?? [])])
+    ).toStrictEqual([
+      ["seo_audit_page", "www.example.com"],
+      ["seo_audit_page", "shop.example.org", "redirect"],
+      ["seo_crawl_site", "www.example.com"],
+    ]);
   });
 
   it("record a hostname longer than an index holds, cut in the index and whole in the blob", async () => {
