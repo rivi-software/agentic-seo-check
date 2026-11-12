@@ -113,7 +113,17 @@ export interface RequestGate {
 export interface FetchOptions {
   timeoutMs?: number;
   userAgent?: string;
+  /**
+   * Extra request headers: a staging password, a cookie. They go to the audited origin only (see
+   * `headersOrigin`), never to another site a redirect, a link or a sitemap leads to.
+   */
   headers?: Record<string, string>;
+  /**
+   * The origin `headers` are for: the audited one, which the audit functions set from the URL they
+   * are given. Unset, it is the origin of the URL a fetch starts at, so a redirect to another
+   * origin never carries the headers on.
+   */
+  headersOrigin?: string;
   maxRedirects?: number;
   /** Stop reading the body after this many bytes. */
   maxBodyBytes?: number;
@@ -288,6 +298,64 @@ const decodeBody = (bytes: Buffer, contentType: string | null): string => {
   }
 };
 
+/** The port a URL names, or its scheme's own. */
+const portOf = (url: URL): string =>
+  url.port || (url.protocol === "https:" ? "443" : "80");
+
+/**
+ * Whether a request to `url` may carry the user's `headers`, which are for `origin`: the same
+ * origin, or the same host over https where `origin` is http, since a site that upgrades its
+ * visitors to https is still the site the user named. Another host, another port and a step down
+ * from https to http are someone else's server, or a wire anyone can read.
+ */
+export const headersGoTo = (url: string, origin: string): boolean => {
+  if (!URL.canParse(url) || !URL.canParse(origin)) {
+    return false;
+  }
+
+  const target = new URL(url);
+  const audited = new URL(origin);
+
+  if (target.origin === audited.origin) {
+    // A file: or data: URL has the origin "null", which is no origin to send a secret to.
+    return target.origin !== "null";
+  }
+
+  return (
+    audited.protocol === "http:" &&
+    target.protocol === "https:" &&
+    target.hostname === audited.hostname &&
+    portOf(audited) === "80" &&
+    portOf(target) === "443"
+  );
+};
+
+/**
+ * `options` with its `headers` held to the origin of `url`, the URL an audit was asked for. Every
+ * request of that audit then sends them to that origin only: its redirects, its link checks, its
+ * sitemaps and the origin a redirect ended at.
+ */
+export const forAuditOf = <T extends FetchOptions>(
+  options: T,
+  url: string
+): T =>
+  options.headers && !options.headersOrigin && URL.canParse(url)
+    ? { ...options, headersOrigin: new URL(url).origin }
+    : options;
+
+/**
+ * The user's headers for a request to `current`, of a fetch that started at `start`: none when a
+ * redirect or a link led to another origin than the audited one, which must not be handed them.
+ */
+const ownHeaders = (
+  options: FetchOptions,
+  current: string,
+  start: string
+): Record<string, string> =>
+  options.headers && headersGoTo(current, options.headersOrigin ?? start)
+    ? options.headers
+    : {};
+
 /** What stays the same for every request while one fetch follows its redirects. */
 interface RedirectWalk {
   url: string;
@@ -418,7 +486,7 @@ const fetchHop = async (
         accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "accept-language": "en,*;q=0.5",
-        ...options.headers,
+        ...ownHeaders(options, current, url),
         ...signature,
       },
     });

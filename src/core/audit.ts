@@ -8,7 +8,12 @@ import type {
   ProgressEvent,
 } from "./crawl.js";
 import { caughtError, ExpectedError } from "./errors.js";
-import { DEFAULT_USER_AGENT, fetchPage, toResponseInfo } from "./fetch.js";
+import {
+  DEFAULT_USER_AGENT,
+  fetchPage,
+  forAuditOf,
+  toResponseInfo,
+} from "./fetch.js";
 import type { FetchOptions } from "./fetch.js";
 import { extractPage } from "./html/extract.js";
 import { runLighthouse, LighthouseUnavailableError } from "./lighthouse.js";
@@ -671,9 +676,15 @@ export const auditHtml = async (
 /** Fetch and audit one URL. Optionally render and/or run Lighthouse. */
 export const auditUrl = async (
   url: string,
-  options: AuditOptions = {}
+  input: AuditOptions = {}
 ): Promise<PageAudit> => {
-  checkOptions(options);
+  checkOptions(input);
+
+  // The user's headers are for this URL's origin, whatever it redirects to.
+  const options: AuditOptions = input.fetch
+    ? { ...input, fetch: forAuditOf(input.fetch, url) }
+    : input;
+
   const res = await fetchPage(url, options.fetch ?? {});
   const response = toResponseInfo(res);
 

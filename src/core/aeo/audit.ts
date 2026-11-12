@@ -16,6 +16,7 @@ import type { CrawlResult, FailedPage } from "../crawl.js";
 import {
   DEFAULT_USER_AGENT,
   fetchPage,
+  forAuditOf,
   RequestRefusedError,
   toResponseInfo,
 } from "../fetch.js";
@@ -136,6 +137,15 @@ interface EvaluatedPage {
   counts: SeverityCounts;
   score: number;
 }
+
+/** `options` with the user's headers held to the origin of `url`, the one the audit was asked for. */
+const headersFor = <T extends { fetch?: FetchOptions }>(
+  options: T,
+  url: string
+): T =>
+  options.fetch
+    ? { ...options, fetch: forAuditOf(options.fetch, url) }
+    : options;
 
 const userAgentOf = (options: AeoOptions): string =>
   options.fetch?.userAgent ?? DEFAULT_USER_AGENT;
@@ -628,9 +638,10 @@ export const auditAeoHtml = async (
 /** AEO audit of one live page, with its site's robots.txt and llms.txt. */
 export const auditAeoUrl = async (
   url: string,
-  options: AeoOptions = {}
+  input: AeoOptions = {}
 ): Promise<AeoAudit> => {
-  checkOptions(options);
+  checkOptions(input);
+  const options = headersFor(input, url);
 
   return buildAudit(await collectUrl(url, options), options);
 };
@@ -638,9 +649,10 @@ export const auditAeoUrl = async (
 /** AEO audit of a site, crawled from `startUrl`. */
 export const auditAeoSite = async (
   startUrl: string,
-  options: AeoOptions = {}
+  input: AeoOptions = {}
 ): Promise<AeoAudit> => {
-  checkOptions(options);
+  checkOptions(input);
+  const options = headersFor(input, startUrl);
 
   return buildAudit(await collectSite(startUrl, options), options);
 };
@@ -686,8 +698,9 @@ export interface SiteAudits {
  */
 export const auditSiteBoth = async (
   startUrl: string,
-  options: SiteAuditsOptions = {}
+  input: SiteAuditsOptions = {}
 ): Promise<SiteAudits> => {
+  const options = headersFor(input, startUrl);
   const result = await crawlSite(startUrl, seoCrawlOptions(options));
   const seo = await auditCrawled(result, startUrl, options);
 

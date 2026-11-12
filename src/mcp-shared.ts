@@ -71,7 +71,7 @@ export const commonOptions = {
     .record(z.string(), z.string())
     .optional()
     .describe(
-      'Extra request headers, e.g. {"Authorization": "Basic ..."} for staging sites.'
+      'Extra request headers, e.g. {"Authorization": "Basic ..."} for staging sites. Sent to the origin of the audited URL only: a redirect, a link or a third-party script on another origin does not get them.'
     ),
   format,
   detail,
