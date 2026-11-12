@@ -18,6 +18,7 @@ import {
 import { auditAeoHtml, auditAeoSite } from "../src/core/aeo/audit.js";
 import { auditHtml, auditSite } from "../src/core/audit.js";
 import {
+  columns,
   renderAeoText,
   renderRulesText,
   renderText,
@@ -37,6 +38,7 @@ import type { Terminal } from "../src/terminal.js";
 import { VERSION } from "../src/version.js";
 import { siteRoutes, startFixtureServer } from "./helpers/fixture-server.js";
 import type { FixtureServer } from "./helpers/fixture-server.js";
+import { tablesOf, tableUnder } from "./helpers/tables.js";
 
 const fixture = (name: string): string =>
   readFileSync(new URL(`fixtures/${name}`, import.meta.url), "utf-8");
@@ -56,6 +58,10 @@ const keepsTo = (line: string, width: number): boolean =>
   line.includes(" · http") ||
   line.startsWith("Audited with ") ||
   line.split(" ").some((word) => word.length > 30);
+
+/** The rows of the table under the heading that starts with `title`, without its header. */
+const rowsUnder = (text: string, title: string): string[][] =>
+  tableUnder(text, title).slice(1);
 
 /** A terminal that records what is written to it. */
 const fakeTerminal = (
@@ -232,6 +238,14 @@ describe("the text report of a page", () => {
   });
 });
 
+describe("the columns text takes on a terminal", () => {
+  it("counts CJK and emoji as two, a letter with its accent as one, and the report's symbols as one", () => {
+    expect(
+      ["title", "東京", "☕", "é", "✖ ▲ • ─ │"].map((text) => columns(text))
+    ).toStrictEqual([5, 4, 2, 1, 9]);
+  });
+});
+
 describe("text from a page in the text report", () => {
   it("cannot reach the terminal as an escape sequence or reorder what is shown", async () => {
     const audit = await auditHtml(
@@ -288,16 +302,80 @@ describe("the text report of a site", () => {
   });
 
   it("lists the pages by path, lowest score first", () => {
-    const rows = text
-      .split("\n")
-      .filter((line) => /^ {2}[ \d]{3} {2}✖/u.test(line));
+    const rows = rowsUnder(text, "Pages (");
+    const scores = rows.map(([score]) => Number(score));
 
-    const scores = rows.map((row) => Number(row.slice(0, 5)));
-
+    expect(text).toContain("  │ Score  Errors  Warnings  Info  Page         │");
     expect(rows).toHaveLength(site.pages.length);
     expect(scores).toStrictEqual(scores.toSorted((a, b) => a - b));
-    expect(rows.filter((row) => row.endsWith("  /about/"))).toHaveLength(1);
-    expect(rows.join("\n")).not.toContain(server.origin);
+    expect(rows.filter((row) => row.at(-1) === "/about/")).toHaveLength(1);
+    expect(rows.flat()).not.toContain(expect.stringContaining(server.origin));
+  });
+
+  it("lists the page findings by rule, with how many pages each is on", () => {
+    const rows = rowsUnder(text, "On the pages, by rule");
+
+    expect(rows.map((row) => row[2])).toStrictEqual(
+      site.issues.map((issue) => issue.rule)
+    );
+    expect(rows[0]).toStrictEqual([
+      "✖",
+      "1",
+      "response.error-status",
+      "URL returned HTTP 404.",
+    ]);
+  });
+
+  it("draws each table in a frame whose lines are all as wide, within the width", () => {
+    const tables = tablesOf(text);
+
+    expect(tables).toHaveLength(2);
+
+    for (const lines of tables) {
+      const widths = new Set(lines.map((line) => columns(line)));
+
+      expect(widths.size).toBe(1);
+      expect([...widths][0]).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("keeps a frame in line around wide characters, and breaks a path too long for it", () => {
+    const [first, second] = site.issues;
+    const [page] = site.pages;
+
+    if (!first || !second || !page) {
+      throw new Error("The crawl found too little.");
+    }
+
+    const slug = "a-very-long-article-slug-".repeat(4);
+
+    const wide: SiteAudit = {
+      ...site,
+      issues: [
+        {
+          ...first,
+          message: "タイトル「東京のカフェ ☕ ガイド」は短すぎます。",
+        },
+        second,
+      ],
+      pages: [{ ...page, url: `${server.origin}/blog/${slug}` }],
+    };
+
+    const report = renderText(wide, { width: 80 });
+    const [issues = [], pages = []] = tablesOf(report);
+    // Where the Page column starts: the rest of the table is one column to a character.
+    const at = pages[1]?.indexOf("Page") ?? 0;
+
+    expect(new Set(issues.map((line) => columns(line))).size).toBe(1);
+    expect(new Set(pages.map((line) => columns(line)))).toStrictEqual(
+      new Set([80])
+    );
+    expect(
+      pages
+        .slice(3, -1)
+        .map((line) => line.slice(at, -2).trim())
+        .join("")
+    ).toBe(`/blog/${slug}`);
   });
 
   it("lists 10 pages at most, and how the rest score", () => {
@@ -318,10 +396,25 @@ describe("the text report of a site", () => {
 
     const report = renderText(many);
 
+    const rows = rowsUnder(report, "Pages, lowest scores first");
+
     expect(report).toContain("Pages, lowest scores first (13)");
-    expect(report).toContain("  … and 3 more pages, each scoring 97 or more");
-    expect(report).toContain("   87  ");
-    expect(report).not.toContain("/p0\n");
+    expect(report).toContain(
+      "╯\n  … and 3 more pages, each scoring 97 or more"
+    );
+    expect(rows.map(([score]) => score)).toStrictEqual([
+      "87",
+      "88",
+      "89",
+      "90",
+      "91",
+      "92",
+      "93",
+      "94",
+      "95",
+      "96",
+    ]);
+    expect(rows.map((row) => row.at(-1))).not.toContain("/p0");
   });
 });
 
@@ -383,10 +476,13 @@ describe("the text report of an AEO audit", () => {
 describe("the text list of rules", () => {
   it("lists every rule under its category", () => {
     const text = renderRulesText(ALL_RULES, { width: 100 });
-    const ids = new Set(text.split("\n").map((line) => line.split(" ")[2]));
+    const ids = new Set(text.split("\n").map((line) => line.split(" ")[3]));
 
     expect(ALL_RULES.filter((rule) => !ids.has(rule.id))).toStrictEqual([]);
     expect(text).toContain("Canonical URLs (");
+    expect(tablesOf(text)).toHaveLength(
+      new Set(ALL_RULES.map((r) => r.category)).size
+    );
     expect(text.trimEnd().split("\n").at(-1)).toBe(`${ALL_RULES.length} rules`);
   });
 
@@ -394,7 +490,28 @@ describe("the text list of rules", () => {
     const text = renderRulesText(ALL_RULES, { width: 80 });
 
     expect(text).toContain(
-      "  title.missing    error    The page has no <title> element or it is empty.\n"
+      "  │ title.missing    error     The page has no <title> element or it is empty. │\n"
+    );
+  });
+
+  it("puts each description under its rule when the ids leave it too little room", () => {
+    const text = renderRulesText(
+      ALL_RULES.filter((rule) => rule.category === "structured-data"),
+      { width: 80 }
+    );
+
+    const [lines = []] = tablesOf(text);
+
+    expect(lines.slice(1, 3)).toStrictEqual([
+      `  │ Rule${" ".repeat(33)}Severity${" ".repeat(30)}│`,
+      `  │   Checks${" ".repeat(67)}│`,
+    ]);
+    expect(lines[4]).toMatch(
+      /^ {2}│ structured-data\.invalid-json +error +│$/u
+    );
+    expect(lines[5]).toMatch(/^ {2}│ {3}A JSON-LD <script> block/u);
+    expect(new Set(lines.map((line) => columns(line)))).toStrictEqual(
+      new Set([80])
     );
   });
 

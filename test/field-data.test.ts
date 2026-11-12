@@ -23,6 +23,7 @@ import { renderMarkdown } from "../src/core/report/markdown.js";
 import { renderText } from "../src/core/report/text.js";
 import type { Finding } from "../src/core/types.js";
 import { incompleteEdits, unquotedEdits, withoutFix } from "./helpers/fixes.js";
+import { tableUnder } from "./helpers/tables.js";
 
 const KEY = "test-crux-key";
 
@@ -745,14 +746,17 @@ describe("field data (issue #130)", () => {
       const audit = await auditSite(`${SITE}/`, { fieldData: FIELD });
       const markdown = renderMarkdown(audit);
       const text = renderText(audit, { width: 100 });
-
       expect(markdown).toContain("## Field data (Chrome UX Report, phones)");
       expect(markdown).toContain(
         `| ${SITE}/a | url | 1,800 ms (good) | 120 ms (good) | 0.40 (poor) |`
       );
       expect(markdown).toContain(`| ${SITE}/ | no record | — | — | — |`);
       expect(text).toContain("Field data (Chrome UX Report, phones) (2)");
-      expect(text).toContain("/a  LCP 1,800 ms · INP 120 ms · CLS 0.40");
+      expect(tableUnder(text, "Field data")).toStrictEqual([
+        ["LCP", "INP", "CLS", "Record", "Page"],
+        ["–", "–", "–", "no record", "/"],
+        ["1,800 ms", "120 ms", "0.40", "URL", "/a"],
+      ]);
     });
   });
 

@@ -183,25 +183,100 @@ export const writer = (
   };
 };
 
-/** `text` in lines of at most `width` characters, broken at spaces; a longer word keeps a line of its own. */
+/**
+ * The code points a terminal draws two columns wide: Hangul Jamo, CJK radicals, kana and
+ * ideographs, Yi, Hangul syllables, CJK compatibility forms, full-width forms, and the CJK
+ * extensions past the Basic Multilingual Plane.
+ */
+const WIDE_RANGES: readonly (readonly [number, number])[] = [
+  [0x11_00, 0x11_5f],
+  [0x2e_80, 0x30_3e],
+  [0x30_41, 0x33_ff],
+  [0x34_00, 0x4d_bf],
+  [0x4e_00, 0x9f_ff],
+  [0xa0_00, 0xa4_cf],
+  [0xac_00, 0xd7_a3],
+  [0xf9_00, 0xfa_ff],
+  [0xfe_30, 0xfe_4f],
+  [0xff_00, 0xff_60],
+  [0xff_e0, 0xff_e6],
+  [0x2_00_00, 0x3_ff_fd],
+];
+
+/** Emoji a terminal draws as emoji, two columns wide. ✖ and ▲ show as text, one column. */
+const EMOJI = /\p{Emoji_Presentation}/u;
+
+/** The variation selector that asks for a character's emoji style, and its two columns. */
+const EMOJI_STYLE = String.fromCodePoint(0xfe_0f);
+
+/** What a terminal draws no column for: marks and format characters on their own. */
+const ZERO_WIDTH = /^[\p{M}\p{Cf}]+$/u;
+
+/** Text a report holds nearly always: printable ASCII, one column per character. */
+const PLAIN = /^[\u0020-\u007E]*$/u;
+
+const isWide = (grapheme: string): boolean => {
+  const code = grapheme.codePointAt(0) ?? 0;
+
+  return (
+    WIDE_RANGES.some(([from, to]) => code >= from && code <= to) ||
+    EMOJI.test(grapheme) ||
+    grapheme.includes(EMOJI_STYLE)
+  );
+};
+
+let segmenter: Intl.Segmenter | undefined;
+
+/** `text`'s characters as a reader sees them: an emoji with its modifiers, a letter with its accent. */
+const graphemes = (text: string): string[] => {
+  segmenter ??= new Intl.Segmenter();
+
+  return Array.from(segmenter.segment(text), ({ segment }) => segment);
+};
+
+/** The columns one grapheme takes on a terminal: 2, 1 or none. */
+const graphemeWidth = (grapheme: string): number => {
+  if (isWide(grapheme)) {
+    return 2;
+  }
+
+  return ZERO_WIDTH.test(grapheme) ? 0 : 1;
+};
+
+/**
+ * The columns `text` takes on a terminal, which is its length only for plain text: a table's
+ * frame lines up only when a title in Japanese or with an emoji counts as wide as it shows.
+ */
+export const columns = (text: string): number =>
+  PLAIN.test(text)
+    ? text.length
+    : graphemes(text).reduce((sum, g) => sum + graphemeWidth(g), 0);
+
+/** `text` in lines of at most `width` columns, broken at spaces; a longer word keeps a line of its own. */
 export const wrap = (text: string, width: number): string[] => {
   const lines: string[] = [];
 
   for (const paragraph of text.split("\n")) {
     let line = "";
+    let used = 0;
 
     for (const word of paragraph.split(" ")) {
       if (word === "") {
         continue;
       }
 
+      const size = columns(word);
+
       if (line === "") {
         line = word;
-      } else if (line.length + 1 + word.length <= width) {
+        used = size;
+      } else if (used + 1 + size <= width) {
         line += ` ${word}`;
+        used += 1 + size;
       } else {
         lines.push(line);
         line = word;
+        used = size;
       }
     }
 
@@ -209,6 +284,141 @@ export const wrap = (text: string, width: number): string[] => {
   }
 
   return lines;
+};
+
+/** `line` in pieces of at most `width` columns: a path or a word too long for a table's cell. */
+const chop = (line: string, width: number): string[] => {
+  if (columns(line) <= width) {
+    return [line];
+  }
+
+  const pieces: string[] = [];
+  let piece = "";
+  let used = 0;
+
+  for (const grapheme of graphemes(line)) {
+    const size = graphemeWidth(grapheme);
+
+    if (piece !== "" && used + size > width) {
+      pieces.push(piece);
+      piece = "";
+      used = 0;
+    }
+
+    piece += grapheme;
+    used += size;
+  }
+
+  pieces.push(piece);
+
+  return pieces;
+};
+
+/** The fewest columns a table's last column wraps in beside the others: a short line of prose. */
+const MIN_LAST = 30;
+
+/** A column of a table: its header, and whether its cells sit to the right, as numbers do. */
+interface Column {
+  header: string;
+  right?: boolean;
+}
+
+/** A cell of a table: its text, which sets its width, and how each of its lines is drawn. */
+interface Cell {
+  text: string;
+  draw?: (line: string) => string;
+}
+
+/**
+ * Rows under a header, in a rounded frame drawn dim. Every column but the last is as wide as its
+ * widest cell; the last takes the room they leave, up to the width, and wraps, breaking a path
+ * too long for it. When they leave it less than `MIN_LAST` columns, each of its cells goes on
+ * the lines under its row instead, across the table.
+ */
+const table = (
+  heads: readonly Column[],
+  rows: readonly (readonly Cell[])[],
+  w: Writer
+): string[] => {
+  const n = heads.length - 1;
+
+  const header = heads.map((head): Cell => ({
+    text: head.header,
+    draw: (line) => w.style("dim", line),
+  }));
+
+  const cells = [header, ...rows].map((row) =>
+    heads.map((_, i) => ({
+      text: terminalSafe(row[i]?.text ?? ""),
+      draw: row[i]?.draw,
+    }))
+  );
+
+  const widths = heads.map((_, i) =>
+    Math.max(...cells.map((row) => columns(row[i]?.text ?? "")))
+  );
+
+  // The columns before the last, each with the two spaces after it.
+  const fixed = widths.slice(0, n).reduce((sum, width) => sum + width + 2, 0);
+  const natural = widths[n] ?? 0;
+  // The indent and the frame's sides, with a space inside each.
+  const room = w.width - 6;
+  const beside = fixed + Math.min(natural, MIN_LAST) <= room;
+
+  const inner = beside
+    ? fixed + Math.min(natural, room - fixed)
+    : Math.max(fixed - 2, Math.min(room, natural + 2));
+
+  const lastWidth = beside ? inner - fixed : inner - 2;
+
+  const pad = (cell: Cell, line: string, width: number, right = false) => {
+    const fill = " ".repeat(Math.max(0, width - columns(line)));
+    const drawn = cell.draw ? cell.draw(line) : line;
+
+    return right ? `${fill}${drawn}` : `${drawn}${fill}`;
+  };
+
+  const rowLines = (row: readonly Cell[]): string[] => {
+    const lead = row
+      .slice(0, n)
+      .map((cell, i) => pad(cell, cell.text, widths[i] ?? 0, heads[i]?.right));
+
+    const last = row[n] ?? { text: "" };
+
+    const lines = wrap(last.text, lastWidth).flatMap((line) =>
+      chop(line, lastWidth)
+    );
+
+    if (beside) {
+      return lines.map(
+        (line, i) =>
+          `${i === 0 ? lead.map((text) => `${text}  `).join("") : " ".repeat(fixed)}${pad(last, line, lastWidth, heads[n]?.right)}`
+      );
+    }
+
+    return [
+      `${lead.join("  ")}${" ".repeat(Math.max(0, inner - fixed + 2))}`,
+      ...lines
+        .filter((line) => line !== "")
+        .map((line) => `  ${pad(last, line, lastWidth)}`),
+    ];
+  };
+
+  const side = w.style("dim", "│");
+  const framed = (line: string) => `  ${side} ${line} ${side}`;
+
+  const edge = (left: string, right: string) =>
+    `  ${w.style("dim", `${left}${"─".repeat(inner + 2)}${right}`)}`;
+
+  const [head = [], ...body] = cells.map(rowLines);
+
+  return [
+    edge("╭", "╮"),
+    ...head.map(framed),
+    edge("├", "┤"),
+    ...body.flat().map(framed),
+    edge("╰", "╯"),
+  ];
 };
 
 /** Page text, made safe and wrapped under `indent`. */
@@ -383,21 +593,20 @@ const editLines = (edit: FixEdit, w: Writer, indent: string): string[] => {
 
 /**
  * The symbol and the message, wrapped, with the rule id at the end of its last line when it fits.
- * `lead`, such as a count of pages, stands dimmed before the message, which wraps beside it;
  * `strong` makes the message bold, for a finding whose fix follows.
  */
 const findingHead = (
   finding: Pick<Finding, "severity" | "message" | "rule" | "docs">,
   w: Writer,
   indent: string,
-  { lead = "", strong = false }: { lead?: string; strong?: boolean } = {}
+  { strong = false }: { strong?: boolean } = {}
 ): string[] => {
-  const inner = `${indent}  ${" ".repeat(lead.length)}`;
+  const inner = `${indent}  `;
   const room = w.width - inner.length;
   const id = terminalSafe(finding.rule);
   const lines = wrap(terminalSafe(finding.message), room);
   const last = lines.length - 1;
-  const fits = (lines[last] ?? "").length + 2 + id.length <= room;
+  const fits = columns(lines[last] ?? "") + 2 + columns(id) <= room;
   const idText = w.link(w.style("dim", id), finding.docs);
 
   const symbol = w.style(
@@ -407,7 +616,7 @@ const findingHead = (
 
   const out = lines.map(
     (line, i) =>
-      `${i === 0 ? `${indent}${symbol} ${w.style("dim", lead)}` : inner}${strong ? w.style("bold", line) : line}${i === last && fits ? `  ${idText}` : ""}`
+      `${i === 0 ? `${indent}${symbol} ` : inner}${strong ? w.style("bold", line) : line}${i === last && fits ? `  ${idText}` : ""}`
   );
 
   return fits ? out : [...out, `${inner}${idText}`];
@@ -460,23 +669,32 @@ const findingSections = (findings: readonly Finding[], w: Writer): string[] => {
   });
 };
 
-/** One line for each rule the pages broke, worst first. */
+/** A row for each rule the pages broke, worst first. */
 const issueLines = (issues: readonly IssueRollup[], w: Writer): string[] => {
   if (issues.length === 0) {
     return [];
   }
 
-  const countWidth = Math.max(
-    ...issues.map((i) => plural(i.pages, "page").length)
-  );
-
   return [
     heading("On the pages, by rule", w, { count: issues.length }),
     "",
-    ...issues.flatMap((issue) =>
-      findingHead(issue, w, "  ", {
-        lead: `${plural(issue.pages, "page").padEnd(countWidth)}  `,
-      })
+    ...table(
+      [
+        { header: "" },
+        { header: "Pages", right: true },
+        { header: "Rule" },
+        { header: "Finding" },
+      ],
+      issues.map((issue) => [
+        {
+          text: SYMBOL[issue.severity],
+          draw: (line) => w.style(SEVERITY_STYLE[issue.severity], line),
+        },
+        { text: String(issue.pages) },
+        { text: issue.rule, draw: (line) => w.style("dim", line) },
+        { text: issue.message },
+      ]),
+      w
     ),
     "",
   ];
@@ -513,17 +731,27 @@ const pageRows = (
     ...shown.flatMap((p) => SEVERITIES.map((s) => String(p.counts[s]).length))
   );
 
-  const count = (p: PageRow, severity: Severity): string => {
-    const text = `${SYMBOL[severity]} ${String(p.counts[severity]).padStart(countWidth)}`;
+  const count = (p: PageRow, severity: Severity): Cell => ({
+    text: `${SYMBOL[severity]} ${String(p.counts[severity]).padStart(countWidth)}`,
+    draw: (line) =>
+      w.style(p.counts[severity] > 0 ? SEVERITY_STYLE[severity] : "dim", line),
+  });
 
-    return p.counts[severity] > 0
-      ? w.style(SEVERITY_STYLE[severity], text)
-      : w.style("dim", text);
-  };
-
-  const lines = shown.map(
-    (p) =>
-      `  ${w.style(BAND_STYLE[band(p.score)], String(p.score).padStart(3))}  ${SEVERITIES.map((s) => count(p, s)).join("  ")}  ${terminalSafe(pathOf(p.url, w.origin))}`
+  const lines = table(
+    [
+      { header: "Score", right: true },
+      ...SEVERITIES.map((s) => ({ header: HEADING[s], right: true })),
+      { header: "Page" },
+    ],
+    shown.map((p) => [
+      {
+        text: String(p.score),
+        draw: (line) => w.style(BAND_STYLE[band(p.score)], line),
+      },
+      ...SEVERITIES.map((s) => count(p, s)),
+      { text: pathOf(p.url, w.origin) },
+    ]),
+    w
   );
 
   const [lowest] = rest;
@@ -779,39 +1007,51 @@ const siteFieldDataLines = (audit: SiteAudit, w: Writer): string[] => {
     return [];
   }
 
-  const vital = (field: FieldData, key: FieldMetricKey): string => {
-    const metric = field[key];
+  const dim = (line: string) => w.style("dim", line);
 
-    if (!metric) {
-      return w.style("dim", `${FIELD_LABELS[key]} –`);
-    }
-
-    return `${FIELD_LABELS[key]} ${w.style(FIELD_BAND_STYLE[fieldBand(key, metric.p75)], fieldValue(key, metric.p75))}`;
-  };
+  const vital = (metric: FieldMetric | null, key: FieldMetricKey): Cell =>
+    metric
+      ? {
+          text: fieldValue(key, metric.p75),
+          draw: (line) =>
+            w.style(FIELD_BAND_STYLE[fieldBand(key, metric.p75)], line),
+        }
+      : { text: "–", draw: dim };
 
   return [
     heading(FIELD_HEADING, w, { count: asked.length }),
     "",
-    ...asked.flatMap((p) => {
-      const field = p.fieldData;
-      const path = terminalSafe(pathOf(p.url, w.origin));
+    ...table(
+      [
+        ...CORE_VITALS.map((key) => ({
+          header: FIELD_LABELS[key],
+          right: true,
+        })),
+        { header: "Record" },
+        { header: "Page" },
+      ],
+      asked.flatMap(({ url, fieldData: field }) => {
+        if (!field) {
+          return [];
+        }
 
-      if (!field) {
-        return [];
-      }
+        const record: Cell =
+          field.source === null
+            ? { text: NO_FIELD_DATA_LABELS[field.reason], draw: dim }
+            : { text: field.source === "url" ? "URL" : "origin" };
 
-      if (field.source === null) {
         return [
-          `  ${path}  ${w.style("dim", NO_FIELD_DATA_LABELS[field.reason])}`,
+          [
+            ...CORE_VITALS.map((key) =>
+              vital(field.source === null ? null : field[key], key)
+            ),
+            record,
+            { text: pathOf(url, w.origin) },
+          ],
         ];
-      }
-
-      const vitals = CORE_VITALS.map((key) => vital(field, key));
-
-      return [
-        `  ${path}  ${dotted([...vitals, ...(field.source === "origin" ? [w.style("dim", "origin")] : [])], w)}`,
-      ];
-    }),
+      }),
+      w
+    ),
     "",
   ];
 };
@@ -1303,33 +1543,27 @@ export const renderRulesText = (
   const lines: string[] = [];
 
   for (const [category, group] of groups) {
+    // A table for each category, so one long id elsewhere leaves this one's descriptions the room.
+    // Below 30 columns of description, each description goes under its rule instead.
     lines.push(
       heading(CATEGORY_LABEL[category], w, { count: group.length }),
+      "",
+      ...table(
+        [{ header: "Rule" }, { header: "Severity" }, { header: "Checks" }],
+        group.map((rule) => [
+          { text: rule.id, draw: (line) => w.link(line, rule.docs) },
+          {
+            text: rule.severity,
+            draw: (line) => w.style(SEVERITY_STYLE[rule.severity], line),
+          },
+          {
+            text: `${rule.description}${rule.requires ? ` ${REQUIREMENT[rule.requires]}` : ""}`,
+          },
+        ]),
+        w
+      ),
       ""
     );
-
-    // Each category sizes its own id column: one long id elsewhere leaves this one's descriptions
-    // the room. Below 40 columns of description, the description goes under the id instead.
-    const idWidth = Math.max(...group.map((r) => r.id.length));
-    const column = 2 + idWidth + 2 + "warning".length + 2;
-    const beside = w.width - column >= 40;
-
-    for (const rule of group) {
-      const description = `${rule.description}${rule.requires ? ` ${REQUIREMENT[rule.requires]}` : ""}`;
-      const head = `  ${w.link(rule.id, rule.docs)}${" ".repeat(idWidth - rule.id.length)}  ${w.style(SEVERITY_STYLE[rule.severity], rule.severity.padEnd("warning".length))}  `;
-
-      if (beside) {
-        const [first = "", ...rest] = wrap(description, w.width - column);
-        lines.push(
-          `${head}${first}`,
-          ...rest.map((line) => `${" ".repeat(column)}${line}`)
-        );
-      } else {
-        lines.push(head.trimEnd(), ...block(description, "    ", w));
-      }
-    }
-
-    lines.push("");
   }
 
   lines.push(
