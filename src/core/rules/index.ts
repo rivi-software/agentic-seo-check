@@ -144,10 +144,43 @@ export const AEO_RULES: RuleMeta[] = ALL_RULES.filter(
 );
 
 /**
- * Checks `--rule` ids against the rules an audit runs, so a typo fails loudly instead of running
- * nothing. `kind` names the audit for the message.
+ * Why `--rule` names nothing an audit runs, for the hosted server's analytics (issue #121): names
+ * that are no rule or category, or the other audit's.
  */
-export const checkRuleIds = (
+export type RuleNamesReason = "unknown_rules" | "other_audit_rules";
+
+/** `--rule` names that are no rule of the audit's: its message says what to name instead. */
+export class RuleNamesError extends ExpectedError {
+  override name = "RuleNamesError";
+  readonly reason: RuleNamesReason;
+
+  constructor(message: string, reason: RuleNamesReason) {
+    super(message);
+    this.reason = reason;
+  }
+}
+
+const categoriesOf = (rules: readonly RuleMeta[]): string[] => [
+  ...new Set(rules.map((r) => r.category)),
+];
+
+/**
+ * Rule names as the ids of `rules`: a category stands for its rules among them (issue #121), as an
+ * agent on a structured-data pass names `structured-data`. Every rule id has a dot and no category
+ * has one, so neither reads as the other. A name that is neither stays as it was given.
+ */
+const ruleIdsOf = (
+  names: readonly string[],
+  rules: readonly RuleMeta[]
+): string[] =>
+  names.flatMap((name) => {
+    const inCategory = rules.filter((r) => r.category === name);
+
+    return inCategory.length > 0 ? inCategory.map((r) => r.id) : [name];
+  });
+
+/** Fails on ids that are none of `rules`, the rules an audit runs; `kind` names it. */
+const checkRuleIds = (
   ids: readonly string[],
   rules: readonly RuleMeta[],
   kind: "SEO" | "AEO"
@@ -155,15 +188,54 @@ export const checkRuleIds = (
   const known = new Set(rules.map((r) => r.id));
   const unknown = ids.filter((id) => !known.has(id));
 
-  if (unknown.length) {
-    const other = kind === "SEO" ? AEO_RULES : SEO_RULES;
-    const elsewhere = unknown.filter((id) => other.some((r) => r.id === id));
+  if (unknown.length === 0) {
+    return;
+  }
 
-    // The caller's input: an error the tool explains, not a bug (issue #60).
-    throw new ExpectedError(
-      elsewhere.length === unknown.length
-        ? `${unknown.join(", ")} ${unknown.length === 1 ? "is" : "are"} not ${kind} rules; run ${kind === "SEO" ? "the AEO audit (aeo, seo_aeo_audit)" : "the SEO audit (audit, crawl)"} for ${unknown.length === 1 ? "it" : "them"}.`
-        : `Unknown rule id(s): ${unknown.join(", ")}. List the rules with \`agentic-seo-check rules\` or seo_list_rules.`
+  const other = kind === "SEO" ? AEO_RULES : SEO_RULES;
+  const otherNames = new Set(other.flatMap((r) => [r.id, r.category]));
+
+  // The caller's input: an error the tool explains, not a bug (issue #60).
+  if (unknown.every((id) => otherNames.has(id))) {
+    throw new RuleNamesError(
+      `${unknown.join(", ")} ${unknown.length === 1 ? "is" : "are"} not ${kind} rules; run ${kind === "SEO" ? "the AEO audit (aeo, seo_aeo_audit)" : "the SEO audit (audit, crawl)"} for ${unknown.length === 1 ? "it" : "them"}.`,
+      "other_audit_rules"
     );
   }
+
+  throw new RuleNamesError(
+    `Unknown rule id(s): ${unknown.join(", ")}. Name rule ids, or their categories (${categoriesOf(rules).join(", ")}). List the rules with \`agentic-seo-check rules\` or seo_list_rules.`,
+    "unknown_rules"
+  );
+};
+
+/**
+ * `options` with `onlyRules` and `disableRules` as the ids of `rules`, the rules an audit runs, a
+ * category standing for its rules. Fails on `onlyRules` that name none of them, before any request
+ * goes out, so a typo fails loudly instead of running nothing; `kind` names the audit for the
+ * message. A name in `disableRules` that is neither is kept, as before: it turns nothing off.
+ */
+export const selectRules = <
+  T extends { onlyRules?: string[]; disableRules?: string[] },
+>(
+  options: T,
+  rules: readonly RuleMeta[],
+  kind: "SEO" | "AEO"
+): T => {
+  if (!(options.onlyRules || options.disableRules)) {
+    return options;
+  }
+
+  const onlyRules = options.onlyRules && ruleIdsOf(options.onlyRules, rules);
+
+  if (onlyRules) {
+    checkRuleIds(onlyRules, rules, kind);
+  }
+
+  return {
+    ...options,
+    onlyRules,
+    disableRules:
+      options.disableRules && ruleIdsOf(options.disableRules, rules),
+  };
 };

@@ -62,7 +62,7 @@ Typical mappings: `title.*`/`meta-description.*` → per-route metadata; `canoni
 
 Re-check the rules you fixed against the first audit, with the same target and options:
 
-- MCP: the same tool with `rules: ["title.generic", "img.alt-missing"]` and `baseline`: the `id` of every finding of the first audit. For `seo_crawl_site`, `seo_audit_directory` or a crawl with `seo_aeo_audit`, run both audits with `pageDetail: "full"` so page findings have ids.
+- MCP: the same tool with `rules: ["title.generic", "img.alt-missing"]` and `baseline`: the `id` of every finding of the first audit. `rules` also takes a category, such as `["structured-data"]`, to check one area of a page. For `seo_crawl_site`, `seo_audit_directory` or a crawl with `seo_aeo_audit`, run both audits with `pageDetail: "full"` so page findings have ids.
 - CLI: save the first run with `--format json -o before.json`, then `agentic-seo-check audit <target> --rule title.generic,img.alt-missing --baseline before.json`.
 
 The result's `baseline` lists the findings `fixed`, still `open` and `new`. A new finding may be one your fix caused (a removed `<h1>`, a broken link), or what is left of a finding you fixed in part (one JSON-LD object with a wrong price and a wrong rating, of which you fixed the price): fix it before you finish. `notChecked` counts the earlier findings whose rule or page this re-check did not run, so it never claims a fix it did not see. Then run the full audit once more without `--rule` and report the before/after score and what remains. In CI, `agentic-seo-check audit <target> --fail-on error` exits 1 when errors remain.

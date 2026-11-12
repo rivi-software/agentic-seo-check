@@ -42,7 +42,10 @@ export {
   PAGE_RULES,
   findRule,
   runPageRules,
+  RuleNamesError,
 } from "./core/rules/index.js";
+
+export type { RuleNamesReason } from "./core/rules/index.js";
 
 export { baselineFromAudit, baselineFromIds } from "./core/recheck.js";
 

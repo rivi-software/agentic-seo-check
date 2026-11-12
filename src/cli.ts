@@ -259,10 +259,10 @@ const addAuditOptions = (cmd: Command, mode: Mode): Command => {
         .choices(["full", "summary"])
         .default("full")
     )
-    .option("--disable <rule...>", "Rule ids to skip")
+    .option("--disable <rule...>", "Rule ids or categories to skip")
     .option(
       "--rule <id...>",
-      "Run only these rule ids (space- or comma-separated): re-check the findings a fix was for"
+      "Run only these rule ids or categories (space- or comma-separated): re-check the findings a fix was for, or check one category"
     )
     .option(
       "--baseline <file>",

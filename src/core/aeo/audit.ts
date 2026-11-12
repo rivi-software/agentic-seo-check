@@ -34,8 +34,8 @@ import { loadRobotsTxt } from "../robots.js";
 import {
   AEO_PAGE_RULES,
   AEO_RULES,
-  checkRuleIds,
   runPageRules,
+  selectRules,
   sortFindings,
 } from "../rules/index.js";
 import { robotsDirectives } from "../rules/indexing.js";
@@ -448,12 +448,12 @@ const pageEntry = (p: EvaluatedPage): AeoPage => {
   };
 };
 
-/** Fails on `onlyRules` that name no AEO rule, before any request goes out. */
-const checkOptions = (options: AeoOptions): void => {
-  if (options.onlyRules) {
-    checkRuleIds(options.onlyRules, AEO_RULES, "AEO");
-  }
-};
+/**
+ * The options with `onlyRules` and `disableRules` as AEO rule ids, categories expanded (issue
+ * #121); fails on `onlyRules` that name no AEO rule, before any request goes out.
+ */
+const checkOptions = <T extends AeoOptions>(options: T): T =>
+  selectRules(options, AEO_RULES, "AEO");
 
 /**
  * Gives every finding its id and, with `baseline`, compares them with the earlier audit's. Site
@@ -624,9 +624,9 @@ const buildAudit = async (
 export const auditAeoHtml = async (
   html: string,
   input: { url?: string; target?: string } = {},
-  options: AeoOptions = {}
+  given: AeoOptions = {}
 ): Promise<AeoAudit> => {
-  checkOptions(options);
+  const options = checkOptions(given);
   const url = input.url ?? options.baseUrl ?? "http://localhost/";
 
   return buildAudit(
@@ -638,10 +638,9 @@ export const auditAeoHtml = async (
 /** AEO audit of one live page, with its site's robots.txt and llms.txt. */
 export const auditAeoUrl = async (
   url: string,
-  input: AeoOptions = {}
+  given: AeoOptions = {}
 ): Promise<AeoAudit> => {
-  checkOptions(input);
-  const options = headersFor(input, url);
+  const options = headersFor(checkOptions(given), url);
 
   return buildAudit(await collectUrl(url, options), options);
 };
@@ -649,10 +648,9 @@ export const auditAeoUrl = async (
 /** AEO audit of a site, crawled from `startUrl`. */
 export const auditAeoSite = async (
   startUrl: string,
-  input: AeoOptions = {}
+  given: AeoOptions = {}
 ): Promise<AeoAudit> => {
-  checkOptions(input);
-  const options = headersFor(input, startUrl);
+  const options = headersFor(checkOptions(given), startUrl);
 
   return buildAudit(await collectSite(startUrl, options), options);
 };
@@ -739,9 +737,9 @@ export const auditSiteBoth = async (
 /** AEO audit of a directory of built HTML, with the robots.txt and llms.txt in it. */
 export const auditAeoDirectory = async (
   dir: string,
-  options: AeoOptions = {}
+  given: AeoOptions = {}
 ): Promise<AeoAudit> => {
-  checkOptions(options);
+  const options = checkOptions(given);
 
   return buildAudit(await collectDirectory(dir, options), options);
 };
@@ -749,9 +747,9 @@ export const auditAeoDirectory = async (
 /** AEO audit of a URL (a crawl with `crawl`), a directory, an .html file, or "-" for stdin. */
 export const auditAeoTarget = async (
   target: string,
-  options: AeoOptions & { stdinHtml?: string } = {}
+  given: AeoOptions & { stdinHtml?: string } = {}
 ): Promise<AeoAudit> => {
-  checkOptions(options);
+  const options = checkOptions(given);
 
   if (target === "-" || options.stdinHtml !== undefined) {
     const html = options.stdinHtml ?? (await readStdin());

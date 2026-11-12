@@ -31,6 +31,12 @@ const offerWith = (props: string) =>
 const idsOf = (findings: Finding[]): string[] =>
   findings.flatMap((f) => (f.id ? [f.id] : []));
 
+/** The rules of the findings `keep` keeps, in their order. */
+const rulesWhere = (
+  findings: Finding[],
+  keep: (f: Finding) => boolean
+): string[] => findings.flatMap((f) => (keep(f) ? [f.rule] : []));
+
 /** A finding as a rule without a `key` would make it, for the id tests. */
 const bare = (message: string): Finding => ({
   rule: "title.generic",
@@ -200,6 +206,108 @@ describe("a re-check against a baseline", () => {
     await expect(
       auditAeoHtml(page("x"), {}, { onlyRules: ["title.missing"] })
     ).rejects.toThrow(/not AEO rules/u);
+  });
+
+  it("refuses a category of the other audit, and names the categories it takes (issue #121)", async () => {
+    await expect(
+      auditHtml(page("x"), {}, { onlyRules: ["aeo"] })
+    ).rejects.toMatchObject({
+      name: "RuleNamesError",
+      reason: "other_audit_rules",
+      message: expect.stringMatching(
+        /^aeo is not SEO rules; run the AEO audit/u
+      ),
+    });
+    await expect(
+      auditAeoHtml(page("x"), {}, { onlyRules: ["structured-data"] })
+    ).rejects.toMatchObject({
+      reason: "other_audit_rules",
+      message: expect.stringMatching(/not AEO rules; run the SEO audit/u),
+    });
+    await expect(
+      auditHtml(page("x"), {}, { onlyRules: ["structured-data", "schema"] })
+    ).rejects.toMatchObject({
+      reason: "unknown_rules",
+      message: expect.stringMatching(
+        /^Unknown rule id\(s\): schema\. Name rule ids, or their categories \(title, meta, .*structured-data.*\)\./u
+      ),
+    });
+    await expect(
+      auditAeoHtml(page("x"), {}, { onlyRules: ["aeo.no-such-rule"] })
+    ).rejects.toThrow(/their categories \(aeo\)\./u);
+  });
+
+  it("takes a category for its rules, in onlyRules and in disableRules (issue #121)", async () => {
+    const html = page("React App", ld("€12"));
+    const all = await auditHtml(html, { url: URL_A });
+
+    // Both categories are on the page, so leaving one out shows.
+    expect(
+      rulesWhere(all.findings, (f) => f.category === "title")
+    ).not.toHaveLength(0);
+    expect(
+      rulesWhere(all.findings, (f) => f.category === "structured-data")
+    ).not.toHaveLength(0);
+
+    const only = await auditHtml(
+      html,
+      { url: URL_A },
+      { onlyRules: ["structured-data", "title.generic"] }
+    );
+
+    expect(only.findings.map((f) => f.rule)).toStrictEqual(
+      rulesWhere(
+        all.findings,
+        (f) => f.category === "structured-data" || f.rule === "title.generic"
+      )
+    );
+
+    const without = await auditHtml(
+      html,
+      { url: URL_A },
+      { disableRules: ["title"] }
+    );
+
+    expect(without.findings.map((f) => f.rule)).toStrictEqual(
+      rulesWhere(all.findings, (f) => f.category !== "title")
+    );
+
+    // The AEO audit's one category is all its rules.
+    const aeoHtml = page("Opening hours", "<h2>When are you open?</h2>");
+    const aeo = await auditAeoHtml(aeoHtml, { url: URL_A });
+
+    const aeoOnly = await auditAeoHtml(
+      aeoHtml,
+      { url: URL_A },
+      { onlyRules: ["aeo"] }
+    );
+
+    expect(aeoOnly.findings).toStrictEqual(aeo.findings);
+  });
+
+  it("re-checks a category's rules and leaves the rest unchecked (issue #121)", async () => {
+    const before = await auditHtml(page("React App", ld("€12")), {
+      url: URL_A,
+    });
+
+    const after = await auditHtml(
+      page("React App", ld("12.00")),
+      { url: URL_A },
+      {
+        onlyRules: ["structured-data"],
+        baseline: baselineFromIds(idsOf(before.findings)),
+      }
+    );
+
+    expect(after.baseline?.fixed.map((f) => f.rule)).toContain(
+      "structured-data.invalid-value"
+    );
+    expect(
+      rulesWhere(after.findings, (f) => f.category !== "structured-data")
+    ).toStrictEqual([]);
+    expect(after.baseline?.notChecked).toBe(
+      before.findings.filter((f) => f.category !== "structured-data").length
+    );
   });
 });
 
