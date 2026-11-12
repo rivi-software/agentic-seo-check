@@ -16,7 +16,6 @@ import {
 import { z } from "zod";
 
 import { REPOSITORY_URL, WEBSITE_URL } from "../src/brand.js";
-import { sleep } from "../src/core/concurrency.js";
 import { onCaughtError } from "../src/core/errors.js";
 import type { RequestGate } from "../src/core/fetch.js";
 import {
@@ -1656,15 +1655,24 @@ describe("the hosted server", () => {
         },
       });
 
+      // fetch.ts measures a response on performance.now(): the gate moves that clock on, rather
+      // than keep the test waiting.
+      vi.useFakeTimers({ toFake: ["performance"] });
+      onTestFinished(() => {
+        vi.useRealTimers();
+      });
+
       // Limits as slow to answer as robots.txt or a Crawl-delay can make the gate, refusing only
       // another site.
       const gate: RequestGate = {
-        beforeRequest: async (url) => {
-          await sleep(2500);
+        beforeRequest: (url) => {
+          vi.advanceTimersByTime(2500);
 
-          return url.hostname === "other.example.com"
-            ? { scope: "host", message: "Not this site." }
-            : undefined;
+          return Promise.resolve(
+            url.hostname === "other.example.com"
+              ? { scope: "host", message: "Not this site." }
+              : undefined
+          );
         },
       };
 
