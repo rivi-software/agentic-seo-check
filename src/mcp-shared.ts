@@ -11,7 +11,7 @@ import { baselineFromIds } from "./core/recheck.js";
 import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 import { ALL_RULES } from "./core/rules/index.js";
 import type { AeoAudit, Audit } from "./core/types.js";
-import { withErrorType } from "./telemetry/mcp.js";
+import { noteCall, withErrorType } from "./telemetry/mcp.js";
 import type { McpErrorType } from "./telemetry/mcp.js";
 
 export const format = z
@@ -181,9 +181,21 @@ export const listRules = (input: { category?: string; rule?: string }) => {
   };
 };
 
+/**
+ * Why a call's arguments cannot work, for its event (issue #123): it names nothing to audit, or for
+ * seo_aeo_audit more than one thing (`target`), or the hosted server's address rules turn its URL
+ * away (`address`).
+ */
+export type InputReason = "target" | "address";
+
 /** A tool call whose arguments cannot work: its message tells the caller what to send instead. */
 export class InputError extends ExpectedError {
   override name = "InputError";
+  declare readonly reason: InputReason | undefined;
+
+  constructor(message: string, options: { reason?: InputReason } = {}) {
+    super(message, options);
+  }
 }
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
@@ -199,8 +211,9 @@ const errorTypeOf = (error: unknown): McpErrorType => {
 
 /**
  * A tool error with `error`'s message. Its event (telemetry/mcp.ts) gets `type`, the kind of
- * failure, and never the message, which can name the audited URL. An internal failure also hands
- * over the error, for its `$exception` event (issue #60), which cleans the message first.
+ * failure, and the `reason` of an expected error (issue #123), never the message, which can name
+ * the audited URL. An internal failure also hands over the error, for its `$exception` event
+ * (issue #60), which cleans the message first.
  */
 export const fail = (
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
@@ -208,6 +221,10 @@ export const fail = (
   type: McpErrorType = errorTypeOf(error)
 ) => {
   const message = error instanceof Error ? error.message : String(error);
+
+  if (error instanceof ExpectedError && error.reason !== undefined) {
+    noteCall({ reason: error.reason });
+  }
 
   return withErrorType(
     {

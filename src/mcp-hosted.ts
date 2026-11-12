@@ -24,7 +24,6 @@ import {
   hostedUrlProblem,
   LOCAL_SERVER,
 } from "./core/hosted.js";
-import { RuleNamesError } from "./core/rules/index.js";
 import type { AeoAudit, Audit } from "./core/types.js";
 import {
   commonOptions,
@@ -121,11 +120,10 @@ export type LimitReason =
  */
 export class CallLimitError extends ExpectedError {
   override name = "CallLimitError";
-  readonly reason: LimitReason;
+  declare readonly reason: LimitReason;
 
   constructor(message: string, reason: LimitReason) {
-    super(message);
-    this.reason = reason;
+    super(message, { reason });
   }
 }
 
@@ -439,21 +437,10 @@ const allowedHost = (target: string): string => {
   const problem = hostedUrlProblem(parsed);
 
   if (problem) {
-    noteCall({ reason: "address" });
-    throw new InputError(problem);
+    throw new InputError(problem, { reason: "address" });
   }
 
   return parsed.hostname;
-};
-
-/**
- * A call that names nothing to audit, or for seo_aeo_audit two things: its event's reason is
- * `target` (issue #121), so a `validation` error without a reason is the schema's refusal.
- */
-const noTarget = (message: string): CallToolResult => {
-  noteCall({ reason: "target" });
-
-  return fail(new InputError(message));
 };
 
 /** The options a call runs with, for its event: choices from fixed lists, never a value typed in. */
@@ -516,15 +503,6 @@ const settle = async (
 
     return { result, end: { outcome: "ok", pages }, audit };
   } catch (error) {
-    // A refusal, or `rules` that name no rule of the audit's (issue #121): the reason is the
-    // analytics', from a fixed list.
-    if (
-      error instanceof RequestRefusedError ||
-      error instanceof RuleNamesError
-    ) {
-      noteCall({ reason: error.reason });
-    }
-
     return {
       result: fail(error),
       end: {
@@ -551,8 +529,6 @@ const runCall = async (
   } catch (error) {
     // A limit, or the server paused: the server's refusal, not the site's.
     if (error instanceof CallLimitError) {
-      noteCall({ reason: error.reason });
-
       return fail(error, "rate_limited");
     }
 
@@ -733,7 +709,10 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
       const inline = source !== undefined && Boolean(source || target);
 
       if (!inline && !target) {
-        return noTarget("Provide `url` or `html`.");
+        // `target` tells the tool's own refusal from the schema's, which has no reason (issue #121).
+        return fail(
+          new InputError("Provide `url` or `html`.", { reason: "target" })
+        );
       }
 
       let host: string | null = null;
@@ -827,7 +806,11 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
       );
 
       if ((input.url === undefined) === (input.html === undefined)) {
-        return noTarget("Provide exactly one of `url` or `html`.");
+        return fail(
+          new InputError("Provide exactly one of `url` or `html`.", {
+            reason: "target",
+          })
+        );
       }
 
       let host: string | null = null;
