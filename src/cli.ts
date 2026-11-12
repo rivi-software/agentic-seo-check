@@ -12,11 +12,15 @@ import type { FetchOptions } from "./core/fetch.js";
 import { baselineFromAudit } from "./core/recheck.js";
 import type { BaselineEntry } from "./core/recheck.js";
 import { installBrowser } from "./core/render.js";
+import { plural } from "./core/report/labels.js";
 import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 import {
   renderAeoText,
   renderRulesText,
   renderText,
+  paint,
+  renderVerdict,
+  terminalSafe,
 } from "./core/report/text.js";
 import type { TextOptions } from "./core/report/text.js";
 import { ALL_RULES } from "./core/rules/index.js";
@@ -36,6 +40,7 @@ import {
 import type { CliRun } from "./telemetry/local.js";
 import { runReport } from "./telemetry/report.js";
 import {
+  colorFor,
   endQuietlyOnClosedPipe,
   formatFor,
   statusLine,
@@ -46,9 +51,20 @@ import { VERSION } from "./version.js";
 
 const program = new Command();
 
+/**
+ * The help's styles, always painted: commander takes the codes out again when the help goes where
+ * colour does not show (a pipe, `NO_COLOR`).
+ */
+const bold = (text: string): string => paint(true, "bold", text);
+const dim = (text: string): string => paint(true, "dim", text);
+const cyan = (text: string): string => paint(true, "cyan", text);
+
+/** Whether stderr shows colour, for the CLI's own lines there. */
+const stderrColor = colorFor(process.stderr);
+
 /** A command's examples, as its help ends with them. */
 const examples = (lines: readonly string[]): string =>
-  `\nExamples:\n${lines.map((line) => `  $ agentic-seo-check ${line}`).join("\n")}`;
+  `\n${bold("Examples:")}\n${lines.map((line) => `  ${dim("$")} agentic-seo-check ${line}`).join("\n")}`;
 
 const OVERVIEW_EXAMPLES = [
   "audit https://www.example.com/pricing",
@@ -94,6 +110,11 @@ let run: CliRun | null = null;
 /** The progress line on stderr, cleared before anything else is written there or to stdout. */
 const status = statusLine(process.stderr);
 
+// An error nothing caught prints its stack on stderr: on a line of its own, not after the spinner.
+process.on("uncaughtExceptionMonitor", () => {
+  status.clear();
+});
+
 /** The names of the flags the user typed, such as `--crawl`; never their values. */
 const flagsGiven = (command: Command): string[] =>
   command.options
@@ -138,10 +159,21 @@ program
     `${PRODUCT_NAME}: SEO and AEO analysis for coding agents. Audits URLs, static build output or raw HTML for search engines (audit, crawl) and AI answer engines (aeo), and prints machine-readable findings.`
   )
   .version(VERSION)
+  // Set before the commands are added, which take these from the program.
+  .configureHelp({
+    styleTitle: bold,
+    styleSubcommandText: cyan,
+    styleOptionText: cyan,
+  })
+  .configureOutput({
+    outputError: (text, write) => {
+      write(`${paint(stderrColor, "red", text.trimEnd())}\n`);
+    },
+  })
   .addHelpText("after", examples(OVERVIEW_EXAMPLES))
   .addHelpText(
     "afterAll",
-    `\nMade by ${MAKER} (${MAKER_URL}). Docs and issues: ${REPOSITORY_URL}`
+    dim(`\nMade by ${MAKER} (${MAKER_URL}). Docs and issues: ${REPOSITORY_URL}`)
   )
   .showHelpAfterError()
   .hook("preAction", async (_program, action) => {
@@ -356,21 +388,27 @@ const parseHeaders = (values: string[] = []) => {
   return headers;
 };
 
-/** Progress on one line of a terminal's stderr, which each step rewrites; none elsewhere. */
-const progressPrinter = (opts: CliOptions) => {
-  const showProgress = !opts.quiet && process.stderr.isTTY;
+/** Whether progress shows: on a terminal's stderr, unless `--quiet`. */
+const showsProgress = (opts: CliOptions): boolean =>
+  !opts.quiet && process.stderr.isTTY;
 
-  return (e: ProgressEvent): void => {
-    if (!showProgress) {
+/**
+ * Progress on one line of a terminal's stderr, which each step rewrites; none elsewhere. A step's
+ * message says what it does, so only the crawl's pages get a word and a count before it.
+ */
+const progressPrinter =
+  (opts: CliOptions) =>
+  (e: ProgressEvent): void => {
+    if (!showsProgress(opts)) {
       return;
     }
 
-    const counter =
-      e.crawled === undefined ? "" : ` ${e.crawled}/${e.discovered}`;
-
-    status.show(`${e.phase}${counter} · ${e.message}`);
+    status.show(
+      e.crawled === undefined
+        ? e.message
+        : `Crawling ${e.crawled}/${e.discovered} · ${e.message}`
+    );
   };
-};
 
 /** Runs the audit the command asks for, and renders it in the format asked for. */
 const auditFor = async (
@@ -468,6 +506,13 @@ const runAudit = async (
     run.target = await targetKind(target);
   }
 
+  // A single page sends no progress of its own while it is fetched: the spinner turns from the start.
+  if (showsProgress(opts)) {
+    status.show(
+      `${mode === "crawl" || opts.crawl ? "Crawling" : "Auditing"} ${target}`
+    );
+  }
+
   const { report, output } = await auditFor(target, opts, mode);
   const { counts } = report;
 
@@ -481,7 +526,9 @@ const runAudit = async (
     await writeReport(opts.out, output);
 
     if (!opts.quiet) {
-      process.stderr.write(`Report written to ${opts.out}\n`);
+      process.stderr.write(
+        `${paint(stderrColor, "green", "✓")} Report written to ${terminalSafe(opts.out)}${paint(stderrColor, "dim", " · ")}${renderVerdict(report, { color: stderrColor })}\n`
+      );
     }
   } else {
     process.stdout.write(`${output}\n`);
@@ -497,7 +544,7 @@ const runAudit = async (
     if (hits > 0) {
       if (!opts.quiet) {
         process.stderr.write(
-          `${hits} finding(s) at or above "${opts.failOn}" severity.\n`
+          `${paint(stderrColor, "red", "✖")} ${plural(hits, "finding")} at or above "${opts.failOn}" severity: exit code 1.\n`
         );
       }
 
@@ -655,7 +702,7 @@ try {
 } catch (error) {
   status.clear();
   process.stderr.write(
-    `agentic-seo-check: ${error instanceof Error ? error.message : String(error)}\n`
+    `${paint(stderrColor, "red", "agentic-seo-check:")} ${terminalSafe(error instanceof Error ? error.message : String(error))}\n`
   );
 
   if (run) {

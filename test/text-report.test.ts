@@ -1,6 +1,19 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import { text as readAll } from "node:stream/consumers";
+import { fileURLToPath } from "node:url";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import { auditAeoHtml, auditAeoSite } from "../src/core/aeo/audit.js";
 import { auditHtml, auditSite } from "../src/core/audit.js";
@@ -8,6 +21,7 @@ import {
   renderAeoText,
   renderRulesText,
   renderText,
+  renderVerdict,
   terminalSafe,
 } from "../src/core/report/text.js";
 import { ALL_RULES } from "../src/core/rules/index.js";
@@ -142,6 +156,32 @@ describe("the text report of a page", () => {
     expect(text.trimEnd().split("\n").at(-1)).toBe(
       `Audited with Agentic SEO Check ${VERSION}, made by RIVI Software (https://rivi.software)`
     );
+  });
+
+  it("ends with the verdict again, which stays in view once the report has scrolled past", () => {
+    const { error, warning, info } = audit.counts;
+
+    expect(text).toMatch(
+      new RegExp(
+        `^Summary ─+\\n\\n {2}Score ${audit.score}/100 (?:good|fair|poor) · ${error} errors · ${warning} warnings · ${info} info\\n\\n {2}Fix the`,
+        "mu"
+      )
+    );
+    expect(renderVerdict(audit)).toBe(
+      `Score ${audit.score}/100 poor · ${error} errors · ${warning} warnings · ${info} info`
+    );
+  });
+
+  it("draws a rule after each heading, to the width", () => {
+    const headings = text.split("\n").filter((line) => / ─{3,}$/u.test(line));
+
+    expect(headings.map((line) => line.replace(/ ─+$/u, ""))).toStrictEqual([
+      "Errors (3)",
+      `Warnings (${audit.counts.warning})`,
+      `Info (${audit.counts.info})`,
+      "Summary",
+    ]);
+    expect(headings.filter((line) => line.length !== 80)).toStrictEqual([]);
   });
 
   it("names no command unless asked to, for the library", () => {
@@ -335,7 +375,7 @@ describe("the text report of an AEO audit", () => {
 
     expect(serious.length).toBeGreaterThan(0);
     expect(missing).toStrictEqual([]);
-    expect(text).toContain("Page\n\n  Indexable");
+    expect(text).toMatch(/^Page ─+\n\n {2}Indexable/mu);
     expect(text).not.toMatch(/^AI crawlers/mu);
   });
 });
@@ -348,6 +388,14 @@ describe("the text list of rules", () => {
     expect(ALL_RULES.filter((rule) => !ids.has(rule.id))).toStrictEqual([]);
     expect(text).toContain("Canonical URLs (");
     expect(text.trimEnd().split("\n").at(-1)).toBe(`${ALL_RULES.length} rules`);
+  });
+
+  it("gives each category's descriptions the room its own ids leave", () => {
+    const text = renderRulesText(ALL_RULES, { width: 80 });
+
+    expect(text).toContain(
+      "  title.missing    error    The page has no <title> element or it is empty.\n"
+    );
   });
 
   it("shows one rule in full", () => {
@@ -370,6 +418,40 @@ describe("the text list of rules", () => {
     expect(renderRulesText([])).toBe("No rule matches.\n");
   });
 });
+
+/**
+ * The CLI from source, run with `args` and its output piped, under the environment's colour
+ * settings `env` adds to; whatever the test runner sets for colour is left out.
+ */
+const runCli = async (
+  args: string[],
+  env: NodeJS.ProcessEnv = {}
+): Promise<{ stdout: string; stderr: string }> => {
+  const rest = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => !["FORCE_COLOR", "NO_COLOR", "CLICOLOR_FORCE"].includes(name)
+    )
+  );
+
+  const child = spawn(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      fileURLToPath(new URL("../src/cli.ts", import.meta.url)),
+      ...args,
+    ],
+    { env: { ...rest, ...env }, stdio: ["ignore", "pipe", "pipe"] }
+  );
+
+  const [stdout, stderr] = await Promise.all([
+    readAll(child.stdout),
+    readAll(child.stderr),
+    once(child, "close"),
+  ]);
+
+  return { stdout, stderr };
+};
 
 describe("the CLI's terminal", () => {
   it("prints text on a terminal and JSON when piped, unless a format or a file decides", () => {
@@ -442,20 +524,90 @@ describe("the CLI's terminal", () => {
     ]).toStrictEqual([72, 100, undefined]);
   });
 
-  it("rewrites one progress line in place, and clears it", () => {
-    const terminal = fakeTerminal({ columns: 20, hasColors: () => false });
-    const line = statusLine(terminal);
+  it("writes no escape codes in the help or an error where colour does not show", async () => {
+    const help = await runCli(["audit", "--help"]);
+    const error = await runCli(["audit", "--bogus"]);
 
-    line.clear();
-    line.show("crawl 1/2 · /a");
-    line.show("crawl 2/2 · /a-very-long-path-indeed\u001B]0;x\u0007");
-    line.clear();
-    line.clear();
+    expect(help.stdout).toMatch(/^Usage: agentic-seo-check audit \[options\]/u);
+    expect(help.stdout).toContain("\nExamples:\n  $ agentic-seo-check audit");
+    expect(error.stderr).toMatch(
+      /^error: unknown option '--bogus'\n\nUsage: agentic-seo-check audit/u
+    );
+    expect(`${help.stdout}${error.stderr}`).not.toContain(ESC);
+  });
 
-    expect(terminal.written).toStrictEqual([
-      `\r${ESC}[2Kcrawl 1/2 · /a`,
-      `\r${ESC}[2Kcrawl 2/2 · /a-ver…`,
-      `\r${ESC}[2K`,
-    ]);
+  it("colours an error in red and the help after it, with FORCE_COLOR", async () => {
+    const { stderr } = await runCli(["audit", "--bogus"], { FORCE_COLOR: "1" });
+
+    expect(stderr).toMatch(
+      new RegExp(
+        `^${ESC}\\[31merror: unknown option '--bogus'${ESC}\\[39m\\n\\n${ESC}\\[1mUsage:${ESC}\\[22m`,
+        "u"
+      )
+    );
+  });
+
+  describe("the progress line", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("rewrites one line in place, and clears it", () => {
+      const terminal = fakeTerminal({ columns: 20, hasColors: () => false });
+      const line = statusLine(terminal);
+
+      line.clear();
+      line.show("Crawling 1/2 · /a");
+      line.show("Crawling 2/2 · /a-long-path\u001B]0;x\u0007");
+      line.clear();
+      line.clear();
+
+      expect(terminal.written).toStrictEqual([
+        `\r${ESC}[2K⠋ Crawling 1/2 · /a`,
+        `\r${ESC}[2K⠋ Crawling 2/2 · /…`,
+        `\r${ESC}[2K`,
+      ]);
+    });
+
+    it("turns the spinner while it shows, and says how long the run has taken", () => {
+      const terminal = fakeTerminal({ columns: 50, hasColors: () => false });
+      const line = statusLine(terminal);
+
+      line.show("Auditing https://shop.test/");
+      vi.advanceTimersByTime(80);
+      const turned = terminal.written.at(-1);
+      vi.advanceTimersByTime(2400);
+      const timed = terminal.written.at(-1);
+      vi.advanceTimersByTime(62_520);
+      line.show("Running Lighthouse (mobile)");
+      const minutes = terminal.written.at(-1);
+      line.clear();
+      const cleared = terminal.written.length;
+      vi.advanceTimersByTime(800);
+
+      expect([terminal.written[0], turned, timed, minutes]).toStrictEqual([
+        `\r${ESC}[2K⠋ Auditing https://shop.test/`,
+        `\r${ESC}[2K⠙ Auditing https://shop.test/`,
+        `\r${ESC}[2K⠙ Auditing https://shop.test/  2 s`,
+        `\r${ESC}[2K⠹ Running Lighthouse (mobile)  1 min 5 s`,
+      ]);
+      expect(terminal.written).toHaveLength(cleared);
+    });
+
+    it("colours the spinner and dims the step, on a terminal with colour", () => {
+      const terminal = fakeTerminal();
+      const line = statusLine(terminal);
+
+      line.show("Fetching sitemaps");
+      line.clear();
+
+      expect(terminal.written[0]).toBe(
+        `\r${ESC}[2K${ESC}[36m⠋${ESC}[39m ${ESC}[2mFetching sitemaps${ESC}[22m`
+      );
+    });
   });
 });
