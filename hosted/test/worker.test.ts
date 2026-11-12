@@ -350,10 +350,26 @@ const start = (
     },
   });
 
+/**
+ * Starts the website's Worker once `server`, the MCP server's, has joined `registry`. The website
+ * reads the registry as it starts, and hears of a Worker that joins later only through a file
+ * watcher its `ready` does not wait for: until then its form reaches no Durable Object and answers
+ * 503, as a deploy's run on a slow runner once did. The server's `ready` says only that Wrangler's
+ * proxy is up; an answer from the server's Worker says the Worker has joined.
+ */
+const startWebsite = async (
+  server: StartedWorker,
+  { registry: joins, vars }: { registry: string; vars?: StartOptions["vars"] }
+) => {
+  await fetchRead(server, `${ORIGIN}/robots.txt`);
+
+  return start(SITE, { config: SITE_CONFIG, registry: joins, vars });
+};
+
 describe("the hosted Worker in workerd", () => {
   beforeAll(async () => {
     worker = await start(ORIGIN, { registry });
-    website = await start(SITE, { config: SITE_CONFIG, registry });
+    website = await startWebsite(worker, { registry });
     former = await start(FORMER);
     await Promise.all([worker.ready, website.ready, former.ready]);
     base = await worker.url;
@@ -1143,8 +1159,7 @@ describe("the hosted Worker in workerd", () => {
       const own = newRegistry();
       const server = await start(ORIGIN, { registry: own });
 
-      const capped = await start(SITE, {
-        config: SITE_CONFIG,
+      const capped = await startWebsite(server, {
         registry: own,
         vars: { CALLER_SITES: 1 },
       });
