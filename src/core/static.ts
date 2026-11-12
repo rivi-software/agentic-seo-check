@@ -4,7 +4,7 @@ import path from "node:path";
 import type { CrawlResult } from "./crawl.js";
 import { ExpectedError } from "./errors.js";
 import { DEFAULT_USER_AGENT } from "./fetch.js";
-import { extractPage } from "./html/extract.js";
+import { extractPage, linkStringSharer } from "./html/extract.js";
 import { buildRobots } from "./robots.js";
 import type { RobotsResult } from "./robots.js";
 import { isLocalHost } from "./rules/canonical.js";
@@ -147,6 +147,7 @@ const readPages = async (
 ): Promise<ScannedPages> => {
   const records: PageRecord[] = [];
   const recordByKey = new Map<string, PageRecord>();
+  const shareLinkStrings = linkStringSharer();
 
   for (const file of files) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- one file at a time on purpose: a build can hold thousands of pages
@@ -159,6 +160,8 @@ const readPages = async (
       siteHost: base.hostname,
       includeSubdomains: options.includeSubdomains,
     });
+
+    shareLinkStrings(page.links);
 
     const record: PageRecord = {
       url,

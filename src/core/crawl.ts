@@ -14,7 +14,7 @@ import type {
   FetchResult,
   RequestRefusedError,
 } from "./fetch.js";
-import { extractPage } from "./html/extract.js";
+import { extractPage, linkStringSharer } from "./html/extract.js";
 import { trackRefusals } from "./refusals.js";
 import type { Refusals } from "./refusals.js";
 import { loadRobotsTxt, robotsUserAgentToken } from "./robots.js";
@@ -27,6 +27,7 @@ import type { LinkCheck, PageRecord, ProbeResults } from "./site-rules.js";
 import { emptySitemapProblems, loadSitemaps } from "./sitemap.js";
 import type {
   CrawlStats,
+  ExtractedPage,
   Finding,
   LinkInfo,
   RobotsTxtInfo,
@@ -603,6 +604,20 @@ export const crawlSite = async (
   };
 
   const queue: QueueItem[] = [{ url: startUrl, depth: 0 }];
+  const shareLinkStrings = linkStringSharer();
+
+  /** The page as the crawl keeps it, its links sharing their strings with earlier pages'. */
+  const extract = (html: string, url: string): ExtractedPage => {
+    const page = extractPage(html, {
+      url,
+      siteHost: startHost,
+      includeSubdomains: options.includeSubdomains,
+    });
+
+    shareLinkStrings(page.links);
+
+    return page;
+  };
 
   /** Queues the internal links a crawled page has, and remembers every link's sources. */
   const followLinks = (
@@ -696,11 +711,7 @@ export const crawlSite = async (
 
     recorded.add(finalKey);
 
-    const page = extractPage(res.body ?? "", {
-      url: res.finalUrl,
-      siteHost: startHost,
-      includeSubdomains: options.includeSubdomains,
-    });
+    const page = extract(res.body ?? "", res.finalUrl);
 
     const record: PageRecord = {
       url: finalKey,
@@ -768,11 +779,7 @@ export const crawlSite = async (
 
     recorded.add(finalKey);
 
-    const page = extractPage(res.body, {
-      url: res.finalUrl,
-      siteHost: startHost,
-      includeSubdomains: options.includeSubdomains,
-    });
+    const page = extract(res.body, res.finalUrl);
 
     const record: PageRecord = {
       url: finalKey,

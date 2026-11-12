@@ -5,6 +5,7 @@ import { adapter } from "parse5-htmlparser2-tree-adapter";
 import type { HeadSignals, HeadSources, MetaRefresh } from "../types.js";
 import {
   attr,
+  detached,
   MAX_QUOTE_CHARS,
   queryAll,
   queryOne,
@@ -235,7 +236,7 @@ const quote = (node: AnyNode, source: string): string => {
     location.startOffset + MAX_QUOTE
   );
 
-  return collapseWhitespace(source.slice(location.startOffset, end));
+  return detached(collapseWhitespace(source.slice(location.startOffset, end)));
 };
 
 interface HeadParse {

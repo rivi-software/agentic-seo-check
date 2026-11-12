@@ -41,9 +41,10 @@ export const HOSTED_LIMITS = {
    */
   maxRequestBytes: 8_000_000,
   /**
-   * Pages a crawl audits (issue #73). A crawl keeps what it extracted from each page, not its DOM,
-   * so its memory grows with `concurrency` rather than with this: 100 pages of 113 KB, both audits,
-   * stay under a 128 MB heap.
+   * Pages a crawl audits (issue #73). A crawl keeps what it extracted from each page to its end,
+   * never the page's HTML or DOM: about 0.8 MB for a page with an 800-link menu, less once the
+   * strings of the links every page repeats are kept once (`linkStringSharer`). 100 such pages of 600 KB,
+   * both audits, run in a 72 MB heap; 100 with 800 links of their own each, in 128 MB.
    */
   maxPages: 100,
   maxDepth: 5,
