@@ -1,24 +1,30 @@
 name: Feature request
-description: A new rule, option, tool or command, or a change to what one does
+description: A new rule, option, tool or command, or a change to what one does, the hosted server or the website
 type: Feature
+labels: ["needs-triage"]
 body:
   - type: textarea
     id: problem
     attributes:
       label: The problem
-      description: What you or your agent is trying to do, and what gets in the way today. For a new rule, what a search engine or crawler does with such a page, with a link to its documentation.
+      description: What you or your agent is trying to do, and what gets in the way today. For a new rule, what a search engine, an AI answer engine or a crawler does with such a page, with a link to its documentation.
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
       label: What you propose
-      description: The rule (its id, severity and the fix it would recommend), the option, the MCP tool or the command you have in mind. An example of the output helps.
+      description: The rule (its id, severity and the fix it would recommend), the option, the MCP tool or the command you have in mind, or what the hosted server or the website should do. An example of the output helps.
   - type: textarea
     id: alternatives
     attributes:
       label: What you tried instead
       description: Workarounds, or other tools that do this.
+  - type: textarea
+    id: open-questions
+    attributes:
+      label: Open questions
+      description: What you are not sure of, for the maintainers to settle in this issue.
   - type: dropdown
     id: contribute
     attributes:

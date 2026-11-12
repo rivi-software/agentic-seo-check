@@ -1,0 +1,36 @@
+name: Task
+description: Docs, CI, tooling or a refactor, a change users of the tool do not notice
+type: Task
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        When the README says the tool does something it does not, that is a bug: use the Bug report. A change users notice is a Feature request.
+  - type: textarea
+    id: what
+    attributes:
+      label: What to do
+      description: The files, the workflow or the document, what is wrong or missing in them, and what to change.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What this saves, fixes or makes possible.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: How to tell the work is finished, such as a check that passes or a page that says something.
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you write the pull request?
+      options:
+        - Yes, once we agree on the approach
+        - Yes, with some help
+        - No

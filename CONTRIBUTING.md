@@ -9,9 +9,11 @@ Everyone who takes part follows the [code of conduct](CODE_OF_CONDUCT.md).
 [Open an issue](https://github.com/rivi-software/agentic-seo-check/issues/new/choose), after a look through the [existing ones](https://github.com/rivi-software/agentic-seo-check/issues?q=is%3Aissue).
 
 - **A wrong finding.** A rule that fires on a page that is fine, or misses a real problem. Name the rule id, the version, and the URL or the smallest HTML that shows it. A false positive costs agents a fix nobody needed, so these get fixed first.
-- **A bug.** Name the version, how you ran it (CLI, MCP server and which client, or the library), the Node version, and what you expected and what happened instead.
-- **A new rule or a feature.** Describe the problem first: what a search engine or a crawler does with the page, with a link to its documentation. Agreeing on it in the issue saves you a pull request that does not merge.
+- **A bug.** Name how you ran it (the CLI, the MCP server on your machine or the hosted one and which client, the website, or the library), the version, the Node version, and what you expected and what happened instead. The hosted server and the website run the latest `main`: for them, give the date and time you saw it, in UTC.
+- **A new rule or a feature.** Describe the problem first: what a search engine, an AI answer engine or a crawler does with the page, with a link to its documentation. Agreeing on it in the issue saves you a pull request that does not merge.
 - **A question.** Open an issue too: a question often shows where the README falls short.
+- **A task.** Docs, CI, tooling or a refactor that users of the tool do not notice: say what to change, why, and how to tell it is done.
+- **Requests to your site from the hosted server.** Not an issue: [the page for site owners](https://mcp.agentic-seo.rivi.software/crawler) says how to recognise and block them, and where to report too many.
 - **A vulnerability.** Never in a public issue: [SECURITY.md](SECURITY.md) says how to report one privately.
 
 Issues and pull requests in this repository show up on [RIVI Open Source](https://github.com/orgs/rivi-software/projects/2), the project board for all of RIVI Software's public repositories.

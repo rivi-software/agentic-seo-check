@@ -1,34 +1,40 @@
 name: Bug report
-description: The tool crashes, hangs, or does not do what the README says
+description: The tool, the hosted server or the website crashes, hangs, or does not do what the README says
 type: Bug
+labels: ["needs-triage"]
 body:
   - type: markdown
     attributes:
       value: |
         A vulnerability goes in a private report, never here: [SECURITY.md](https://github.com/rivi-software/agentic-seo-check/blob/main/SECURITY.md) says how. A rule that is wrong about a page has its own form: Wrong finding.
-  - type: input
-    id: version
-    attributes:
-      label: Version
-      description: "`agentic-seo-check --version`, or the commit you run from source."
-      placeholder: "0.1.0"
-    validations:
-      required: true
+
+        On the hosted server and the website, a site that turns the server away (robots.txt, a 403, a 429, a challenge page) gets its answer reported as it is, and a call past a limit gets an error that names the limit. Neither is a bug: the README's [Hosted server](https://github.com/rivi-software/agentic-seo-check#hosted-server) section has the limits.
   - type: dropdown
     id: interface
     attributes:
       label: How you ran it
       options:
         - CLI
-        - MCP server
+        - MCP server, run on your machine
+        - Hosted MCP server (mcp.agentic-seo.rivi.software)
+        - Website (agentic-seo.rivi.software)
         - Library
+        - Agent skill (seo-audit)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`agentic-seo-check --version`, or the commit you run from source. The hosted server and the website run the latest `main`: for them, the date and time you saw it, in UTC."
+      placeholder: "0.18.0"
     validations:
       required: true
   - type: input
     id: environment
     attributes:
       label: Where it runs
-      description: Node version and OS; for the MCP server, the client (Claude Code, Cursor, Codex …); for `--render` or `--lighthouse`, the browser it used.
+      description: Node version and OS; for an MCP server, the client (Claude Code, claude.ai, ChatGPT, Cursor, Codex …); for the website, the browser; for `--render` or `--lighthouse`, the browser it used.
       placeholder: Node 24, macOS 26, Claude Code
     validations:
       required: true
@@ -36,13 +42,13 @@ body:
     id: what-happened
     attributes:
       label: What happened
-      description: The command or tool call, what you expected, and what happened instead. Paste errors and output as text.
+      description: The command, the tool call or the URL you entered, what you expected, and what happened instead. Paste errors and output as text.
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
       label: How to reproduce it
-      description: A public URL, the smallest HTML or site that shows it, and the exact command. If it happens only sometimes, say when you have seen it.
+      description: A public URL, the smallest HTML or site that shows it, and the exact command or tool call. If it happens only sometimes, say when you have seen it.
     validations:
       required: true

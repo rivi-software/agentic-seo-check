@@ -1,0 +1,31 @@
+name: Question
+description: How something works, or how to use it
+labels: ["question", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask away: a question often shows where the README falls short. The [README](https://github.com/rivi-software/agentic-seo-check#readme) covers what the tool checks and each way to run it, and the [agent skill](https://github.com/rivi-software/agentic-seo-check/blob/main/skills/seo-audit/SKILL.md) how an agent should use it.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What you are trying to do, and what you want to know.
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you tried
+      description: The part of the README you read, and the command or tool call you ran, with its output as text.
+  - type: dropdown
+    id: interface
+    attributes:
+      label: How you run it
+      options:
+        - CLI
+        - MCP server, run on your machine
+        - Hosted MCP server (mcp.agentic-seo.rivi.software)
+        - Website (agentic-seo.rivi.software)
+        - Library
+        - Agent skill (seo-audit)
