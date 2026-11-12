@@ -19,7 +19,7 @@ Closes #
 
 <!-- What you ran and what it showed, then what you did not check. List only the checks you actually ran. -->
 <!-- The tests launch no browser, so a change to --render or --lighthouse needs a run by hand against a real page, or a line saying it had none. -->
-<!-- CI's `verify` check reports the pass counts. Link the evidence it cannot give (a run, a permalink, a shared report), and put long output in a <details> block. -->
+<!-- CI's `CI / verify` check reports the pass counts. Link the evidence it cannot give (a run, a permalink, a shared report), and put long output in a <details> block. -->
 
 **Test rationale:** <!-- For each group of new or changed tests: the regression it catches, the closest existing test, and why that one missed it. A new or changed rule: it fires on a bad page, stays quiet on good-page.html (an AEO rule on aeo-good-page.html too), and its fix quotes the page as written (test/helpers/fixes.ts). No new test: name the coverage that already holds the change, or why a test would not help. -->
 

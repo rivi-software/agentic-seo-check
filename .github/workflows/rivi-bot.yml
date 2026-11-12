@@ -6,6 +6,9 @@ name: rivi-bot
 # maintainer adds the `rivi-bot:review` label; someone with write access asks it for the rest with a comment that
 # speaks to @rivi-bot (`@rivi-bot why does this rule skip noindex pages?`).
 #
+# It stays on GitHub Actions, not Depot CI with CI (issue #127): Depot CI runs no pull_request_target for a pull
+# request from a fork, which a maintainer's label asks RIVI Bot to review.
+#
 # The events and permissions here are the most it can do. pull_request_target runs this file as it is on main, with
 # the secrets, and nothing from the pull request runs: the reusable workflow gates outside pull requests on the label
 # and requests on write access, and reads its configuration from main.

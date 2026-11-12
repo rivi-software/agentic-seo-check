@@ -1,5 +1,3 @@
-import { setTimeout as delay } from "node:timers/promises";
-
 /** Minimal promise pool: at most `concurrency` tasks run at once, the rest wait in order. */
 export const createPool = (concurrency: number) => {
   let active = 0;
@@ -41,6 +39,13 @@ export const mapConcurrent = <T, R>(
   return Promise.all(items.map((item, i) => run(() => fn(item, i))));
 };
 
+/**
+ * Resolves after `ms`, on the global `setTimeout`, so a test's fake timers reach it: they patch
+ * `node:timers/promises` as an object, which a named import from it never sees.
+ */
 export const sleep = async (ms: number): Promise<void> => {
-  await delay(ms);
+  // oxlint-disable-next-line promise/avoid-new -- the wait ends on a timer's callback, which only a new Promise can await
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 };

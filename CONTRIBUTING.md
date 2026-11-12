@@ -76,9 +76,9 @@ Work on a branch in your fork. One pull request makes one change. Two unrelated 
 
 ### What happens next
 
-1. **CI** runs `verify` on Node 22, 24 and 26, and its `verify` check must pass before the pull request can merge. Until a first pull request of yours has merged here, GitHub waits for a maintainer to approve each run before it starts.
+1. **CI** runs `verify`, its tests on Node 22, 24 and 26, on [Depot CI](https://depot.dev/docs/ci/overview), and its `CI / verify` check must pass before the pull request can merge. Depot CI runs nothing for a pull request from a fork. Once a maintainer has read yours, they open it again from a branch of this repository, with your commits unchanged, link the new pull request on yours, and close yours. CI, review and the merge happen on the new one, and the merge credits you as co-author. To change something after that, push to your branch as before and say so on the new pull request.
 2. **Review.** A maintainer reviews the pull request. They may also ask [RIVI Bot](#reviews-by-rivi-bot), an automated reviewer that runs on Workers AI, to review it; it only reads the change and comments. Its comments are advice: fix what is right, and reply where it is wrong.
-3. **Merge.** A maintainer squash-merges the pull request once the code owner ([`.github/CODEOWNERS`](.github/CODEOWNERS)) approves it and `verify` passes.
+3. **Merge.** A maintainer squash-merges the pull request once the code owner ([`.github/CODEOWNERS`](.github/CODEOWNERS)) approves it and `CI / verify` passes.
 4. **Release.** The next release publishes your changeset to npm (see [Changes and releases](#changes-and-releases)).
 
 ### License
@@ -91,9 +91,30 @@ You may use AI tools to write an issue or a pull request, and you are its author
 
 ## For maintainers
 
+### CI
+
+[`.depot/workflows/ci.yml`](.depot/workflows/ci.yml) runs on [Depot CI](https://depot.dev/docs/ci/overview), on each pull request from a branch here and each push to `main`. One job runs the format check, the lint, the typecheck and `hosted:verify` on `.node-version`. One job per Node version runs the tests, the build and `check:package`. Depot CI reports each job to GitHub as a check from the Depot Code Access app, and `CI / verify` passes once they all have.
+
+Its runs and logs are in Depot's dashboard, which a check's details link opens, not in the Actions tab: `gh run` does not see them.
+
+```bash
+depot ci run list --repo rivi-software/agentic-seo-check --pr <number>
+depot ci logs <run-id> --job <checks|node|verify>
+depot ci retry <run-id> --failed
+```
+
+`.github/workflows/` keeps the workflows that Depot CI cannot run as they need, each with its reason in its header:
+
+- `release.yml`: npm's trusted publishing takes the token of a GitHub-hosted runner.
+- `deploy-hosted.yml`: the `hosted` environment's protection rule keeps the Cloudflare token to `main` and the release tags. Depot CI enforces no protection rules.
+- `rivi-bot.yml`: it runs on `pull_request_target` for forks' pull requests, which Depot CI does not run.
+
+GitHub's `workflows` permission keeps a token without it from changing `.github/workflows/`, but it does not guard `.depot/`. Depot CI runs `.depot/workflows/` as each branch has it. Read a change there as you would a change to `.github/workflows/`. Dependabot bumps an action in both directories in one pull request.
+
 ### Pull requests from forks
 
-- **CI runs.** Read the diff before you approve a CI run for a first-time contributor. CI runs the pull request's own code: its install, tests, build and scripts. It gets a read-only token and no secrets, but nothing should run that nobody has read. Look hardest at `.github/`, `scripts/`, the `scripts` in `package.json`, `lefthook.yml` and `pnpm-workspace.yaml`.
+- **CI.** Depot CI runs nothing for a pull request from a fork ([its compatibility notes](https://depot.dev/docs/ci/compatibility#pull-request-workflows-triggered-from-forks)). A fork's pull request gets no `CI / verify`, so it cannot merge. Once you have read it, push its commits unchanged to a branch here, `fork/<number>`, open the pull request from that branch, and close the original with a link. The contributor stays the author of their commits and becomes co-author of the squash commit. [`.claude/skills/recreate-fork-pr/SKILL.md`](.claude/skills/recreate-fork-pr/SKILL.md) has the steps and the commands, for you or an agent.
+- **Read it first.** On a branch here, the code runs in CI as this repository's code, `.depot/workflows/` included. CI holds no secret, but it shares Depot Cache with the runs on `main`, so nothing should run that nobody has read. Step 2 of the skill lists the files to read hardest.
 - **Secrets.** No workflow runs a fork's code with secrets. RIVI Bot's workflow runs on `pull_request_target`, which has them, and never runs the code it checks out.
 - **Small fixes.** When a pull request lacks only a changeset or a Conventional Commits title, push the changeset to the branch or edit the title yourself. Don't send the contributor round again.
 
@@ -119,9 +140,9 @@ npm takes the publish only from this repository's `release.yml`: on npmjs.com, t
 
 GitHub enforces the repository's rulesets; [`.github/rulesets/`](.github/rulesets) holds them and is their source of truth.
 
-- **`main.json`.** `main` changes only through pull requests, squashed, once the `verify` check passes: CI's job that passes when every Node version passed, and the code owner approves. Nobody pushes to `main` directly, force-pushes or deletes it.
+- **`main.json`.** `main` changes only through pull requests, squashed, once the `CI / verify` check passes and the code owner approves. That check is CI's job that passes when the checks and every Node version passed, from the Depot Code Access app (integration id `219785`), so a check of the same name from elsewhere does not count. Nobody pushes to `main` directly, force-pushes or deletes it.
   - [`.github/CODEOWNERS`](.github/CODEOWNERS) makes `rikvisser-dev` the owner of every file, so every pull request needs their approval. A review by anyone else, RIVI Bot's included, is advice.
-  - `rikvisser-dev` can bypass the rules in a pull request only. GitHub does not let an author approve their own pull request, so they bypass the approval to merge their own. A bypass merges without waiting for any rule, `verify` included, so wait for `verify` first.
+  - `rikvisser-dev` can bypass the rules in a pull request only. GitHub does not let an author approve their own pull request, so they bypass the approval to merge their own. A bypass merges without waiting for any rule, `CI / verify` included, so wait for `CI / verify` first.
 - **`release-tags.json`.** A release tag (`v*`) is created once and is never moved or deleted, because users pin to it.
 
 To change a ruleset, edit its file in a pull request, then apply it:

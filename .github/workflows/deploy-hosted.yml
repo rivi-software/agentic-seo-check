@@ -11,6 +11,10 @@ name: Deploy the hosted server
 # A run deploys the commit it runs on, and nothing else: the environment's rule for main and v*
 # checks the ref a run is for, so an input naming other code would take the Cloudflare token
 # past it. The first step checks that ref as well, in case the rule is missing.
+#
+# On GitHub Actions, not Depot CI with CI (issue #127): Depot CI enforces no environment's
+# protection rules, so the token would reach any branch's run that names the environment, and a
+# Depot secret scoped to the branch main would not reach a release tag's run, the rollback.
 on:
   push:
     branches:
