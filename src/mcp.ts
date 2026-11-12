@@ -42,7 +42,7 @@ import {
   InputError,
   LIST_RULES,
   listRules,
-  readOnlyAnnotations,
+  readOnlyTool,
   respond,
   respondAeo,
   toOptions,
@@ -134,7 +134,7 @@ export const createMcpServer = (
   server.registerTool(
     "seo_audit_page",
     {
-      title: "Audit one page for SEO",
+      ...readOnlyTool("Audit one page for SEO", { openWorld: true }),
       description:
         `Audit a single page and return prioritised, actionable findings (rule id, severity, message, recommendation, CSS selector, evidence) with a \`fix\` for each: the exact edits that resolve it, quoting the code to replace (\`{{…}}\` marks words the author writes). ` +
         `Checks title, meta description, headings, canonical, robots/noindex, viewport/lang, Open Graph/Twitter cards, images, links, hreflang, structured data (JSON-LD/microdata), content quality and the HTTP response. ` +
@@ -179,9 +179,6 @@ export const createMcpServer = (
           .describe("Lighthouse device emulation."),
         ...commonOptions,
       },
-      annotations: readOnlyAnnotations("Audit one page for SEO", {
-        openWorld: true,
-      }),
     },
     async (input) => {
       try {
@@ -221,7 +218,7 @@ export const createMcpServer = (
   server.registerTool(
     "seo_crawl_site",
     {
-      title: "Crawl a site and audit every page",
+      ...readOnlyTool("Crawl a site and audit every page", { openWorld: true }),
       description:
         `Crawl internal links from a start URL (default 25 pages, depth 3), audit every HTML page, and run site-wide checks: robots.txt, XML sitemap coverage (missing/noindex/non-canonical/broken URLs), broken internal links with their sources, redirect chains, duplicate titles/descriptions/H1s/content, orphan and deep pages, soft-404 behaviour, http→https and www redirects, hreflang return links. ` +
         `Returns site findings plus \`issues\` (page findings rolled up by rule with example URLs) and per-page scores. Use seo_audit_page on a specific URL for full per-page detail. ` +
@@ -288,9 +285,6 @@ export const createMcpServer = (
           ),
         ...commonOptions,
       },
-      annotations: readOnlyAnnotations("Crawl a site and audit every page", {
-        openWorld: true,
-      }),
     },
     async (input) => {
       try {
@@ -318,7 +312,9 @@ export const createMcpServer = (
   server.registerTool(
     "seo_audit_directory",
     {
-      title: "Audit a static build output directory",
+      ...readOnlyTool("Audit a static build output directory", {
+        openWorld: false,
+      }),
       description:
         `Audit every .html file in a build output directory (dist/, out/, build/, .output/public) without running a server. Runs all page checks plus directory-level checks: internal links that resolve to no file, sitemap.xml/robots.txt in the output, duplicate titles/descriptions/content, unlinked files. ` +
         `Pass \`baseUrl\` as the production origin (e.g. https://www.example.com) so absolute links, canonicals and sitemap URLs are classified correctly. ${docsNote(
@@ -350,10 +346,6 @@ export const createMcpServer = (
           ),
         ...commonOptions,
       },
-      annotations: readOnlyAnnotations(
-        "Audit a static build output directory",
-        { openWorld: false }
-      ),
     },
     async (input) => {
       try {
@@ -374,7 +366,7 @@ export const createMcpServer = (
   server.registerTool(
     "seo_lighthouse",
     {
-      title: "Run Lighthouse on a URL",
+      ...readOnlyTool("Run Lighthouse on a URL", { openWorld: true }),
       description:
         `Run Google Lighthouse (performance, SEO and agentic-browsing categories) against one URL using a local headless Chrome. Returns Core Web Vitals lab metrics (LCP, CLS, TBT, FCP, Speed Index, TTFB), the top opportunities with estimated savings, failed Lighthouse SEO audits, and findings with thresholds applied. Takes 20-60 seconds. Requires Chrome or Playwright Chromium on this machine. ` +
         `Lighthouse's own documentation: https://developer.chrome.com/docs/lighthouse/overview. ${docsNote(
@@ -396,9 +388,6 @@ export const createMcpServer = (
           ),
         format,
       },
-      annotations: readOnlyAnnotations("Run Lighthouse on a URL", {
-        openWorld: true,
-      }),
     },
     async (input) => {
       try {
@@ -429,7 +418,9 @@ export const createMcpServer = (
   server.registerTool(
     "seo_aeo_audit",
     {
-      title: "Audit a page or site for answer engines (AEO)",
+      ...readOnlyTool("Audit a page or site for answer engines (AEO)", {
+        openWorld: true,
+      }),
       description:
         `Answer engine optimization audit: can AI answer engines (ChatGPT search, Claude, Perplexity, Google AI Overviews and AI Mode, Copilot, Gemini) reach, quote and trust the content? ` +
         `Checks robots.txt for each AI crawler (search crawlers, answer bots, training bots), Content-Signal lines and the shared \`__usage_ai-training\` opt-out, /llms.txt, nosnippet/max-snippet/data-nosnippet, Bing's noarchive/nocache for Copilot, noai, content that needs JavaScript, question headings without a direct answer, FAQPage/HowTo markup that the page does not show, article author and dates, and Organization/Person entities with sameAs. ` +
@@ -522,10 +513,6 @@ export const createMcpServer = (
         format,
         detail,
       },
-      annotations: readOnlyAnnotations(
-        "Audit a page or site for answer engines (AEO)",
-        { openWorld: true }
-      ),
     },
     async (input) => {
       try {

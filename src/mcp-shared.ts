@@ -144,27 +144,31 @@ export const docsNote = (server: "local" | "hosted"): string =>
   `Documentation: ${REPOSITORY_URL}#${server === "hosted" ? "hosted-server" : "mcp-server"}. Every rule, with the search engine documentation it follows: ${WEBSITE_URL}/rules.`;
 
 /**
- * The annotations of a tool that only reads, with all four hints set. OpenAI's plugin guidelines
+ * The title and annotations of a tool that only reads, spread into its config so the title is
+ * written once and the annotations repeat it. All four hints are set: OpenAI's plugin guidelines
  * want `readOnlyHint`, `destructiveHint` and `openWorldHint` as explicit booleans on every tool,
  * and a tool that is safe to retry to say so, which `idempotentHint` does. Reading deletes
  * nothing, and a second call has no further effect, as an HTTP GET is idempotent though the page
  * it returns may change. `openWorld` is whether the tool requests pages on the web, rather than
  * reading files or its own rules.
  */
-export const readOnlyAnnotations = (
+export const readOnlyTool = (
   title: string,
   { openWorld }: { openWorld: boolean }
-): ToolAnnotations => ({
+) => ({
   title,
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: openWorld,
+  annotations: {
+    title,
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: openWorld,
+  } satisfies ToolAnnotations,
 });
 
 /** seo_list_rules: the same tool on both servers. */
 export const LIST_RULES = {
-  title: "List SEO rules",
+  ...readOnlyTool("List SEO rules", { openWorld: false }),
   description:
     "List every rule this tool can report, with id, category, typical severity, what it checks and the generic fix. Filter by category or look up one rule id to understand a finding.",
   inputSchema: {
@@ -176,7 +180,6 @@ export const LIST_RULES = {
       ),
     rule: z.string().optional().describe("Return only this rule id."),
   },
-  annotations: readOnlyAnnotations("List SEO rules", { openWorld: false }),
 };
 
 export const listRules = (input: { category?: string; rule?: string }) => {
