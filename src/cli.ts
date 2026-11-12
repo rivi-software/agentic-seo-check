@@ -272,7 +272,7 @@ const addAuditOptions = (cmd: Command, mode: Mode): Command => {
     .option("--user-agent <ua>", "Custom User-Agent header")
     .option(
       "-H, --header <header...>",
-      'Extra request header "Name: value" (repeatable)'
+      'Extra request header "Name: value" (repeatable), sent to the audited origin only'
     )
     .option("-q, --quiet", "Suppress progress output on stderr");
 };

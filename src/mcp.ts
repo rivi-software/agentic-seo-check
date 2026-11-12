@@ -395,7 +395,9 @@ export const createMcpServer = (
         headers: z
           .record(z.string(), z.string())
           .optional()
-          .describe("Extra request headers (e.g. auth for staging)."),
+          .describe(
+            "Extra request headers (e.g. auth for staging). Sent to the origin of the audited URL only."
+          ),
         format,
       },
       annotations: {

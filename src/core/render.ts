@@ -4,9 +4,10 @@ import { promises as fs } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import type * as Playwright from "playwright";
 
+import { browserRequestHeaders, hasHeaders } from "./browser-headers.js";
 import { ExpectedError } from "./errors.js";
 import { DEFAULT_USER_AGENT } from "./fetch.js";
 
@@ -105,6 +106,35 @@ const launchSystemBrowser = async (
 const firstLine = (message: string): string =>
   message.split("\n")[0] ?? message;
 
+/**
+ * Puts the user's headers on the page's requests to the audited origin, and on no other: see
+ * `browserRequestHeaders`.
+ */
+const sendHeadersToOrigin = async (
+  page: Page,
+  headers: Record<string, string>,
+  url: string
+): Promise<void> => {
+  const client = await page.context().newCDPSession(page);
+
+  client.on("Fetch.requestPaused", (paused) => {
+    client
+      .send("Fetch.continueRequest", {
+        requestId: paused.requestId,
+        headers: browserRequestHeaders(
+          paused.request.headers,
+          paused.request.url,
+          headers,
+          url
+        ),
+      })
+      // A request the page gave up on, or a page that closed, has nothing left to continue.
+      .catch(() => null);
+  });
+
+  await client.send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
+};
+
 /** Load the page in headless Chromium and return the rendered DOM. */
 export const renderPage = async (
   url: string,
@@ -144,10 +174,14 @@ export const renderPage = async (
     const context = await browser.newContext({
       userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
       viewport: options.viewport ?? { width: 1366, height: 900 },
-      extraHTTPHeaders: options.headers,
     });
 
     const page = await context.newPage();
+
+    if (hasHeaders(options.headers)) {
+      await sendHeadersToOrigin(page, options.headers, url);
+    }
+
     page.on("console", (msg) => {
       if (msg.type() === "error") {
         consoleErrors.push(msg.text().slice(0, 300));

@@ -163,6 +163,8 @@ On a terminal the CLI prints a text report for people: the score and its band, t
 
 Requests from the CLI and the local server carry the User-Agent `Mozilla/5.0 (compatible; agentic-seo-check-local/<version>; +https://github.com/rivi-software/agentic-seo-check)` unless `--user-agent` (`userAgent`) sets another. A crawl obeys robots.txt for the product token `agentic-seo-check-local`, or `*` when robots.txt has no group for it, unless `--ignore-robots` (`respectRobots: false`). The hosted server's token is `agentic-seo-check`, so a site can tell the two apart.
 
+`-H`/`--header` (`headers`) adds request headers, such as `Authorization` or a cookie for a staging site. They go to the origin of the URL you audit and to no other: a redirect to another host, an external link the crawl checks, and the third-party scripts, fonts and images a page loads with `--render` or `--lighthouse` are requested without them. The same host over https counts as the same site when the URL you gave is http. So audit the address the site answers at: when `https://example.com` redirects to `https://www.example.com`, the headers stop at the redirect.
+
 Exit codes: `0` success, `1` findings at or above `--fail-on`, `2` usage or runtime error. Progress goes to stderr, the report to stdout.
 
 ## Hosted server

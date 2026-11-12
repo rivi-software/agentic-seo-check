@@ -2,6 +2,8 @@ import type { Options as ChromeLaunchOptions } from "chrome-launcher";
 import type { Flags as LighthouseFlags } from "lighthouse";
 import { z } from "zod";
 
+import { browserRequestHeaders, hasHeaders } from "./browser-headers.js";
+import type { HeaderEntry } from "./browser-headers.js";
 import { ExpectedError } from "./errors.js";
 import { quote } from "./html/dom.js";
 import { BROWSER_INSTALL_HINT } from "./render.js";
@@ -678,6 +680,140 @@ const loadLighthouse = async () => {
   }
 };
 
+/** Where Chrome's DevTools endpoint says its browser-wide WebSocket is. */
+const devToolsVersion = z.object({ webSocketDebuggerUrl: z.string() });
+
+/** A message of the Chrome DevTools Protocol, as far as `sendHeadersToOrigin` reads one. */
+const devToolsMessage = z.object({
+  id: z.number().optional(),
+  method: z.string().optional(),
+  sessionId: z.string().optional(),
+  params: z
+    .object({
+      sessionId: z.string().optional(),
+      requestId: z.string().optional(),
+      request: z
+        .object({ url: z.string(), headers: z.record(z.string(), z.string()) })
+        .optional(),
+    })
+    .optional(),
+});
+
+/** What `sendHeadersToOrigin` sends Chrome with a method. */
+type DevToolsParams =
+  | Record<string, never>
+  | { patterns: { urlPattern: string }[] }
+  | { requestId: string; headers: HeaderEntry[] }
+  | {
+      autoAttach: boolean;
+      waitForDebuggerOnStart: boolean;
+      flatten: boolean;
+      filter: { type: string }[];
+    };
+
+/**
+ * Puts the user's headers on the requests to the audited origin, and on no other (see
+ * `browserRequestHeaders`), in the Chrome that listens on `port`: Lighthouse has no setting for
+ * that, so a second DevTools client beside Lighthouse's answers Chrome for each request. Every
+ * tab is held until it is watched, so no request leaves before; a failure here fails the run,
+ * since a run without the headers would measure the login page.
+ */
+const sendHeadersToOrigin = async (
+  port: number,
+  headers: Record<string, string>,
+  url: string
+): Promise<{ close: () => void }> => {
+  const version = await fetch(`http://127.0.0.1:${port}/json/version`);
+
+  const { webSocketDebuggerUrl } = devToolsVersion.parse(await version.json());
+
+  const socket = new WebSocket(webSocketDebuggerUrl);
+  let nextId = 0;
+  const waiting = new Map<number, () => void>();
+
+  const send = (
+    method: string,
+    params: DevToolsParams,
+    sessionId?: string
+  ): Promise<void> => {
+    nextId += 1;
+    const id = nextId;
+    socket.send(JSON.stringify({ id, method, params, sessionId }));
+
+    // oxlint-disable-next-line promise/avoid-new -- the answer comes as a message with this id
+    return new Promise((resolve) => {
+      waiting.set(id, resolve);
+    });
+  };
+
+  const watch = async (sessionId: string): Promise<void> => {
+    await send("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sessionId);
+    await send("Runtime.runIfWaitingForDebugger", {}, sessionId);
+  };
+
+  socket.addEventListener("message", (event) => {
+    const parsed = devToolsMessage.safeParse(JSON.parse(String(event.data)));
+
+    // A message in another shape is one this client does not act on.
+    if (!parsed.success) {
+      return;
+    }
+
+    const message = parsed.data;
+
+    if (message.id !== undefined) {
+      waiting.get(message.id)?.();
+      waiting.delete(message.id);
+
+      return;
+    }
+
+    const { method, params, sessionId } = message;
+
+    if (method === "Target.attachedToTarget" && params?.sessionId) {
+      void watch(params.sessionId);
+    } else if (
+      method === "Fetch.requestPaused" &&
+      params?.requestId &&
+      params.request
+    ) {
+      void send(
+        "Fetch.continueRequest",
+        {
+          requestId: params.requestId,
+          headers: browserRequestHeaders(
+            params.request.headers,
+            params.request.url,
+            headers,
+            url
+          ),
+        },
+        sessionId
+      );
+    }
+  });
+
+  // oxlint-disable-next-line promise/avoid-new -- a WebSocket opens with an event
+  await new Promise<void>((resolve, reject) => {
+    socket.addEventListener("open", () => resolve(), { once: true });
+    socket.addEventListener(
+      "error",
+      () =>
+        reject(new Error("Could not connect to Chrome to send the headers")),
+      { once: true }
+    );
+  });
+
+  await send("Target.setAutoAttach", {
+    autoAttach: true,
+    waitForDebuggerOnStart: true,
+    flatten: true,
+    filter: [{ type: "page" }],
+  });
+
+  return { close: () => socket.close() };
+};
+
 export const runLighthouse = async (
   url: string,
   options: LighthouseRunOptions = {}
@@ -716,6 +852,7 @@ export const runLighthouse = async (
 
   const timeoutMs = options.timeoutMs ?? 120_000;
   let timer: NodeJS.Timeout | undefined;
+  let scoped: { close: () => void } | undefined;
 
   try {
     let config;
@@ -730,8 +867,12 @@ export const runLighthouse = async (
       output: "json",
       logLevel: "silent",
       onlyCategories: ["performance", "seo", "agentic-browsing"],
-      extraHeaders: options.headers,
     };
+
+    // Not Lighthouse's `extraHeaders`, which go to every request the page makes.
+    if (hasHeaders(options.headers)) {
+      scoped = await sendHeadersToOrigin(chrome.port, options.headers, url);
+    }
 
     if (options.userAgent) {
       flags.emulatedUserAgent = options.userAgent;
@@ -767,6 +908,7 @@ export const runLighthouse = async (
       clearTimeout(timer);
     }
 
+    scoped?.close();
     chrome.kill();
   }
 };

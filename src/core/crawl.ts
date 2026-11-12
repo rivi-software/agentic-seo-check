@@ -4,6 +4,7 @@ import { caughtError, ExpectedError } from "./errors.js";
 import {
   DEFAULT_USER_AGENT,
   fetchPage,
+  forAuditOf,
   isHtmlResponse,
   probeUrl,
   toResponseInfo,
@@ -539,9 +540,12 @@ export const crawlSite = async (
 
   // Every request also goes past the refusals, so a redirect to a host that refused the crawl is
   // not sent again.
+  // The user's headers are for the origin the crawl starts at, whatever its pages link to.
   const options: CrawlOptions = {
     ...input,
-    fetch: refusals.guard(input.fetch),
+    fetch: refusals.guard(
+      forAuditOf(input.fetch, normalizeUrl(startInput) ?? startInput)
+    ),
   };
 
   const started = performance.now();
