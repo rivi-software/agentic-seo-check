@@ -42,6 +42,7 @@ The tool reads what it is pointed at: a URL and the pages it links to, a directo
 
 - A page, a `robots.txt`, a sitemap or a response header that makes the tool do more than read and report: write a file, run a command, run code outside the headless browser's page, or reach a host the crawl's rules exclude.
 - A page that makes an audit hang or use memory or CPU out of all proportion to its size, such as markup or a sitemap that sends a regular expression or a parser into a loop.
+- Text from a page that reaches a terminal through a report as something other than text: an escape sequence that moves the cursor, retitles the window, hides text or writes the clipboard.
 - A secret the user passes, such as a value in `headers`, that the tool sends to another origin than the one it audits, or writes into a report.
 - A way to run code, read a secret or write to this repository through its workflows, for example from a pull request from a fork.
 - A way to publish the package to npm, or to move or delete a release tag, without a maintainer.
@@ -50,7 +51,7 @@ The tool reads what it is pointed at: a URL and the pages it links to, a directo
 
 Out of scope:
 
-- Text from an audited page that shows up in a report. Findings quote the page (titles, descriptions, link text, structured data) on purpose, so an agent that reads a report reads text the page's author wrote. Treat a report as untrusted data, as you would the page itself.
+- Text from an audited page that shows up in a report as text. Findings quote the page (titles, descriptions, link text, structured data) on purpose, so an agent that reads a report reads text the page's author wrote. Treat a report as untrusted data, as you would the page itself.
 - What a page's own JavaScript does in the headless browser with `--render` or `--lighthouse`. That is a browser running a web page, and the sandbox is Chromium's.
 - Reading files the user points the tool at, such as a directory with `seo_audit_directory`. The MCP server runs with the rights of the user who starts it.
 - A vulnerability in a dependency that the tool does not expose. Report it upstream; if the tool does expose it, tell us.

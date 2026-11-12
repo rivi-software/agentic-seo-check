@@ -12,6 +12,7 @@ import type {
   PageAudit,
   SiteAudit,
 } from "../types.js";
+import { withoutControls } from "./controls.js";
 
 const cell = (value: string | null | undefined): string => {
   if (!value) {
@@ -514,13 +515,17 @@ const aeoMarkdown = (audit: AeoAudit): string => {
   return lines.join("\n");
 };
 
+/**
+ * The report under its footer, without the control characters a page may hold (GHSA-f4fr-vv3h-fxwg):
+ * the report quotes the page, and a person prints it to a terminal with `-f md`, `cat` or an MCP
+ * client, where an escape sequence from the page would run.
+ */
+const finish = (body: string): string =>
+  withoutControls(`${body.trimEnd()}\n\n---\n\n${footer}\n`);
+
 /** The Markdown report of an AEO audit. */
 export const renderAeoMarkdown = (audit: AeoAudit): string =>
-  `${aeoMarkdown(audit).trimEnd()}\n\n---\n\n${footer}\n`;
+  finish(aeoMarkdown(audit));
 
-export const renderMarkdown = (audit: Audit): string => {
-  const body =
-    audit.kind === "page" ? pageMarkdown(audit) : siteMarkdown(audit);
-
-  return `${body.trimEnd()}\n\n---\n\n${footer}\n`;
-};
+export const renderMarkdown = (audit: Audit): string =>
+  finish(audit.kind === "page" ? pageMarkdown(audit) : siteMarkdown(audit));
