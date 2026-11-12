@@ -185,8 +185,11 @@ const mark = (yes: boolean): string =>
     ? `<span class="yes">${icon("check")}<span class="sr-only">Yes</span></span>`
     : `<span class="no">${icon("x")}<span class="sr-only">No</span></span>`;
 
-/** The landing page at /, with the `daily` limits and the rate limits of wrangler.jsonc. */
-export const landingPage = (daily: DailyLimits): string =>
+/**
+ * The landing page at /, with the `daily` limits and the rate limits of wrangler.jsonc, and the
+ * `upvotes` on Product Hunt when the Worker could read them.
+ */
+export const landingPage = (daily: DailyLimits, upvotes?: string): string =>
   layout({
     path: "/",
     title: `${PRODUCT_NAME} hosted MCP server | ${MAKER}`,
@@ -212,7 +215,7 @@ export const landingPage = (daily: DailyLimits): string =>
 <p class="endpoint-label">The server's address</p>
 ${install(MCP_URL, "mcp_url")}
 <ul class="endpoint-facts"><li class="chip">${icon("check")}MCP over Streamable HTTP</li><li class="chip">${icon("check")}Read-only audits</li><li class="chip">${icon("check")}Obeys robots.txt</li></ul>
-${listingBadges()}
+${listingBadges(upvotes)}
 </div>
 </div>
 ${CHAT}

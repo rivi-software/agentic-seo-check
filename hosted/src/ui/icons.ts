@@ -43,6 +43,8 @@ const PATHS = {
     '<path d="M10.3 4.2 2.6 17.5a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4M12 17h.01"/>',
   signature:
     '<path d="M3 17c3-1 4.5-7 6.5-7S10 16 12 16s2.5-4 4-4 1.5 3 2.5 3H21M3 21h18"/>',
+  // Filled, as Product Hunt's upvote arrow is, with the stroke rounding its corners.
+  upvote: '<path d="M12 6.5 18.5 17h-13z" fill="currentColor"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;

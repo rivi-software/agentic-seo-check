@@ -115,9 +115,6 @@ const CONTROLS = `
 .badge-value{background:var(--signal-soft);color:var(--signal-text)}
 .badge .icon{width:14px;height:14px}
 .badges{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:12px 16px}
-.badge-image{display:block;border-radius:10px;transition:opacity .16s}
-.badge-image:hover{opacity:.85}
-.badge-image img{display:block;max-width:100%;height:auto}
 .label{font-size:.6875rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint)}
 .link-arrow{display:inline-flex;align-items:center;gap:6px;min-height:36px;color:var(--text);font-size:.9375rem;font-weight:500;text-decoration:underline;text-decoration-color:transparent;text-underline-offset:5px}
 .link-arrow:hover{text-decoration-color:var(--signal)}

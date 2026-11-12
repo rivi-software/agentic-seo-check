@@ -44,12 +44,12 @@ const POSTHOG = "https://posthog.test";
 const CRUX = "https://chromeuxreport.googleapis.com/v1/records:queryRecord";
 const CRUX_KEY = "test-crux-key-not-secret";
 
-/** Product Hunt's badge, as the Workers fetch it to serve it from their own hostnames. */
+/** Product Hunt's badge, which the Workers read the upvotes from to write them into the pages. */
 const PRODUCT_HUNT_BADGE =
   "https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1313023&theme=dark";
 
 const PRODUCT_HUNT_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="250" height="54"><text>12</text></svg>';
+  '<svg xmlns="http://www.w3.org/2000/svg" width="250" height="54"><g><polygon points="26 10 15 10 20.5 0"></polygon><text><tspan x="15.7" y="27">12</tspan></text></g></svg>';
 
 /** The queries the Workers sent the Chrome UX Report: the URL or origin each asked for. */
 const cruxQueries: string[] = [];
@@ -803,7 +803,6 @@ describe("the hosted Worker in workerd", () => {
           "/site.js",
           "/ph.js",
           "/og.png",
-          "/product-hunt.svg",
           "/fonts/bricolage-grotesque-latin.woff2",
           "/fonts/geist-latin.woff2",
           "/fonts/geist-mono-latin.woff2",
@@ -824,7 +823,6 @@ describe("the hosted Worker in workerd", () => {
         ["/site.js", 200, "text/javascript; charset=utf-8"],
         ["/ph.js", 200, "text/javascript; charset=utf-8"],
         ["/og.png", 200, "image/png"],
-        ["/product-hunt.svg", 200, "image/svg+xml"],
         ["/fonts/bricolage-grotesque-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-mono-latin.woff2", 200, "font/woff2"],
@@ -832,23 +830,17 @@ describe("the hosted Worker in workerd", () => {
       ]);
     });
 
-    it("serve Product Hunt's badge on both hostnames, as the Worker fetched it", async () => {
-      const badges = await Promise.all([
-        fetchRead(worker, `${ORIGIN}/product-hunt.svg`),
-        fetchRead(website, `${SITE}/product-hunt.svg`),
+    it("write Product Hunt's upvotes into the badge on both hostnames, as the Worker read them", async () => {
+      const pages = await Promise.all([
+        fetchRead(worker, `${ORIGIN}/`),
+        fetchRead(website, `${SITE}/`),
       ]);
 
       expect(
-        badges.map(({ res, text }) => [
-          text,
-          res.headers.get("content-security-policy"),
-        ])
-      ).toStrictEqual(
-        Array.from({ length: 2 }, () => [
-          PRODUCT_HUNT_SVG,
-          "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-        ])
-      );
+        pages.map(({ text }) =>
+          text.includes('12<span class="sr-only"> upvotes</span>')
+        )
+      ).toStrictEqual([true, true]);
       // A request to Product Hunt is no site's: not in the audits' requests.
       expect(requests.map((r) => r.url)).not.toContain(PRODUCT_HUNT_BADGE);
     });
@@ -984,7 +976,6 @@ describe("the hosted Worker in workerd", () => {
           "/site.js",
           "/favicon.svg",
           "/og.png",
-          "/product-hunt.svg",
           "/fonts/bricolage-grotesque-latin.woff2",
           "/fonts/geist-latin.woff2",
           "/fonts/geist-mono-latin.woff2",
@@ -1006,7 +997,6 @@ describe("the hosted Worker in workerd", () => {
         ["/site.js", 200, "text/javascript; charset=utf-8"],
         ["/favicon.svg", 200, "image/svg+xml"],
         ["/og.png", 200, "image/png"],
-        ["/product-hunt.svg", 200, "image/svg+xml"],
         ["/fonts/bricolage-grotesque-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-mono-latin.woff2", 200, "font/woff2"],

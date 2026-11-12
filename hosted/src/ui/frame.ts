@@ -41,9 +41,12 @@ export const CLAUDE_DIRECTORY_URL =
 export const directoryBadge = (): string =>
   `<a class="badge" href="${CLAUDE_DIRECTORY_URL}"><span class="badge-key">Claude Directory</span><span class="badge-value">${icon("check")}Listed</span></a>`;
 
-/** Where the tool is listed, side by side: the Claude Directory and Product Hunt. */
-export const listingBadges = (): string =>
-  `<div class="badges">${directoryBadge()}${productHuntBadge()}</div>`;
+/**
+ * Where the tool is listed, side by side: the Claude Directory and Product Hunt, with the
+ * `upvotes` the Worker read there.
+ */
+export const listingBadges = (upvotes?: string): string =>
+  `<div class="badges">${directoryBadge()}${productHuntBadge(upvotes)}</div>`;
 
 /** RIVI Software's page of the code it publishes, which lists this project. */
 const OPEN_SOURCE_URL = `${MAKER_URL}/open-source`;
