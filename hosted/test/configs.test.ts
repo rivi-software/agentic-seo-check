@@ -14,7 +14,6 @@ const site = readConfig(SITE_CONFIG);
 const settings = (config: typeof server) => ({
   compatibility_date: config.compatibility_date,
   compatibility_flags: config.compatibility_flags,
-  build: config.build,
   limits: config.limits,
   alias: config.alias,
   observability: config.observability,
@@ -30,6 +29,13 @@ const settings = (config: typeof server) => ({
 describe("the two Workers' configurations", () => {
   it("give the website the MCP server's runtime, limits, namespaces and dataset", () => {
     expect(settings(site)).toStrictEqual(settings(server));
+  });
+
+  it("build the website as the MCP server, and then copy pdfmake for a report's PDF", () => {
+    expect(site.build).toStrictEqual({
+      ...server.build,
+      command: `${server.build.command} && node scripts/pdfmake.ts`,
+    });
   });
 
   it("bind the website to the MCP server's Durable Object", () => {

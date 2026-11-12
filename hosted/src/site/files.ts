@@ -51,12 +51,19 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
 `;
 
 /**
+ * Where the website serves pdfmake with the code that draws a report's PDF (pdf-assets.ts), which
+ * that code names `drawReportPdf`.
+ */
+export const PDFMAKE_PATH = "/pdfmake.js";
+
+/**
  * The pages' script, served at /site.js on both hostnames so that the Content-Security-Policy
  * needs no inline script. It gives every command and snippet marked data-copy a button that copies
  * it, waits for Turnstile's token before the audit form is sent, shows that an audit or a crawl is
  * running, shows the report one section at a time behind its tabs, gives the report as a JSON
- * file, as Markdown on the clipboard or to the print dialog to save as a PDF, with every section
- * and finding open while it prints, adds the system's share sheet to the report's Share menu, and
+ * file, as Markdown on the clipboard or as a PDF that pdfmake draws in the page (issue #157), opens
+ * every section and finding while the page prints, adds the system's share sheet to the report's
+ * Share menu, and
  * filters the rules page. On the production hostnames it also loads PostHog from /ph.js for the
  * usage analytics (issue #57), with the cookie banner, and sends the closed list of events below:
  * never an address the visitor audited, nothing they typed and nothing from a report but its
@@ -464,6 +471,35 @@ export const SITE_JS = `(() => {
 
   const source = document.querySelector("#report-data");
 
+  // Saves \`file\` as \`name\` in the browser's downloads.
+  const save = (file, name) => {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(file);
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  };
+
+  // pdfmake and the code that draws a report's PDF with it, from this site, loaded on the first
+  // "Download PDF" only. A load that failed is tried again on the next click.
+  let drawing = null;
+
+  const loadPdf = () => {
+    drawing ||= new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = ${JSON.stringify(PDFMAKE_PATH)};
+      script.onload = () =>
+        window.drawReportPdf ? resolve(window.drawReportPdf) : reject(new Error("pdfmake"));
+      script.onerror = reject;
+      document.head.append(script);
+    }).catch((error) => {
+      drawing = null;
+      throw error;
+    });
+
+    return drawing;
+  };
+
   if (source) {
     const data = JSON.parse(source.textContent);
 
@@ -471,21 +507,41 @@ export const SITE_JS = `(() => {
       button.addEventListener("click", async () => {
         if (button.dataset.report === "download") {
           track("report_downloaded", { format: "json" });
-          const file = new Blob([JSON.stringify(data.json, null, 2)], {
-            type: "application/json",
-          });
-          const link = document.createElement("a");
-          link.href = URL.createObjectURL(file);
-          link.download = "agentic-seo-check-" + data.name + ".json";
-          link.click();
-          URL.revokeObjectURL(link.href);
+          save(
+            new Blob([JSON.stringify(data.json, null, 2)], {
+              type: "application/json",
+            }),
+            "agentic-seo-check-" + data.name + ".json"
+          );
           return;
         }
 
-        // The browser's print dialog, where "Save as PDF" is one of the destinations.
+        // The PDF, drawn in the page from the report's data with the site's own fonts. Where it
+        // cannot be drawn, the print dialog saves one.
         if (button.dataset.report === "pdf") {
+          if (button.disabled) {
+            return;
+          }
+
           track("report_downloaded", { format: "pdf" });
-          window.print();
+          const label = button.querySelector(".btn-label");
+          const idle = label.textContent;
+          button.disabled = true;
+          button.classList.add("is-busy");
+          label.textContent = "Making the PDF…";
+
+          try {
+            const draw = await loadPdf();
+            const file = await draw(data.pdf).getBlob();
+            save(file, "agentic-seo-check-" + data.name + ".pdf");
+          } catch {
+            window.print();
+          } finally {
+            button.disabled = false;
+            button.classList.remove("is-busy");
+            label.textContent = idle;
+          }
+
           return;
         }
 

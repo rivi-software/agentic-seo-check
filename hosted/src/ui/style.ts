@@ -635,7 +635,9 @@ html{scroll-behavior:smooth}
 `;
 
 /**
- * Paper, and a PDF saved from the print dialog (issue #92). Printed as it is, the dark page puts
+ * Paper, and a PDF saved from the print dialog (issue #92): Ctrl+P, and what the report's
+ * "Download PDF" opens when it cannot draw its own document (site/pdf.ts, issue #157). Printed as
+ * it is, the dark page puts
  * pale text on white, since browsers leave out backgrounds, so the tokens turn light. A report
  * prints alone, every section in turn from a page of its own (the script shows every tab and opens
  * every finding just before), with the colours of its severities and scores. The evidence is left

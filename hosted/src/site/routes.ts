@@ -5,8 +5,8 @@ import { reportError } from "../analytics.js";
 import { freshResponse } from "../fresh.js";
 /**
  * The routes of the website at agentic-seo.rivi.software (issue #39), which its own Worker serves
- * (worker.ts): the homepage with the audit form, the rules, the form's answer at /audit, and the
- * files a crawler asks for.
+ * (worker.ts): the homepage with the audit form, the rules, the form's answer at /audit, the
+ * files a crawler asks for, and pdfmake and the fonts a report's PDF is drawn with.
  */
 import { fontResponse, shareImageResponse } from "../ui/assets.js";
 import { OG_IMAGE } from "../ui/og.js";
@@ -17,6 +17,7 @@ import { answerAudit, formCrawls, formOpen } from "./audit.js";
 import type { SiteEnv } from "./audit.js";
 import { LLMS_TXT, SITE_JS, SITE_ROBOTS_TXT, SITEMAP_XML } from "./files.js";
 import { homePage, notFoundPage } from "./home.js";
+import { pdfAssetResponse } from "./pdf-assets.js";
 import { rulesPage } from "./rules-page.js";
 import { sharePage } from "./share-page.js";
 import { openShare, shareImageCacheKey } from "./share.js";
@@ -194,6 +195,12 @@ const share = async (
     : image;
 };
 
+/** A font of the pages or of a report's PDF, pdfmake, or the 404 page. */
+const asset = (request: Request, path: string): Response | Promise<Response> =>
+  fontResponse(request, path) ??
+  pdfAssetResponse(request, path) ??
+  file(request, notFoundPage(), HTML, 404);
+
 export const siteRoute = (
   request: Request,
   env: SiteEnv,
@@ -282,10 +289,7 @@ export const siteRoute = (
     }
 
     default: {
-      return (
-        fontResponse(request, url.pathname) ??
-        file(request, notFoundPage(), HTML, 404)
-      );
+      return asset(request, url.pathname);
     }
   }
 };

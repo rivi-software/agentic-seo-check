@@ -30,6 +30,8 @@ import {
   SERVER_CONFIG,
   SITE_CONFIG,
 } from "../scripts/defines.ts";
+import { PDFMAKE_PATH } from "../src/site/files.ts";
+import { PDF_FONT_DIR, PDF_FONTS } from "../src/site/pdf.ts";
 import { FONT_PATHS } from "../src/ui/style.ts";
 
 const ORIGIN = "https://mcp.agentic-seo.rivi.software";
@@ -1083,6 +1085,7 @@ describe("the hosted Worker in workerd", () => {
         ["mcp", "/crawler"],
         ["mcp", "/site.js"],
         ["mcp", "/ph.js"],
+        ["site", "/pdfmake.js"],
       ] as const;
 
       const answers = await Promise.all(
@@ -1108,6 +1111,49 @@ describe("the hosted Worker in workerd", () => {
       ).toStrictEqual(files.map(() => ["no-cache", 304, 0]));
       // One script for both hostnames' pages.
       expect(answers[2]?.[3]).toBe(answers[6]?.[3]);
+    });
+
+    it("serves pdfmake with the code that draws a report's PDF, and its TrueType fonts, on its own hostname only", async () => {
+      const files = [
+        ...new Set(
+          Object.values(PDF_FONTS).flatMap((font) => [font.normal, font.bold])
+        ),
+      ];
+
+      const [script, ...fonts] = await Promise.all([
+        fetchRead(website, `${SITE}${PDFMAKE_PATH}`),
+        ...files.map(async (file) => {
+          const font = await website.fetch(`${SITE}${PDF_FONT_DIR}${file}`);
+          const bytes = new Uint8Array(await font.arrayBuffer());
+
+          return [
+            font.status,
+            font.headers.get("content-type"),
+            font.headers.get("cache-control"),
+            bytes.slice(0, 4).join(" "),
+          ];
+        }),
+      ]);
+
+      const elsewhere = await fetch(new URL(PDFMAKE_PATH, base));
+      await elsewhere.arrayBuffer();
+
+      // pdfmake without its source map, then the code that draws a report's PDF with it.
+      expect([
+        script.res.headers.get("content-type"),
+        script.text.startsWith("/*! pdfmake v0.3."),
+        script.text.includes("sourceMappingURL"),
+        script.text.includes(";globalThis.drawReportPdf = (report) =>"),
+      ]).toStrictEqual(["text/javascript; charset=utf-8", true, false, true]);
+      expect(fonts).toStrictEqual(
+        files.map(() => [
+          200,
+          "font/ttf",
+          "public, max-age=31536000, immutable",
+          "0 1 0 0",
+        ])
+      );
+      expect(elsewhere.status).toBe(404);
     });
 
     it("audits a page for the form and answers with both reports", async () => {

@@ -8,42 +8,33 @@
  * under each tab the cards of one section. The overview has what to fix first, an index of the
  * findings as a tile for each group, and the facts; each audit's section has a card for each
  * category of findings; the last is the AI crawlers. The page's script shows one section at a
- * time; without it they follow one another. Printed, or saved as a PDF from the print dialog, the
- * report is every section in turn, on white, with every finding open (ui/style.ts and files.ts).
+ * time; without it they follow one another. Its "Download PDF" button draws the same data as a
+ * document of its own (pdf.ts), and printed the report is every section in turn, on white, with
+ * every finding open (ui/style.ts and files.ts). What both show is in report-data.ts.
  */
 import { MAKER, PRODUCT_NAME, WEBSITE_URL } from "../../../src/brand.js";
 import { compactAeoAudit } from "../../../src/core/aeo/audit.js";
 import { compactAudit } from "../../../src/core/audit.js";
-import {
-  FIELD_LABELS,
-  FIELD_METRICS,
-  fieldBand,
-  fieldValue,
-} from "../../../src/core/field-data.js";
-import type { FieldBand } from "../../../src/core/field-data.js";
 import { HOSTED_LIMITS } from "../../../src/core/hosted.js";
 import {
   ACTION_LABEL,
   band,
-  CATEGORY_LABEL,
   countLabel,
   plural,
   PURPOSE_LABEL,
   SEVERITIES,
   TARGET_LABEL,
 } from "../../../src/core/report/labels.js";
-import type { Band } from "../../../src/core/report/labels.js";
 import {
   renderAeoMarkdown,
   renderMarkdown,
 } from "../../../src/core/report/markdown.js";
-import { AEO_PAGE_RULES } from "../../../src/core/rules/index.js";
 import type {
   AeoAudit,
   AiBotAccess,
-  Category,
   Finding,
   FixEdit,
+  IssueRollup,
   PageAudit,
   SeverityCounts,
   Severity,
@@ -52,18 +43,32 @@ import type {
 import { ORIGIN as MCP_ORIGIN } from "../limits.js";
 import { icon } from "../ui/icons.js";
 import { esc, safeHref, scriptSafe } from "./html.js";
+import { pagePdf } from "./pdf.js";
+import type { PdfReport } from "./pdf.js";
+import {
+  aeoFactRows,
+  auditedOn,
+  BAND_LABEL,
+  fieldFactRows,
+  headOf,
+  pageParts,
+  seoFactRows,
+  severitiesOf,
+  urgentEntries,
+} from "./report-data.js";
+import type {
+  Entry,
+  Fact,
+  Group,
+  Part,
+  ReportParts,
+  Tone,
+} from "./report-data.js";
 
 const SEVERITY_LABEL: Record<Severity, string> = {
   error: "Error",
   warning: "Warning",
   info: "Info",
-};
-
-/** A score's band in a word, as the terminal's report names it. */
-const BAND_LABEL: Record<Band, string> = {
-  good: "Good",
-  fair: "Fair",
-  poor: "Poor",
 };
 
 /** The most findings the overview lists to fix first. */
@@ -176,48 +181,31 @@ ${findingSummary(finding)}
 </details>`;
 };
 
-/** The AEO rules that look at one page, as against those that look at the site's files. */
-export const AEO_PAGE_RULE_IDS = new Set(
-  AEO_PAGE_RULES.map((rule) => rule.meta.id)
-);
-
-/** One finding of a group as the overview names it: what it says, and where the report has it. */
-export interface GroupItem {
-  /** Its anchor: `<the group's id>-<its number in the group>`. */
-  id: string;
-  severity: Severity;
-  rule: string;
-  message: string;
-  /** How many pages have it, for a rule across the pages of a site. */
-  pages?: number;
-}
-
-/** The anchor of the item at `index` of the group at the anchor `groupId`. */
-export const itemId = (groupId: string, index: number): string =>
-  `${groupId}-${index + 1}`;
-
-/** A group of findings in a card of its own: a category's, or those across the site. */
-export interface FindingGroup {
-  /** Its anchor, which the overview's index links to. */
-  id: string;
-  label: string;
-  /** Its findings as the overview names them, in the order the card lists them. */
-  items: GroupItem[];
-  /** The findings, as HTML. */
-  html: string;
-}
-
-const severitiesOf = (groups: FindingGroup[]): Severity[] =>
-  groups.flatMap((group) => group.items.map((item) => item.severity));
-
 /**
- * Groups of findings, under `title` when it has one: "On the pages" holds a site's page findings
- * by category, under the group of its findings across the site.
+ * A crawled page as a link to the form with its address in the field: one more run gives that
+ * page's report, with the edits a roll-up leaves out. The address is the site's text, so it only
+ * ever becomes a query value.
  */
-export interface FindingPart {
-  title?: string;
-  groups: FindingGroup[];
-}
+export const pageLink = (url: string): string =>
+  `<a class="page-link" href="${esc(`/?url=${encodeURIComponent(url)}#audit`)}">${esc(url)}</a>`;
+
+/** The findings of one rule on the pages, as a finding is shown, with the pages it is on. */
+const issueHtml = (issue: IssueRollup, id: string): string => {
+  const shown =
+    issue.pages > issue.examples.length
+      ? `, the first ${issue.examples.length}`
+      : "";
+
+  return `<details class="finding sev-${issue.severity}" id="${id}">
+${findingSummary(issue, chip(plural(issue.pages, "page")))}
+<div class="finding-body"><div class="todo"><p class="label">What to change</p><p>${esc(issue.recommendation)}</p></div><div class="examples"><p class="label">Pages${shown}</p><ul>${issue.examples.map((url) => `<li>${pageLink(url)}</li>`).join("")}</ul></div></div>
+</details>`;
+};
+
+const entryHtml = (entry: Entry): string =>
+  entry.kind === "finding"
+    ? findingHtml(entry.finding, entry.id)
+    : issueHtml(entry.issue, entry.id);
 
 /** The counts of the severities that occur in `severities`: "2 errors", "1 warning", "3 info". */
 export const tally = (severities: Severity[]): string =>
@@ -229,67 +217,11 @@ export const tally = (severities: Severity[]): string =>
       : [];
   }).join("")}</span>`;
 
-/**
- * `items` by category, the groups in the order their first item comes in: as findings come sorted
- * by severity, the group with the worst finding is first.
- */
-export const byCategory = <T extends { category: Category }>(
-  items: T[]
-): [Category, T[]][] => {
-  const groups = new Map<Category, T[]>();
-
-  for (const item of items) {
-    const group = groups.get(item.category);
-
-    if (group) {
-      group.push(item);
-    } else {
-      groups.set(item.category, [item]);
-    }
-  }
-
-  return [...groups];
-};
-
-const findingsList = (groupId: string, findings: Finding[]): string =>
-  `<div class="findings">${findings.map((finding, index) => findingHtml(finding, itemId(groupId, index))).join("\n")}</div>`;
-
-/** `findings` as one group, or no group when there are none. */
-export const findingGroup = (
-  id: string,
-  label: string,
-  findings: Finding[]
-): FindingGroup[] =>
-  findings.length === 0
-    ? []
-    : [
-        {
-          id,
-          label,
-          items: findings.map(({ severity, rule, message }, index) => ({
-            id: itemId(id, index),
-            severity,
-            rule,
-            message,
-          })),
-          html: findingsList(id, findings),
-        },
-      ];
-
-/** `findings` by category, each group at the anchor `<prefix>-<category>`. */
-export const categoryGroups = (
-  prefix: string,
-  findings: Finding[]
-): FindingGroup[] =>
-  byCategory(findings).flatMap(([category, group]) =>
-    findingGroup(`${prefix}-${category}`, CATEGORY_LABEL[category], group)
-  );
-
-const groupHtml = (group: FindingGroup, level: 4 | 5): string =>
-  `<div class="finding-group" id="${group.id}"><div class="finding-group-head"><h${level}>${group.label}</h${level}>${tally(severitiesOf([group]))}</div>${group.html}</div>`;
+const groupHtml = (group: Group, level: 4 | 5): string =>
+  `<div class="finding-group" id="${group.id}"><div class="finding-group-head"><h${level}>${group.label}</h${level}>${tally(severitiesOf([group]))}</div><div class="findings">${group.entries.map(entryHtml).join("\n")}</div></div>`;
 
 /** Parts of findings with their headings, or `empty` when none of them has a finding. */
-export const partsHtml = (parts: FindingPart[], empty: string): string => {
+export const partsHtml = (parts: Part[], empty: string): string => {
   const shown = parts.filter((part) => part.groups.length > 0);
 
   if (shown.length === 0) {
@@ -310,7 +242,7 @@ const worst = (severities: Severity[]): Severity | undefined =>
   SEVERITIES.find((severity) => severities.includes(severity));
 
 /** One audit's card in the overview's index: a tile for each of its groups, with their counts. */
-const indexCard = (name: string, parts: FindingPart[]): string => {
+const indexCard = (name: string, parts: Part[]): string => {
   const shown = parts.filter((part) => part.groups.length > 0);
 
   const tiles = shown.flatMap((part) => [
@@ -350,25 +282,15 @@ export const cardRow = (cards: string[]): string => {
 };
 
 /** The overview's index of both audits' findings, by the groups their sections show them in. */
-export const findingsIndex = (seo: FindingPart[], aeo: FindingPart[]): string =>
+export const findingsIndex = ({ seo, aeo }: ReportParts): string =>
   `<div class="report-row index-row">${indexCard("SEO: search engines", seo)}${indexCard("AEO: AI answer engines", aeo)}</div>`;
-
-const itemsOf = (parts: FindingPart[], audit: string) =>
-  parts.flatMap((part) =>
-    part.groups.flatMap((group) => group.items.map((item) => ({ audit, item })))
-  );
 
 /**
  * The overview's first card: the errors and warnings of both audits, the worst first, each a link
- * to the finding with its fix. Info is left to the sections: it is seldom what to fix first.
+ * to the finding with its fix.
  */
-export const fixFirst = (seo: FindingPart[], aeo: FindingPart[]): string => {
-  const all = [...itemsOf(seo, "SEO"), ...itemsOf(aeo, "AEO")];
-
-  // Errors before warnings, each in the order its section lists them.
-  const urgent = (["error", "warning"] as const).flatMap((severity) =>
-    all.filter(({ item }) => item.severity === severity)
-  );
+export const fixFirst = (parts: ReportParts): string => {
+  const urgent = urgentEntries(parts);
 
   if (urgent.length === 0) {
     return overviewPart(
@@ -377,12 +299,11 @@ export const fixFirst = (seo: FindingPart[], aeo: FindingPart[]): string => {
     );
   }
 
-  const rows = urgent
-    .slice(0, MAX_FIX_FIRST)
-    .map(
-      ({ audit, item }) =>
-        `<li><a class="fix-row sev-${item.severity}" href="#${item.id}">${severityChip(item.severity)}<span class="finding-text"><span class="msg">${esc(item.message)}</span><span class="finding-meta">${code(item.rule)}${chip(audit)}${item.pages === undefined ? "" : chip(plural(item.pages, "page"))}</span></span>${icon("arrow", "arrow")}</a></li>`
-    );
+  const rows = urgent.slice(0, MAX_FIX_FIRST).map(({ audit, entry }) => {
+    const item = headOf(entry);
+
+    return `<li><a class="fix-row sev-${item.severity}" href="#${entry.id}">${severityChip(item.severity)}<span class="finding-text"><span class="msg">${esc(item.message)}</span><span class="finding-meta">${code(item.rule)}${chip(audit)}${item.pages === undefined ? "" : chip(plural(item.pages, "page"))}</span></span>${icon("arrow", "arrow")}</a></li>`;
+  });
 
   const more = urgent.length - rows.length;
 
@@ -390,27 +311,9 @@ export const fixFirst = (seo: FindingPart[], aeo: FindingPart[]): string => {
     "Fix first",
     `<ol class="fix-list">${rows.join("")}</ol>${more > 0 ? `<p class="card-foot">And ${more} more in the SEO and AEO findings.</p>` : ""}`,
     "fix-first",
-    tally(urgent.map(({ item }) => item.severity))
+    tally(urgent.map(({ entry }) => headOf(entry).severity))
   );
 };
-
-/** The AEO findings of one page: those about the site's files, then the page's own. */
-const aeoPageParts = (findings: Finding[]): FindingPart[] => [
-  {
-    groups: [
-      ...findingGroup(
-        "aeo-site",
-        "Across the site",
-        findings.filter((finding) => !AEO_PAGE_RULE_IDS.has(finding.rule))
-      ),
-      ...findingGroup(
-        "aeo-page",
-        "On this page",
-        findings.filter((finding) => AEO_PAGE_RULE_IDS.has(finding.rule))
-      ),
-    ],
-  },
-];
 
 /** One section of a report: its tab, and the panel the tab shows. */
 export interface ReportSection {
@@ -452,11 +355,6 @@ export const sectionsHtml = (sections: ReportSection[]): string =>
 ${sections.map(panelHtml).join("\n")}
 </div>`;
 
-/** How a fact reads at a glance: a good, doubtful or bad value gets a coloured dot. */
-type Tone = "good" | "warn" | "bad" | null;
-
-export type Fact = [label: string, value: string | null, tone?: Tone];
-
 /** Facts as a list or as tiles; a fact without a value is left out. */
 export const facts = (kind: "text" | "tiles", rows: Fact[]): string => {
   const shown = rows.flatMap(([label, value, tone]) =>
@@ -472,86 +370,24 @@ export const facts = (kind: "text" | "tiles", rows: Fact[]): string => {
     : `<dl class="facts facts-${kind}">${shown.join("")}</dl>`;
 };
 
-export const statusTone = (status: number): Tone => {
-  if (status < 300) {
-    return "good";
-  }
-
-  return status < 400 ? "warn" : "bad";
-};
+/** A dot in a tone, as the pages table marks a page's HTTP status. */
+export const toneDot = (tone: Tone): string =>
+  tone ? `<span class="tone tone-${tone}" aria-hidden="true"></span>` : "";
 
 export const seoFacts = (audit: PageAudit): string => {
-  const { summary, response } = audit;
+  const rows = seoFactRows(audit);
 
-  return `${facts("text", [
-    ["Title", summary.title],
-    ["Description", summary.metaDescription],
-    ["Canonical", summary.canonical],
-    ["H1", summary.h1.join(" · ")],
-    ["Structured data", summary.structuredDataTypes.join(", ")],
-  ])}${facts("tiles", [
-    [
-      "HTTP status",
-      response?.status ? String(response.status) : null,
-      response?.status ? statusTone(response.status) : null,
-    ],
-    [
-      "Redirects",
-      response && response.redirectChain.length > 0
-        ? String(response.redirectChain.length)
-        : null,
-    ],
-    [
-      "Indexable",
-      summary.indexable ? "Yes" : "No",
-      summary.indexable ? "good" : "bad",
-    ],
-    ["Language", summary.lang],
-    ["Words", summary.wordCount.toLocaleString("en")],
-    [
-      "Links",
-      `${summary.links.internal} internal, ${summary.links.external} external`,
-    ],
-    [
-      "Images",
-      `${summary.images.total}, ${summary.images.missingAlt} without alt`,
-      summary.images.missingAlt > 0 ? "warn" : null,
-    ],
-  ])}`;
-};
-
-/** The tone of each rating Google gives a metric of the Chrome UX Report. */
-const FIELD_TONE: Record<FieldBand, Tone> = {
-  good: "good",
-  "needs improvement": "warn",
-  poor: "bad",
+  return `${facts("text", rows.text)}${facts("tiles", rows.tiles)}`;
 };
 
 /**
  * Real-user Core Web Vitals of a page (issue #130): each 75th percentile as a tile in its rating's
  * tone, and whose visits they are; or why there are none. Nothing when the audit did not ask.
  */
-export const fieldFacts = (field: PageAudit["fieldData"]): string => {
-  if (!field) {
-    return "";
-  }
+const fieldFacts = (field: PageAudit["fieldData"]): string => {
+  const rows = fieldFactRows(field);
 
-  if (field.source === null) {
-    return `<p>${esc(field.message)}</p>`;
-  }
-
-  return `${facts(
-    "tiles",
-    FIELD_METRICS.map((key): Fact => {
-      const metric = field[key];
-
-      return [
-        FIELD_LABELS[key],
-        metric ? fieldValue(key, metric.p75) : null,
-        metric ? FIELD_TONE[fieldBand(key, metric.p75)] : null,
-      ];
-    })
-  )}<p>The 75th percentile of real Chrome visits on phones ${field.source === "url" ? "to this page" : "to the whole site, as this page has too few of its own"}, ${esc(field.period.firstDate)} to ${esc(field.period.lastDate)}, from the Chrome UX Report, which Google ranks on.</p>`;
+  return rows ? `${facts("tiles", rows.tiles)}<p>${esc(rows.note)}</p>` : "";
 };
 
 /** The card of a page's field data, which the overview shows when the audit has some. */
@@ -560,46 +396,9 @@ export const fieldCard = (field: PageAudit["fieldData"]): string =>
     overviewPart("Real visits on phones", fieldFacts(field), "field-data"),
   ]);
 
-/** The tone of each value the AEO summary's states take. */
-const TONES = {
-  found: "good",
-  allowed: "good",
-  missing: null,
-  unreachable: "bad",
-  invalid: "warn",
-  limited: "warn",
-  "snippet-only": "warn",
-  blocked: "bad",
-  excluded: "bad",
-} as const satisfies Record<string, Tone>;
-
-const toned = (label: string, value: keyof typeof TONES | null): Fact => [
-  label,
-  value,
-  value === null ? null : TONES[value],
-];
-
 /** The AEO audit's facts: the site's, and with `page` those of the page it audited. */
-export const aeoFacts = (audit: AeoAudit, scope: "page" | "site"): string => {
-  const { summary } = audit;
-  const page = scope === "page" ? summary.page : null;
-
-  return facts("tiles", [
-    toned("robots.txt", summary.robotsTxt),
-    toned("llms.txt", summary.llmsTxt),
-    // Keeping AI training bots out is the owner's choice, so it gets no colour.
-    [
-      "AI training",
-      summary.trainingPreference === "none" ? null : summary.trainingPreference,
-    ],
-    toned("Google snippets", page?.googleSnippets ?? null),
-    toned("Copilot answers", page?.copilotAnswers ?? null),
-    ["Question headings", page ? String(page.questions) : null],
-    ["Author", page?.author ?? null],
-    ["Published", page?.datePublished ?? null],
-    ["Modified", page?.dateModified ?? null],
-  ]);
-};
+export const aeoFacts = (audit: AeoAudit, scope: "page" | "site"): string =>
+  facts("tiles", aeoFactRows(audit, scope));
 
 const botItem = (bot: AiBotAccess): string =>
   `<li class="crawler ${bot.allowed ? "is-allowed" : "is-blocked"}">${code(bot.name)}<span class="crawler-op">${esc(bot.operator)}</span><span class="crawler-state">${icon(bot.allowed ? "check" : "x")}${bot.allowed ? "Allowed" : "Blocked"}</span></li>`;
@@ -659,19 +458,22 @@ export const scoreCard = (
 };
 
 /**
- * The report's data for its buttons: the two audits as the MCP tools return them, and the same as
- * Markdown. The page's script reads it; nothing is stored on the server. `summary` is what the
+ * The report's data for its buttons: the two audits as the MCP tools return them, the same as
+ * Markdown, and the document its PDF is drawn from (pdf.ts). The page's script reads it; nothing
+ * is stored on the server. `summary` is what the
  * page's `audit_shown` event says (issue #57): the kind of audit, the scores and the page count.
  */
 export const reportData = (
   seo: PageAudit | SiteAudit,
   aeo: AeoAudit,
-  host: string
+  host: string,
+  pdf: PdfReport
 ): string =>
   scriptSafe(
     JSON.stringify({
       json: { seo: compactAudit(seo), aeo: compactAeoAudit(aeo) },
       markdown: `${renderMarkdown(seo)}\n\n${renderAeoMarkdown(aeo)}`,
+      pdf,
       name: host,
       summary: {
         mode: seo.kind,
@@ -682,25 +484,11 @@ export const reportData = (
     })
   );
 
-/** When an audit ran, as the printed report says it: "11 November 2026 at 14:05 UTC". */
-export const auditedOn = (auditedAt: string): string => {
-  const date = new Date(auditedAt);
-
-  const day = date.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-
-  return `${day} at ${date.toISOString().slice(11, 16)} UTC`;
-};
-
 /**
  * A report under the audit form: a card with the address and the buttons, then `body`, a stack of
  * cards, and `data`. `share` is the Share menu (share-page.ts), when the site can sign a share
- * link. Under the address, a line that only paper and a PDF show says when the audit ran and what
- * made it, as a document handed on needs to.
+ * link. Under the address, a line that only paper shows says when the audit ran and what made it,
+ * as a document handed on needs to.
  */
 export const reportFrame = (report: {
   title: string;
@@ -714,7 +502,7 @@ export const reportFrame = (report: {
 <div class="window report-head">
 <div class="report-bar">
 <div class="report-title"><h2 id="report-title">${report.title}</h2><p class="report-url">${icon("globe")}<span>${esc(report.url)}</span></p><p class="report-print">Audited on ${auditedOn(report.auditedAt)} with ${PRODUCT_NAME} by ${MAKER}, <a href="${WEBSITE_URL}/">${new URL(WEBSITE_URL).host}</a></p></div>
-<div class="report-actions"><button class="btn btn-secondary btn-sm" type="button" data-report="download">${icon("download")}<span class="btn-label">Download JSON</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="copy">${icon("copy")}<span class="btn-label">Copy as Markdown</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="pdf">${icon("file")}<span class="btn-label">Save as PDF</span></button>${report.share ?? ""}</div>
+<div class="report-actions"><button class="btn btn-secondary btn-sm" type="button" data-report="download">${icon("download")}<span class="btn-label">Download JSON</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="copy">${icon("copy")}<span class="btn-label">Copy as Markdown</span></button><button class="btn btn-secondary btn-sm" type="button" data-report="pdf">${icon("file")}<span class="btn-label">Download PDF</span></button>${report.share ?? ""}</div>
 </div>
 </div>
 ${report.body}
@@ -744,8 +532,7 @@ export const renderReport = (
   homepage = false,
   share = ""
 ): string => {
-  const seoParts = [{ groups: categoryGroups("seo", seo.findings) }];
-  const aeoParts = aeoPageParts(aeo.findings);
+  const parts = pageParts(seo, aeo);
 
   const sections: ReportSection[] = [
     {
@@ -753,8 +540,8 @@ export const renderReport = (
       tab: "Overview",
       title: "Overview",
       body: [
-        fixFirst(seoParts, aeoParts),
-        findingsIndex(seoParts, aeoParts),
+        fixFirst(parts),
+        findingsIndex(parts),
         cardRow([
           overviewPart("The page", seoFacts(seo)),
           overviewPart("For AI answer engines", aeoFacts(aeo, "page")),
@@ -770,7 +557,7 @@ export const renderReport = (
       title: "SEO findings",
       chips: chip(plural(seo.findings.length, "finding")),
       body: partsHtml(
-        seoParts,
+        parts.seo,
         "No SEO findings: nothing to fix on this page."
       ),
     },
@@ -782,7 +569,7 @@ export const renderReport = (
       title: "AEO findings",
       chips: chip(plural(aeo.findings.length, "finding")),
       body: partsHtml(
-        aeoParts,
+        parts.aeo,
         "No AEO findings: nothing to fix on this page."
       ),
     },
@@ -794,7 +581,12 @@ export const renderReport = (
     url: seo.url,
     auditedAt: seo.auditedAt,
     share,
-    data: reportData(seo, aeo, new URL(seo.url).hostname),
+    data: reportData(
+      seo,
+      aeo,
+      new URL(seo.url).hostname,
+      pagePdf(seo, aeo, parts)
+    ),
     body: `<div class="scores">${scoreCard("seo", "SEO: search engines", seo.score, seo.counts)}${scoreCard("aeo", "AEO: AI answer engines", aeo.score, aeo.counts)}</div>
 ${sectionsHtml(sections)}
 <div class="report-note">${icon("info")}<p>${pageNote(seo, homepage)}</p></div>`,

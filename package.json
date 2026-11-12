@@ -120,6 +120,7 @@
     "lighthouse": "^13.6.0",
     "oxfmt": "0.76.0",
     "oxlint": "1.91.0",
+    "pdfmake": "0.3.14",
     "posthog-js": "1.446.3",
     "tsx": "^4.20.0",
     "typescript": "^7.0.2",
