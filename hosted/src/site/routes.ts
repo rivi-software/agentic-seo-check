@@ -2,6 +2,7 @@ import { MARK_SVG } from "../../../src/brand.js";
 import { POSTHOG_HOST } from "../../../src/telemetry/posthog.js";
 import { VERSION } from "../../../src/version.js";
 import { reportError } from "../analytics.js";
+import { freshResponse } from "../fresh.js";
 /**
  * The routes of the website at agentic-seo.rivi.software (issue #39), which its own Worker serves
  * (worker.ts): the homepage with the audit form, the rules, the form's answer at /audit, and the
@@ -50,20 +51,19 @@ const SECURITY = {
   "referrer-policy": "strict-origin-when-cross-origin",
 };
 
+/** A page or a file at an address it keeps from deploy to deploy, which browsers ask for again. */
 const file = (
   request: Request,
   body: string,
   contentType: string,
   status = 200
-): Response =>
-  new Response(request.method === "HEAD" ? null : body, {
-    status,
-    headers: {
-      "content-type": contentType,
-      "cache-control": "public, max-age=3600",
-      ...SECURITY,
-    },
-  });
+): Promise<Response> =>
+  freshResponse(
+    request,
+    body,
+    { "content-type": contentType, ...SECURITY },
+    status
+  );
 
 /** The address a link put in the field (`/?url=…`). It fills the field only: a GET never audits. */
 const prefill = (url: URL): string | undefined =>
@@ -159,7 +159,7 @@ const share = async (
   }
 
   if (!png) {
-    const page = file(request, sharePage({ result, token }), HTML);
+    const page = await file(request, sharePage({ result, token }), HTML);
     page.headers.set("x-robots-tag", "noindex");
 
     return page;
