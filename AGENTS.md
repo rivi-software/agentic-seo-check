@@ -55,4 +55,4 @@ Agentic SEO Check is an SEO and AEO audit for coding agents, published as `@rivi
 
 ## Before you finish
 
-Run `pnpm run verify`. When what the tool does changes, update the README, `skills/seo-audit/SKILL.md` if an agent would use it differently, and add a changeset.
+Run `pnpm run verify`. When what the tool does changes, update the README, `skills/seo-audit/SKILL.md` if an agent would use it differently, and add a changeset. A pull request's body follows `.github/pull_request_template.md`, and the comment at its end holds the rules for agents opening one.
