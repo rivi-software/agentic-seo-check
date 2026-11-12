@@ -525,7 +525,12 @@ describe("the hosted server's limits", () => {
     const logged = vi.spyOn(console, "error").mockReturnValue();
     onTestFinished(() => logged.mockRestore());
 
-    const profile = hostedProfile(env, ctx, PERSON);
+    const reported: [unknown, string][] = [];
+
+    const profile = hostedProfile(env, ctx, PERSON, {
+      report: (error, task) => reported.push([error, task]),
+    });
+
     const call = await profile.startCall(PAGE);
     await call.gate?.beforeRequest(new URL("https://www.example.com/"));
 
@@ -540,6 +545,75 @@ describe("the hosted server's limits", () => {
     expect(stored().count).toBe(1);
     expect(logged).toHaveBeenCalledWith(
       "Could not record a seo_audit_page call: Analytics Engine is unavailable."
+    );
+    // Error tracking hears each record that was lost (issue #93).
+    expect(reported).toStrictEqual([
+      [expect.any(TypeError), "call_record"],
+      [expect.any(TypeError), "call_record"],
+    ]);
+  });
+
+  it("record a call the limits could not judge as an error, not a limit, and let its error through (issue #93)", async () => {
+    const failure = new Error(
+      "Durable Object reset because its code was updated."
+    );
+
+    const { env, ctx, points } = fakeEnv({
+      STATE: {
+        getByName: () => ({
+          requests: () => Promise.reject(failure),
+          addRequests: () => Promise.reject(failure),
+          admitSite: () => Promise.reject(failure),
+        }),
+        jurisdiction: () => ({
+          getByName: () => ({
+            requests: () => Promise.reject(failure),
+            addRequests: () => Promise.reject(failure),
+            admitSite: () => Promise.reject(failure),
+          }),
+        }),
+      },
+    });
+
+    const start = hostedProfile(env, ctx, PERSON).startCall(PAGE);
+
+    await expect(start).rejects.toBe(failure);
+    await expect(start).rejects.not.toBeInstanceOf(CallLimitError);
+    expect(points).toMatchObject([
+      { blobs: ["seo_audit_page", "error", "www.example.com"] },
+    ]);
+  });
+
+  it("log and report a day's count that failed after the answer, which never fails the answer (issue #93)", async () => {
+    const { env, ctx, settled } = fakeEnv();
+    const state = env.STATE.jurisdiction("eu").getByName("global");
+
+    const failing = {
+      ...state,
+      addRequests: () => Promise.reject(new Error("Network connection lost.")),
+    };
+
+    env.STATE = {
+      getByName: () => failing,
+      jurisdiction: () => ({ getByName: () => failing }),
+    };
+
+    const logged = vi.spyOn(console, "error").mockReturnValue();
+    onTestFinished(() => logged.mockRestore());
+
+    const reported: [unknown, string][] = [];
+
+    const call = await hostedProfile(env, ctx, PERSON, {
+      report: (error, task) => reported.push([error, task]),
+    }).startCall(PAGE);
+
+    await call.gate?.beforeRequest(new URL("https://www.example.com/"));
+    call.end?.({ outcome: "ok", pages: 1 });
+
+    await expect(settled()).resolves.toBeDefined();
+    expect(reported).toStrictEqual([[expect.any(Error), "request_count"]]);
+    expect(logged).toHaveBeenCalledWith(
+      "Could not count 1 requests: Network connection lost."
     );
   });
 });

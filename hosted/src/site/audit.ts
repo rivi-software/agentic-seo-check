@@ -450,7 +450,7 @@ export const answerAudit = async (
 
   if (crawl) {
     return runCrawl(target, typed, fetchOptions, call, env, (thrown) => {
-      reportError(env, ctx, thrown, "website:/audit");
+      void reportError(env, ctx, thrown, "website:/audit");
     });
   }
 
@@ -465,7 +465,7 @@ export const answerAudit = async (
       outcome: error instanceof RequestRefusedError ? "refused" : "error",
       pages: 0,
     });
-    reportError(env, ctx, error, "website:/audit");
+    void reportError(env, ctx, error, "website:/audit");
 
     return refuse(
       502,

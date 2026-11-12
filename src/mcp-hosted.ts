@@ -15,7 +15,7 @@ import { PRODUCT_NAME } from "./brand.js";
 import { auditAeoHtml, auditAeoSite, auditAeoUrl } from "./core/aeo/audit.js";
 import type { AeoOptions } from "./core/aeo/audit.js";
 import { auditHtml, auditSite, auditUrl } from "./core/audit.js";
-import { ExpectedError } from "./core/errors.js";
+import { caughtError, ExpectedError } from "./core/errors.js";
 import { RequestRefusedError } from "./core/fetch.js";
 import type { FetchOptions, RequestGate } from "./core/fetch.js";
 import {
@@ -74,7 +74,7 @@ export interface HostedCallEnd {
 export interface HostedCall {
   /** The server's limits on this call's requests; the address rules and site refusals come first. */
   gate?: RequestGate;
-  /** Told once, when the call's answer is ready. What it throws is ignored: the answer stands. */
+  /** Told once, when the call's answer is ready. What it throws is reported, and the answer stands. */
   end?: (end: HostedCallEnd) => void;
 }
 
@@ -85,8 +85,9 @@ export interface HostedProfile {
   /** Signs each request the tools send (Web Bot Auth, issue #41); without it they go unsigned. */
   sign?: FetchOptions["sign"];
   /**
-   * Starts a tool call. Throws to refuse it (a limit reached, the server paused), and the error's
-   * message is the tool error the caller gets.
+   * Starts a tool call. Throws a CallLimitError to refuse it (a limit reached, the server paused),
+   * whose message is the tool error the caller gets. Anything else it throws is the server's own
+   * failure, such as its Durable Object's (issue #93).
    */
   startCall: (call: HostedCallInfo) => Promise<HostedCall>;
   /**
@@ -533,11 +534,14 @@ const runCall = async (
     call = await profile.startCall(info);
   } catch (error) {
     // A limit, or the server paused: the server's refusal, not the site's.
-    noteCall({
-      reason: error instanceof CallLimitError ? error.reason : undefined,
-    });
+    if (error instanceof CallLimitError) {
+      noteCall({ reason: error.reason });
 
-    return fail(error, "rate_limited");
+      return fail(error, "rate_limited");
+    }
+
+    // The server could not tell whether the call may start: its own failure, not a limit.
+    return fail(error);
   }
 
   const fetch = hostedFetch({
@@ -562,19 +566,36 @@ const runCall = async (
 
   try {
     call.end?.(end);
-  } catch {
+  } catch (error) {
     // The record of a call is the server's to keep; failing to keep it never costs the caller
-    // the answer.
+    // the answer, and error tracking hears it with the call (issue #93).
+    caughtError(error, { task: "call_record" });
   }
 
   return result;
 };
 
 /**
+ * A tool's answer, with what its work throws answered as the server's own failure (issue #93). The
+ * SDK would answer it with the bare message, and the analytics would read that as arguments the
+ * schema refused: the SDK checks the arguments before a tool's callback runs, so what the callback
+ * throws is never the caller's. Every hosted tool answers through it, in `inConversation`.
+ */
+export const guarded = async (
+  answer: () => CallToolResult | Promise<CallToolResult>
+): Promise<CallToolResult> => {
+  try {
+    return await answer();
+  } catch (error) {
+    return fail(error);
+  }
+};
+
+/**
  * Answers a call in its conversation (issue #101): the one the call sent back, when the server
  * issued it; else the session of the call's connection; else a new one. The answer ends with the
  * conversation's id, as data the agent sends back with its next call, whether the analytics are on
- * or off, so an answer is the same in every deployment.
+ * or off, so an answer is the same in every deployment, a failure of the server's own included.
  */
 const inConversation = async (
   profile: HostedProfile,
@@ -586,7 +607,7 @@ const inConversation = async (
 
   noteConversation(conversation);
 
-  const result = await answer();
+  const result = await guarded(answer);
 
   return {
     ...result,

@@ -21,17 +21,13 @@ import type { OutputFormat } from "../terminal.js";
 import { exceptionEvents } from "./exceptions.js";
 import type { FrameMapper, ReportedError } from "./exceptions.js";
 import {
+  caughtErrors,
   currentTool,
   initializeEvent,
   noteCaughtInCall,
   toolCallEvent,
 } from "./mcp.js";
-import type {
-  CaughtInCall,
-  McpAnalytics,
-  McpEventContext,
-  McpToolCall,
-} from "./mcp.js";
+import type { McpAnalytics, McpEventContext, McpToolCall } from "./mcp.js";
 import { BASE_PROPERTIES, sendEvents, uuidv7 } from "./posthog.js";
 import type { PostHogEvent } from "./posthog.js";
 import type { RunReport } from "./report.js";
@@ -518,13 +514,6 @@ const localErrorEvents = (
     properties: { $mcp_tool_name: tool, ...where.properties },
   });
 
-const caughtErrors = (caught: readonly CaughtInCall[] = []): ReportedError[] =>
-  caught.map(({ error, rule }) => ({
-    error,
-    handled: true,
-    properties: { rule },
-  }));
-
 /**
  * The local MCP server's analytics. A stdio connection is one client, so its calls share a
  * session, until a call comes after half an hour without one: a long-running server serves many
@@ -564,11 +553,13 @@ export const localMcpAnalytics = (
     toolCall: (call: McpToolCall) => {
       const where = context();
 
-      const errors = caughtErrors(call.caught);
-
-      if (call.error !== undefined) {
-        errors.push({ error: call.error, handled: true });
-      }
+      // The call's own failure first, so the cap on bugs never drops it.
+      const errors = [
+        ...(call.error === undefined
+          ? []
+          : [{ error: call.error, handled: true }]),
+        ...caughtErrors(call.caught),
+      ];
 
       later([
         toolCallEvent(call, where),

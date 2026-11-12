@@ -11,6 +11,8 @@ export class ExpectedError extends Error {
 export interface CaughtErrorContext {
   /** The rule whose check threw (issue #85): an id of the tool's own, never anything of a page's. */
   rule?: string;
+  /** What the tool was doing, from a fixed list of its own, such as `request_signature` (issue #93). */
+  task?: string;
 }
 
 type CaughtErrorListener = (
@@ -24,8 +26,8 @@ let listener: CaughtErrorListener | undefined;
 /**
  * Hears the errors the core catches and turns into a finding, such as a crash in `--render`'s own
  * code, a rule that throws, or a page a crawl leaves out: the user gets their answer, and the error
- * may be a bug of the tool's. Only cli.ts and mcp-bin.ts set one (issues #60 and #85); the library
- * and the hosted server never do.
+ * may be a bug of the tool's. Only cli.ts, mcp-bin.ts and the hosted server's Worker set one
+ * (issues #60, #85 and #93); the library never does.
  */
 export const onCaughtError = (next: CaughtErrorListener | undefined): void => {
   listener = next;

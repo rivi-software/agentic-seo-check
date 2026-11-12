@@ -6,11 +6,18 @@
  */
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
+import { onCaughtError } from "../../src/core/errors.js";
 import { HOSTED_LIMITS } from "../../src/core/hosted.js";
 import { HOSTED_TOOLS } from "../../src/mcp-hosted.js";
 import { createMcpServer } from "../../src/mcp.js";
 import { instrumentTransport } from "../../src/telemetry/mcp.js";
-import { hostedAnalytics, reportError } from "./analytics.js";
+import {
+  hearCaughtError,
+  hostedAnalytics,
+  inRequest,
+  reportError,
+  reportTask,
+} from "./analytics.js";
 import type { ErrorRoute } from "./analytics.js";
 import {
   callerOf,
@@ -32,6 +39,9 @@ import { OG_IMAGE } from "./ui/og.js";
 import { posthogResponse } from "./ui/posthog-script.js";
 
 export { HostedState } from "./state.js";
+
+// The errors the core catches and turns into findings reach error tracking (issue #93).
+onCaughtError(hearCaughtError);
 
 /** Open to every origin, without credentials, so browser clients such as the MCP Inspector connect. */
 const CORS = {
@@ -68,9 +78,11 @@ const handleMcp = async (
     });
   }
 
+  const report = reportTask(env, ctx, "server:/mcp");
+
   const caller = callerOf(
     request.headers.get("cf-connecting-ip"),
-    await openAiRanges(env, ctx)
+    await openAiRanges(env, ctx, report)
   );
 
   const tracking = hostedAnalytics(
@@ -82,7 +94,10 @@ const handleMcp = async (
 
   const server = createMcpServer({
     hosted: {
-      ...hostedProfile(env, ctx, caller, tracking?.observe),
+      ...hostedProfile(env, ctx, caller, {
+        observe: tracking?.observe,
+        report,
+      }),
       connection: tracking?.connection,
     },
   });
@@ -140,8 +155,16 @@ const page = (
 const HTML = "text/html; charset=utf-8";
 
 /** The key directory of Web Bot Auth, or not found while there is no key to list. */
-const keyDirectory = async (request: Request, env: Env): Promise<Response> => {
-  const keys = await signingKeys(env.WEB_BOT_AUTH_KEYS);
+const keyDirectory = async (
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> => {
+  const report = reportTask(env, ctx, `server:${DIRECTORY_PATH}`);
+
+  const keys = await signingKeys(env.WEB_BOT_AUTH_KEYS, (error) =>
+    report(error, "signing_keys")
+  );
 
   return keys.length > 0
     ? directoryResponse(keys, request)
@@ -208,7 +231,7 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
     }
 
     case DIRECTORY_PATH: {
-      return keyDirectory(request, env);
+      return keyDirectory(request, env, ctx);
     }
 
     case "/.well-known/openai-apps-challenge": {
@@ -248,13 +271,19 @@ const errorRoute = (request: Request): ErrorRoute => {
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     try {
-      return await route(request, env, ctx);
+      return await inRequest({ env, ctx, route: errorRoute(request) }, () =>
+        route(request, env, ctx)
+      );
     } catch (error) {
       // Workers Logs keep errors only: the message, never the request's body or headers.
       console.error(
         `Request failed: ${error instanceof Error ? error.message : String(error)}`
       );
-      reportError(env, ctx, error, errorRoute(request), false);
+      // In the caller's session, when its request sent the token of one.
+      void reportError(env, ctx, error, errorRoute(request), {
+        handled: false,
+        session: request.headers.get("mcp-session-id"),
+      });
 
       return new Response("Something went wrong on the hosted server.\n", {
         status: 500,
@@ -263,7 +292,16 @@ export default {
     }
   },
 
-  async scheduled(_controller, env): Promise<void> {
-    await refreshOpenAiRanges(env);
+  async scheduled(_controller, env, ctx): Promise<void> {
+    try {
+      await refreshOpenAiRanges(env);
+    } catch (error) {
+      // The run still fails, as Workers Logs show it; error tracking hears it first (issue #93).
+      await reportError(env, ctx, error, "server:cron", {
+        properties: { task: "openai_ranges" },
+      });
+
+      throw error;
+    }
   },
 } satisfies ExportedHandler<Env>;

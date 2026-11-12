@@ -6,6 +6,7 @@ import {
   parseKeys,
   requestSignature,
   requestSigner,
+  SigningKeysError,
   signatureBase,
   signingKeys,
   thumbprint,
@@ -187,5 +188,23 @@ describe("Web Bot Auth", () => {
       "WEB_BOT_AUTH_KEYS is not a list of Ed25519 private keys as JWKs: requests go out unsigned."
     );
     expect(JSON.stringify(logged.mock.calls)).not.toContain("only-public");
+  });
+
+  it("tells error tracking of a secret that holds no key, once, and nothing of the secret (issue #93)", async () => {
+    const logged = vi.spyOn(console, "error").mockReturnValue(undefined);
+    onTestFinished(() => logged.mockRestore());
+    const heard: Error[] = [];
+    const secret = '[{"kty":"OKP","crv":"Ed25519","x":"public-only-93"}]';
+    const sign = requestSigner(secret, AGENT, (problem) => heard.push(problem));
+    const url = new URL("https://shop.example.com/");
+
+    await sign(url);
+    await expect(sign(url)).resolves.toStrictEqual({});
+
+    expect(heard).toStrictEqual([expect.any(SigningKeysError)]);
+    expect(heard[0]?.cause).toBeUndefined();
+    expect(`${heard[0]?.message} ${heard[0]?.stack ?? ""}`).not.toContain(
+      "public-only-93"
+    );
   });
 });

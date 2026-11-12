@@ -10,7 +10,16 @@ import { gzipSync } from "node:zlib";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { afterAll, assert, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  assert,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { unstable_startWorker } from "wrangler";
 import { z } from "zod";
 
@@ -107,9 +116,10 @@ const site = new Map<string, Route>(
 const requests: { url: string; userAgent: string | null }[] = [];
 
 /** How often the Workers fetched OpenAI's list of ChatGPT connector ranges. */
+const OPENAI_RANGES_URL = "https://openai.com/chatgpt-connectors.json";
+
 const openAiFetches = () =>
-  requests.filter((r) => r.url === "https://openai.com/chatgpt-connectors.json")
-    .length;
+  requests.filter((r) => r.url === OPENAI_RANGES_URL).length;
 
 const PostHogBatch = z.object({
   api_key: z.string(),
@@ -771,6 +781,29 @@ describe("the hosted Worker in workerd", () => {
 
       expect(res.status).toBe(200);
       expect(openAiFetches()).toBe(before + 1);
+    });
+
+    it("tell error tracking of a schedule that could not fetch OpenAI's ranges (issue #93)", async () => {
+      const list = OPENAI_RANGES_URL;
+      const kept = site.get(list);
+      site.set(list, { status: 502, body: "Bad gateway" });
+      onTestFinished(() => {
+        if (kept) {
+          site.set(list, kept);
+        }
+      });
+
+      const after = events.length;
+      const res = await fetch(new URL("/__scheduled?cron=17+3+*+*+*", base));
+      const [error] = await eventsAfter(after, "$exception");
+
+      expect(res.status).toBe(500);
+      expect(error?.properties).toMatchObject({
+        surface: "hosted",
+        route: "server:cron",
+        task: "openai_ranges",
+        $exception_list: [{ value: "<url> answered HTTP 502." }],
+      });
     });
   });
 
