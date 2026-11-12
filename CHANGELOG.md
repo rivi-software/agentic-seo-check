@@ -1,5 +1,23 @@
 # @rivi-software/agentic-seo-check
 
+## 0.20.0
+
+### Minor Changes
+
+- 00b6aa5: The CLI's text report and progress are easier to follow on a terminal (issue #136):
+  
+  - The progress line has a spinner and, after two seconds, the time taken. It shows from the moment an audit starts. Before, a single page's fetch and a Lighthouse run printed nothing until they finished.
+  - Each section's heading is followed by a rule to the terminal's width, so the parts of a long report stand out as it scrolls past.
+  - The report ends with a summary that gives the score, its band and the counts again, then what to fix first. The terminal leaves the end of a report in view, so the verdict is there without scrolling back up. The section was called "Next".
+  - `rules` sizes the id column for each category, so descriptions get the room at 80 columns.
+  - With `-o`, stderr says what the report found next to where it went. `--fail-on` says how many findings it counted and that the exit code is 1. Errors are red, and `--help` is coloured on a terminal that shows colour.
+  
+  The JSON, the Markdown report, the flags and the exit codes are unchanged.
+
+### Patch Changes
+
+- 7f47dbc: Every MCP tool, on the local server and the hosted one, now sets all four annotation hints as explicit booleans: `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint` ([issue #138](https://github.com/rivi-software/agentic-seo-check/issues/138)). OpenAI's plugin guidelines ask for the first three on every tool, and for a tool that is safe to retry to say so. Before, every tool but `send_feedback` left out `destructiveHint`, and `seo_crawl_site`, `seo_lighthouse` and `seo_aeo_audit` left out `idempotentHint` too. The tools only read, so each now says it deletes nothing (`destructiveHint: false`) and that a second call has no further effect (`idempotentHint: true`), as an HTTP GET does. `send_feedback` is unchanged.
+
 ## 0.19.1
 
 ### Patch Changes
