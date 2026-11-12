@@ -1092,6 +1092,32 @@ describe("the hosted Worker in workerd", () => {
       expect(page).not.toContain('id="progress"');
     });
 
+    it("names a crawl the site's robots.txt keeps out as the site's refusal, not a failure (issue #96)", async () => {
+      const robots = "https://kept-out.example.com/robots.txt";
+      const home = "https://kept-out.example.com/";
+
+      site.set(robots, {
+        headers: { "content-type": "text/plain" },
+        body: "User-agent: agentic-seo-check\nDisallow: /\n\nUser-agent: *\nAllow: /\n",
+      });
+      site.set(home, { body: html("Kept out") });
+      onTestFinished(() => {
+        site.delete(robots);
+        site.delete(home);
+      });
+
+      const after = events.length;
+      const res = await sendForm(home);
+      const page = await res.text();
+
+      expect(res.status).toBe(502);
+      expect(page).toContain('data-failure="refused"');
+      expect(page).toContain("asks agentic-seo-check not to crawl");
+      expect(
+        events.slice(after).filter((e) => e.event === "$exception")
+      ).toStrictEqual([]);
+    });
+
     it("counts a crawl as one of the crawls an address may start in a minute", async () => {
       const answers: [number, string][] = [];
 

@@ -250,8 +250,11 @@ export const noteFeedback = (report: FeedbackReport): void => {
 /** The tool whose call is running here, if any: for an error the core caught within it. */
 export const currentTool = (): string | undefined => slots.getStore()?.tool;
 
-/** The most caught errors a call keeps for its events: one bug on every page of a crawl is one. */
-const MAX_CAUGHT = 1000;
+/**
+ * The most caught errors a call, or a run of the website's form, keeps for its events: one bug on
+ * every page of a crawl is one.
+ */
+export const MAX_CAUGHT = 1000;
 
 /**
  * Keeps an error the core caught for the event of the call it happened in, so a call's errors go

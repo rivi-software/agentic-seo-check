@@ -11,6 +11,7 @@ import { auditAeoUrl, auditSiteBoth } from "../../../src/core/aeo/audit.js";
 import type { SiteAudits } from "../../../src/core/aeo/audit.js";
 import { auditUrl } from "../../../src/core/audit.js";
 import type { ProgressEvent } from "../../../src/core/audit.js";
+import { ExpectedError } from "../../../src/core/errors.js";
 import { RequestRefusedError } from "../../../src/core/fetch.js";
 import type { FetchOptions } from "../../../src/core/fetch.js";
 import {
@@ -23,12 +24,13 @@ import type {
   PageAudit,
   SiteAudit,
 } from "../../../src/core/types.js";
-import type { HostedCall } from "../../../src/mcp.js";
-import { reportError } from "../analytics.js";
-import type { AnalyticsEnv } from "../analytics.js";
+import { CallLimitError } from "../../../src/mcp-hosted.js";
+import type { HostedCall, HostedCallEnd } from "../../../src/mcp.js";
+import { inRun, reportRun, reportTask } from "../analytics.js";
+import type { AnalyticsEnv, FormRun } from "../analytics.js";
 import { callerOf } from "../callers.js";
 import { hostedProfile } from "../limits.js";
-import type { LimitsEnv } from "../limits.js";
+import type { CallRecord, LimitsEnv } from "../limits.js";
 import type { FailureKind, HomeState } from "./home.js";
 import { renderReport } from "./report.js";
 import { shareMenu } from "./share-page.js";
@@ -137,7 +139,8 @@ const FAILURES = new Map<number, FailureKind>([
   [400, "address"],
   [403, "check"],
   [429, "limit"],
-  [502, "fetch"],
+  [500, "error"],
+  [502, "refused"],
   [503, "paused"],
 ]);
 
@@ -145,7 +148,7 @@ const refuse = (
   status: number,
   error: string,
   url?: string,
-  failure: FailureKind = FAILURES.get(status) ?? "fetch"
+  failure: FailureKind = FAILURES.get(status) ?? "error"
 ): AuditAnswer => ({
   status,
   state: { url, error, failure },
@@ -194,17 +197,47 @@ const runAudits = async (
 const siteReport = async (audits: SiteAudits, env: ShareEnv): Promise<string> =>
   renderSiteReport(audits, await shareFor(env, audits.seo, audits.aeo));
 
-/** Why a run gave no report, in the words the form shows. */
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
-const failure = (what: string, target: URL, error: unknown): string =>
-  error instanceof RequestRefusedError
-    ? error.message
-    : `The ${what} of ${target.hostname} failed: ${error instanceof Error ? error.message : String(error)}`;
+/**
+ * What the form says of a failure on our side (issue #96): that it is ours, and nothing of the
+ * error, which error tracking hears.
+ */
+export const ON_OUR_SIDE =
+  "The audit failed on our side, not yours. Try again in a minute.";
 
-/** The kind of a run that failed: the site refused a request it needed, or anything else. */
+/**
+ * Why a run gave no report, in the words the form shows. A page that does not answer is a finding,
+ * not a throw, so what fails a run is the site keeping it out (a refusal, or its robots.txt, which
+ * the tool explains), or a failure of ours.
+ */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
+const failure = (error: unknown): string =>
+  error instanceof ExpectedError ? error.message : ON_OUR_SIDE;
+
+/** The kind of a run that failed: the site kept it out, or it failed on our side (issue #96). */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
 const failureKind = (error: unknown): FailureKind =>
-  error instanceof RequestRefusedError ? "refused" : "fetch";
+  error instanceof ExpectedError ? "refused" : "error";
+
+/** The status of a run that failed: the site's answer is a bad gateway, a failure of ours our own. */
+const failureStatus = (kind: FailureKind): number =>
+  kind === "error" ? 500 : 502;
+
+/** How a run's outcome is recorded: a refusal of the gate or the site, or an error. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
+const failedEnd = (error: unknown): HostedCallEnd => ({
+  outcome: error instanceof RequestRefusedError ? "refused" : "error",
+  pages: 0,
+});
+
+/**
+ * A run of the form, once the limits let it start (issue #96): its audits run `within` it, so the
+ * errors the core catches there are kept, and `finish` records how it ended and sends them.
+ */
+interface Run {
+  within: <T>(work: () => T) => T;
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
+  finish: (end: HostedCallEnd, error?: unknown) => void;
+}
 
 /** How the form's crawl ended: both audits, or why there are none. */
 type CrawlOutcome =
@@ -258,10 +291,8 @@ const runCrawl = async (
   target: URL,
   typed: string,
   fetchOptions: FetchOptions,
-  call: HostedCall,
-  env: ShareEnv,
-  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
-  reportFailure: (error: unknown) => void
+  run: Run,
+  env: ShareEnv
 ): Promise<AuditAnswer> => {
   const feed = progressFeed();
 
@@ -274,28 +305,22 @@ const runCrawl = async (
         onProgress: feed.add,
       });
 
-      call.end?.({ outcome: "ok", pages: audits.seo.pages.length });
+      run.finish({ outcome: "ok", pages: audits.seo.pages.length });
 
       return { audits };
     } catch (error) {
-      call.end?.({
-        outcome: error instanceof RequestRefusedError ? "refused" : "error",
-        pages: 0,
-      });
-      reportFailure(error);
+      run.finish(failedEnd(error), error);
 
-      return {
-        error: failure("crawl", target, error),
-        kind: failureKind(error),
-      };
+      return { error: failure(error), kind: failureKind(error) };
     }
   };
 
-  const outcome = audit();
+  // The run goes on after the answer, as the stream does, and its errors with it.
+  const outcome = run.within(audit);
   const first = await Promise.race([feed.firstPage, outcome]);
 
   if (first && "error" in first) {
-    return refuse(502, first.error, typed, first.kind);
+    return refuse(failureStatus(first.kind), first.error, typed, first.kind);
   }
 
   // The crawl was done before it had a page to show: nothing to stream.
@@ -425,18 +450,54 @@ export const answerAudit = async (
   };
 
   let call: HostedCall;
+  let record: CallRecord | undefined;
+
   // A browser is never claude.ai's or ChatGPT's connector, so no platform ranges apply.
-  const profile = hostedProfile(env, ctx, callerOf(ip, []));
+  const profile = hostedProfile(env, ctx, callerOf(ip, []), {
+    observe: (kept) => {
+      record = kept;
+    },
+    report: reportTask(env, ctx, "website:/audit"),
+  });
 
   try {
     call = await profile.startCall(info);
   } catch (error) {
-    return refuse(
-      429,
-      error instanceof Error ? error.message : String(error),
-      typed
+    if (error instanceof CallLimitError) {
+      return refuse(429, error.message, typed);
+    }
+
+    // The limits could not judge the run, as when the Durable Object fails: no limit, but ours to
+    // hear and to own (issue #96).
+    reportRun(
+      env,
+      ctx,
+      { caught: [] },
+      {
+        tool: info.tool,
+        outcome: record?.outcome,
+        error,
+      }
     );
+
+    return refuse(503, ON_OUR_SIDE, typed, "error");
   }
+
+  const kept: FormRun = { caught: [] };
+
+  const run: Run = {
+    within: (work) => inRun(kept, work),
+    finish: (end, error) => {
+      call.end?.(end);
+      reportRun(env, ctx, kept, {
+        tool: info.tool,
+        outcome: record?.outcome,
+        requests: record?.requests,
+        pages: record?.pages,
+        error,
+      });
+    },
+  };
 
   const fetchOptions = {
     ...hostedFetch({
@@ -449,29 +510,20 @@ export const answerAudit = async (
   };
 
   if (crawl) {
-    return runCrawl(target, typed, fetchOptions, call, env, (thrown) => {
-      void reportError(env, ctx, thrown, "website:/audit");
-    });
+    return runCrawl(target, typed, fetchOptions, run, env);
   }
 
   try {
-    const report = await runAudits(target, fetchOptions, env);
+    const report = await run.within(() => runAudits(target, fetchOptions, env));
 
-    call.end?.({ outcome: "ok", pages: 1 });
+    run.finish({ outcome: "ok", pages: 1 });
 
     return { status: 200, state: { url: target.href, report } };
   } catch (error) {
-    call.end?.({
-      outcome: error instanceof RequestRefusedError ? "refused" : "error",
-      pages: 0,
-    });
-    void reportError(env, ctx, error, "website:/audit");
+    run.finish(failedEnd(error), error);
 
-    return refuse(
-      502,
-      failure("audit", target, error),
-      typed,
-      failureKind(error)
-    );
+    const kind = failureKind(error);
+
+    return refuse(failureStatus(kind), failure(error), typed, kind);
   }
 };

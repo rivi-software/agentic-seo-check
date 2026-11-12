@@ -29,7 +29,7 @@ import { scoreRing, severityChip } from "./report.js";
 /**
  * What kind of refusal the form answered with, as the page's `audit_failed` event names it (issue
  * #57): the address, the check that keeps bots out, a limit, the form switched off, the site's
- * refusal, or any other failure of the audit.
+ * refusal (its answer, or its robots.txt), or a failure on our side (issue #96).
  */
 export type FailureKind =
   | "address"
@@ -37,7 +37,7 @@ export type FailureKind =
   | "limit"
   | "paused"
   | "refused"
-  | "fetch";
+  | "error";
 
 export interface HomeState {
   /** The audit form is on: Turnstile is set up and the server is not paused. */

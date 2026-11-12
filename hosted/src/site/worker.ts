@@ -5,10 +5,14 @@
  * limits: the same rate limiting namespaces, and the MCP Worker's HostedState object for the day's
  * counts.
  */
-import { reportError } from "../analytics.js";
+import { onCaughtError } from "../../../src/core/errors.js";
+import { hearCaughtError, inRequest, reportError } from "../analytics.js";
 import type { ErrorRoute } from "../analytics.js";
 import type { SiteEnv } from "./audit.js";
 import { siteRoute } from "./routes.js";
+
+// The errors the core catches in the form's audits reach error tracking, with their run (issue #96).
+onCaughtError(hearCaughtError);
 
 /** The paths an error's event may name (issue #60); any other is `other`. */
 const KNOWN_PATHS = new Set([
@@ -37,7 +41,9 @@ const errorRoute = (request: Request): ErrorRoute => {
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     try {
-      return await siteRoute(request, env, ctx);
+      return await inRequest({ env, ctx, route: errorRoute(request) }, () =>
+        siteRoute(request, env, ctx)
+      );
     } catch (error) {
       // Workers Logs keep errors only: the message, never the request's body or headers.
       console.error(
