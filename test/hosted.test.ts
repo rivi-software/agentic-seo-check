@@ -727,6 +727,47 @@ describe("the hosted server", () => {
       ]);
     });
 
+    it("tells its analytics what was wrong with a call's input, and takes a rule category (issue #121)", async () => {
+      const { client, calls } = await connectWatched(profileWith().profile);
+      const html = page("Shop home page for the fixture", "");
+
+      // Each call's arguments, as an agent might send them, in order.
+      const inputs: [string, object][] = [
+        ["seo_audit_page", {}],
+        ["seo_aeo_audit", { url: "https://shop.example.com/", html }],
+        ["seo_audit_page", { html, rules: ["title.too-lng"] }],
+        ["seo_audit_page", { html, rules: ["aeo"] }],
+        ["seo_aeo_audit", { html, rules: ["structured-data"] }],
+        ["seo_audit_page", { url: "not a URL" }],
+      ];
+
+      for (const [name, args] of inputs) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- in order, as the expected list reads
+        await client.callTool({ name, arguments: { ...args } });
+      }
+
+      const byCategory = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { html: page("Home", ""), rules: ["title"] },
+      });
+
+      expect(
+        calls.map((c) => [c.tool, c.errorType, c.properties?.reason])
+      ).toStrictEqual([
+        ["seo_audit_page", "validation", "target"],
+        ["seo_aeo_audit", "validation", "target"],
+        ["seo_audit_page", "validation", "unknown_rules"],
+        ["seo_audit_page", "validation", "other_audit_rules"],
+        ["seo_aeo_audit", "validation", "other_audit_rules"],
+        // The schema refused it: no tool ran to give a reason.
+        ["seo_audit_page", "validation", undefined],
+        ["seo_audit_page", undefined, undefined],
+      ]);
+      expect(
+        rulesOf(Findings.parse(byCategory.structuredContent).findings)
+      ).toStrictEqual(["title.generic", "title.too-short"]);
+    });
+
     it("tells its analytics why a crawl stopped partway, though the call answered (issue #94)", async () => {
       serve({
         "https://shop.example.com/": {

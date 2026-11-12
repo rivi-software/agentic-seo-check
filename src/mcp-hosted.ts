@@ -24,6 +24,7 @@ import {
   hostedUrlProblem,
   LOCAL_SERVER,
 } from "./core/hosted.js";
+import { RuleNamesError } from "./core/rules/index.js";
 import type { AeoAudit, Audit } from "./core/types.js";
 import {
   commonOptions,
@@ -445,6 +446,16 @@ const allowedHost = (target: string): string => {
   return parsed.hostname;
 };
 
+/**
+ * A call that names nothing to audit, or for seo_aeo_audit two things: its event's reason is
+ * `target` (issue #121), so a `validation` error without a reason is the schema's refusal.
+ */
+const noTarget = (message: string): CallToolResult => {
+  noteCall({ reason: "target" });
+
+  return fail(new InputError(message));
+};
+
 /** The options a call runs with, for its event: choices from fixed lists, never a value typed in. */
 const noteOptions = (
   input: {
@@ -505,7 +516,12 @@ const settle = async (
 
     return { result, end: { outcome: "ok", pages }, audit };
   } catch (error) {
-    if (error instanceof RequestRefusedError) {
+    // A refusal, or `rules` that name no rule of the audit's (issue #121): the reason is the
+    // analytics', from a fixed list.
+    if (
+      error instanceof RequestRefusedError ||
+      error instanceof RuleNamesError
+    ) {
       noteCall({ reason: error.reason });
     }
 
@@ -717,7 +733,7 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
       const inline = source !== undefined && Boolean(source || target);
 
       if (!inline && !target) {
-        return fail(new InputError("Provide `url` or `html`."));
+        return noTarget("Provide `url` or `html`.");
       }
 
       let host: string | null = null;
@@ -811,7 +827,7 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
       );
 
       if ((input.url === undefined) === (input.html === undefined)) {
-        return fail(new InputError("Provide exactly one of `url` or `html`."));
+        return noTarget("Provide exactly one of `url` or `html`.");
       }
 
       let host: string | null = null;

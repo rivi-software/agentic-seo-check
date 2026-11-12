@@ -29,8 +29,8 @@ import type { Baseline } from "./recheck.js";
 import { compareRender } from "./render-rules.js";
 import { renderPage, RenderUnavailableError } from "./render.js";
 import {
-  checkRuleIds,
   runPageRules,
+  selectRules,
   SEO_RULES,
   sortFindings,
 } from "./rules/index.js";
@@ -270,12 +270,12 @@ const finishSite = (
     : site;
 };
 
-/** Fails on `onlyRules` that name no SEO rule. */
-const checkOptions = (options: AuditOptions): void => {
-  if (options.onlyRules) {
-    checkRuleIds(options.onlyRules, SEO_RULES, "SEO");
-  }
-};
+/**
+ * The options with `onlyRules` and `disableRules` as SEO rule ids, categories expanded (issue #121);
+ * fails on `onlyRules` that name no SEO rule.
+ */
+const checkOptions = <T extends AuditOptions>(options: T): T =>
+  selectRules(options, SEO_RULES, "SEO");
 
 // The raw HTML is not kept on the audit (too large); re-fetch it for the render comparison.
 const rawHtmlFor = async (
@@ -666,9 +666,9 @@ const auditHtmlPage = (
 export const auditHtml = async (
   html: string,
   input: HtmlAuditInput = {},
-  options: AuditOptions = {}
+  given: AuditOptions = {}
 ): Promise<PageAudit> => {
-  checkOptions(options);
+  const options = checkOptions(given);
 
   return finishPage(auditHtmlPage(html, input, options), options);
 };
@@ -676,9 +676,9 @@ export const auditHtml = async (
 /** Fetch and audit one URL. Optionally render and/or run Lighthouse. */
 export const auditUrl = async (
   url: string,
-  input: AuditOptions = {}
+  given: AuditOptions = {}
 ): Promise<PageAudit> => {
-  checkOptions(input);
+  const input = checkOptions(given);
 
   // The user's headers are for this URL's origin, whatever it redirects to.
   const options: AuditOptions = input.fetch
@@ -798,9 +798,9 @@ export const auditCrawled = async (
 /** Crawl a site and audit every page plus site-level checks. */
 export const auditSite = async (
   startUrl: string,
-  options: CrawlOptions = {}
+  given: CrawlOptions = {}
 ): Promise<SiteAudit> => {
-  checkOptions(options);
+  const options = checkOptions(given);
   const result = await crawlSite(startUrl, seoCrawlOptions(options));
   const { site } = await auditCrawled(result, startUrl, options);
 
@@ -810,9 +810,9 @@ export const auditSite = async (
 /** Audit a directory of built HTML files (dist/, out/, build/). */
 export const auditDirectory = async (
   dir: string,
-  options: CrawlOptions = {}
+  given: CrawlOptions = {}
 ): Promise<SiteAudit> => {
-  checkOptions(options);
+  const options = checkOptions(given);
 
   const result = await scanDirectory(dir, {
     baseUrl: options.baseUrl ?? "http://localhost/",

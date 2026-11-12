@@ -45,13 +45,13 @@ export const commonOptions = {
     .array(z.string())
     .optional()
     .describe(
-      'Rule ids to skip, e.g. ["twitter.card-missing"]. Use seo_list_rules to see ids.'
+      'Rule ids or categories to skip, e.g. ["twitter.card-missing"] or ["social"]. Use seo_list_rules to see ids and their categories.'
     ),
   rules: z
     .array(z.string())
     .optional()
     .describe(
-      'Run only these rule ids, e.g. ["img.alt-missing"] to re-check the findings a fix was for. Use with `baseline`.'
+      'Run only these rule ids or categories: ["img.alt-missing"] to re-check the findings a fix was for (use with `baseline`), or ["structured-data"] for one category. Use seo_list_rules to see ids and their categories.'
     ),
   baseline: z
     .array(z.string())

@@ -159,7 +159,7 @@ On a terminal the CLI prints a text report for people: the score and its band, t
 
 `aeo` takes the same targets and output, crawl and request options as `audit`, plus `--ai-bots`; it has no `--keyword`, `--render`, `--lighthouse` or `--check-external`. With `--ai-bots`, the requests come from your machine with each bot's User-Agent, not from the bots' own IP ranges: a CDN that verifies bots may treat the real crawler differently, and the findings say so. Search crawlers and robots.txt-only tokens (Google-Extended, Applebot-Extended, YandexAdditional) are never impersonated.
 
-`--rule` runs only the rules named (space- or comma-separated). `--baseline` reads an earlier audit's JSON and adds `baseline` to the result: the findings since fixed, still open and new. Re-check with the same target and options as the first run; a finding counts as fixed only when its rule ran again on its page, and the rest are counted as `notChecked`. A crawl or directory baseline needs `--page-detail full` (the CLI default), so its page findings have ids.
+`--rule` runs only the rules named (space- or comma-separated). It and `--disable` take a category as well as a rule id: `--rule structured-data` runs every `structured-data.*` rule, and `agentic-seo-check rules` lists each rule's category. `--baseline` reads an earlier audit's JSON and adds `baseline` to the result: the findings since fixed, still open and new. Re-check with the same target and options as the first run; a finding counts as fixed only when its rule ran again on its page, and the rest are counted as `notChecked`. A crawl or directory baseline needs `--page-detail full` (the CLI default), so its page findings have ids.
 
 Requests from the CLI and the local server carry the User-Agent `Mozilla/5.0 (compatible; agentic-seo-check-local/<version>; +https://github.com/rivi-software/agentic-seo-check)` unless `--user-agent` (`userAgent`) sets another. A crawl obeys robots.txt for the product token `agentic-seo-check-local`, or `*` when robots.txt has no group for it, unless `--ignore-robots` (`respectRobots: false`). The hosted server's token is `agentic-seo-check`, so a site can tell the two apart.
 
@@ -236,7 +236,7 @@ Or `claude mcp add agentic-seo-check -- npx -y @rivi-software/agentic-seo-check 
 | `seo_aeo_audit` | AEO audit of one of `url` (with `crawl` for a site), `html` or `dir`. Options: `aiBots`, `baseUrl`, `maxPages`, `maxDepth`, `concurrency`, `respectRobots`, `includeSubdomains`, `pageDetail`, `includeInfo`, `disableRules`, `rules`, `baseline`, `headers`, `format`, `detail`. |
 | `seo_list_rules` | Rule reference, filter by `category` or `rule`. |
 
-Every audit tool also takes `rules` (run only these rule ids) and `baseline` (the `id` of each finding of the earlier audit) for a re-check, like `--rule` and `--baseline`. For a crawl or directory, run both audits with `pageDetail: "full"` so page findings have ids.
+Every audit tool also takes `rules` (run only these rule ids) and `baseline` (the `id` of each finding of the earlier audit) for a re-check, like `--rule` and `--baseline`. `rules` and `disableRules` take a category as well as a rule id, such as `["structured-data"]` for a structured-data pass. For a crawl or directory, run both audits with `pageDetail: "full"` so page findings have ids.
 
 All tools are read-only. Results are returned both as text (JSON or Markdown) and as `structuredContent`.
 
