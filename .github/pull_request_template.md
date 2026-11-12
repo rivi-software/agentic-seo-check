@@ -5,7 +5,7 @@ CONTRIBUTING.md has what a pull request needs: https://github.com/rivi-software/
 
 ## Problem
 
-<!-- First line: who is affected and what is wrong for them today, such as an agent fixing a site, a site owner, a CI pipeline or a visitor to the website. A fix says what breaks; a feature names the goal and what stands in its way; a chore says who is blocked. It stays true under a different solution, so the code path goes under Changes. Take it from the issue this closes. -->
+<!-- First line: who is affected and what is wrong for them today, such as an agent fixing a site, a site owner, a CI pipeline or a visitor to the website. A fix says what breaks; a feature names the goal and what stands in its way; a chore says who is blocked. It stays true under a different solution, so the code path goes under Changes. Take it from the issue this closes, when there is one. -->
 
 Closes #
 
@@ -32,7 +32,7 @@ Closes #
 **Deploys on merge:** yes / no
 
 <!-- Contract: a rule's id, severity, message and recommendation, the MCP tools' names and input schemas (local and hosted), the CLI's flags and exit codes, and the audit JSON. Extended is a new rule, option, tool or field, and a minor changeset. Broken is a rename, a removal or a change in meaning, and needs a maintainer's agreement in an issue first. -->
-<!-- Deploys: both Workers deploy with each push to main that changes their bundles: src/, hosted/ outside its tests and docs, package.json or the lockfile (.github/workflows/deploy-hosted.yml). -->
+<!-- Deploys: yes when the diff changes a path in the `paths:` filter of .github/workflows/deploy-hosted.yml, which decides: both Workers then deploy with the merge. Most often that is src/, hosted/ outside its tests and docs, or package.json; check the filter for the rest. -->
 
 ## Docs update
 
@@ -83,10 +83,10 @@ Closes #
 </details>
 
 <!-- Rules for agents opening a pull request here:
-- Issue first: every pull request closes an issue, a bug fix too. File it from .github/ISSUE_TEMPLATE/ before opening the pull request.
-- Title: `<type>(<scope>): <description>`, Conventional Commits with a scope from CONTRIBUTING.md; lowercase, no full stop, under 72 characters. The squash merge makes it the commit on main.
+- Issue first: every pull request an agent opens closes an issue, a typo or a bug fix too, which is stricter than CONTRIBUTING.md asks of people. File it from .github/ISSUE_TEMPLATE/ before opening the pull request.
+- Title: `<type>(<scope>): <description>`, Conventional Commits with a scope from CONTRIBUTING.md, which only a change with no area of its own leaves out (`docs: …`, `ci: …`); lowercase, no full stop, under 72 characters. The squash merge makes it the commit on main.
     Right: feat(rules): flag a canonical that redirects
-    Wrong: feat: Added canonical redirect check.   (capital, full stop, no scope)
+    Wrong: feat: Added canonical redirect check.   (capital, full stop, and no scope on a change to the rules)
 - Voice: the change is the subject of every sentence. Authorship is one fact, under Agent context, so the body has no "I", "me" or "my".
 - Body: pass it to `gh pr create --body-file -` on stdin, which keeps Markdown and newlines as written.
 - Draft: open a draft while the work or the body is unfinished, and open it ready once `pnpm run verify` passes locally. RIVI Bot reviews a pull request when it opens or leaves draft, and after every push, and each review spends its budget.
