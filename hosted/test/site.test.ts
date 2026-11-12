@@ -421,7 +421,7 @@ describe("the report of a page audit", () => {
     expect(report).not.toContain('class="fix-row');
   });
 
-  it("saves as a PDF from the print dialog, with when the audit ran on paper only", async () => {
+  it("downloads as a PDF, and says on paper when the audit ran", async () => {
     const url = "https://shop.example.com/";
 
     const html =
@@ -601,7 +601,7 @@ describe("the report of a site audit", () => {
     ).toBeTruthy();
   });
 
-  it("saves as a PDF from the print dialog, with when the crawl ran on paper only", () => {
+  it("downloads as a PDF, and says on paper when the crawl ran", () => {
     expect(report).toContain('data-report="pdf"');
     expect(report).toMatch(
       /<p class="report-print">Audited on \d{1,2} [A-Z][a-z]+ \d{4} at \d{2}:\d{2} UTC with /u

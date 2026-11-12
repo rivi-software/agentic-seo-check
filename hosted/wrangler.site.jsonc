@@ -18,8 +18,9 @@
     { "type": "Data", "globs": ["**/*.woff2", "**/*.png", "**/*.ttf"], "fallthrough": true },
     { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }
   ],
-  // Copies posthog-js's browser build to .generated/posthog-js.txt, served at /ph.js (issue #57).
-  "build": { "command": "node scripts/posthog-js.ts" },
+  // Copies posthog-js's browser build to .generated/posthog-js.txt, served at /ph.js (issue #57),
+  // and pdfmake's to .generated/pdfmake.txt, served at /pdfmake.js for a report's PDF (issue #157).
+  "build": { "command": "node scripts/posthog-js.ts && node scripts/pdfmake.ts" },
   "workers_dev": false,
   "preview_urls": false,
   // `pnpm run site:dev` beside `pnpm run hosted:dev`, which serves the Durable Object on 8787.
