@@ -77,7 +77,7 @@ Work on a branch in your fork. One pull request makes one change. Two unrelated 
 ### What happens next
 
 1. **CI** runs `verify` on Node 22, 24 and 26, and its `verify` check must pass before the pull request can merge. Until a first pull request of yours has merged here, GitHub waits for a maintainer to approve each run before it starts.
-2. **Review.** A maintainer reviews the pull request. They may also ask [RIVI Bot](#reviews-by-rivi-bot), an automated reviewer that runs Claude, to review it; it only reads the change and comments. Its comments are advice: fix what is right, and reply where it is wrong.
+2. **Review.** A maintainer reviews the pull request. They may also ask [RIVI Bot](#reviews-by-rivi-bot), an automated reviewer that runs on Workers AI, to review it; it only reads the change and comments. Its comments are advice: fix what is right, and reply where it is wrong.
 3. **Merge.** A maintainer squash-merges the pull request once the code owner ([`.github/CODEOWNERS`](.github/CODEOWNERS)) approves it and `verify` passes.
 4. **Release.** The next release publishes your changeset to npm (see [Changes and releases](#changes-and-releases)).
 
@@ -99,11 +99,11 @@ You may use AI tools to write an issue or a pull request, and you are its author
 
 ### Reviews by RIVI Bot
 
-[RIVI Bot](https://github.com/rivi-software/tools/tree/main/rivi-bot#readme) is Claude on this repository's pull requests and issues, through the reusable workflow in `rivi-software/tools`. [`.github/workflows/rivi-bot.yml`](.github/workflows/rivi-bot.yml) calls it, and [`.github/rivi-bot.yml`](.github/rivi-bot.yml), read from `main`, says what it does here.
+[RIVI Bot](https://github.com/rivi-software/tools/tree/main/rivi-bot#readme) is an AI reviewer and helper on this repository's pull requests and issues, through the reusable workflow in `rivi-software/tools`. [`.github/workflows/rivi-bot.yml`](.github/workflows/rivi-bot.yml) calls it, and [`.github/rivi-bot.yml`](.github/rivi-bot.yml), read from `main`, says what it does here. Its reviews run on Workers AI, through the `github-rivi-monorepo` AI Gateway; the rest of what it does runs on Claude.
 
-It reviews a pull request by someone with write access on its own: when it opens or leaves draft, and after every push. Any other pull request waits for a maintainer, who asks for reviews by adding the `rivi-bot:review` label. Read the pull request first: the reviews spend the API key's budget, and Claude reads everything in the pull request. Reviews of outside pull requests comment and never approve. Someone with write access can also ask it for more in a comment: `@rivi-bot describe`, `@rivi-bot triage`, or a question or a fix in plain words.
+It reviews a pull request by someone with write access on its own: when it opens or leaves draft, and after every push. Any other pull request waits for a maintainer, who asks for reviews by adding the `rivi-bot:review` label. Read the pull request first: each review spends the Cloudflare account's budget, and the model reads everything in the pull request. Reviews of outside pull requests comment and never approve. Someone with write access can also ask it for more in a comment: `@rivi-bot describe`, `@rivi-bot triage`, or a question or a fix in plain words.
 
-It needs the `ANTHROPIC_REVIEW_API_KEY` secret, and for RIVI Bot's own name the `AUTOMATION_APP_PRIVATE_KEY` secret of the RIVI Bot App.
+The reviews need the `CLOUDFLARE_ACCOUNT_ID` variable, the `CLOUDFLARE_AI_API_TOKEN` secret (Workers AI Read and AI Gateway Read) and the gateway's `CLOUDFLARE_AI_GATEWAY_TOKEN` secret. The rest needs the `ANTHROPIC_REVIEW_API_KEY` secret. For RIVI Bot's own name it needs the `AUTOMATION_APP_PRIVATE_KEY` secret of the RIVI Bot App.
 
 ### Changes and releases
 
