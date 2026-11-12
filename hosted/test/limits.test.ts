@@ -520,7 +520,7 @@ describe("the hosted server's limits", () => {
     expect(JSON.stringify(points)).not.toMatch(/\/a|b=c|203\.0\.113\.9/u);
   });
 
-  it("record each competitor's hostname a comparison sent requests to, with its requests (issue #129)", async () => {
+  it("record each competitor's hostname a comparison sent requests to, with its requests, and no other (issue #129)", async () => {
     const { env, ctx, points } = fakeEnv();
     const call = await hostedProfile(env, ctx, PERSON).startCall(COMPARE);
 
@@ -531,6 +531,8 @@ describe("the hosted server's limits", () => {
         "https://rival.example.org/robots.txt",
         "https://rival.example.org/widgets",
         "https://rival.example.org/llms.txt",
+        // Where the page itself redirected: a site of the call, but no competitor's.
+        "https://shop.example.net/widgets",
       ].map((url) => call.gate?.beforeRequest(new URL(url)))
     );
 
@@ -540,7 +542,7 @@ describe("the hosted server's limits", () => {
       {
         indexes: ["www.example.com"],
         blobs: ["seo_compare_pages", "ok", "www.example.com"],
-        doubles: [expect.any(Number), 5, 2],
+        doubles: [expect.any(Number), 6, 2],
       },
       {
         indexes: ["rival.example.org"],

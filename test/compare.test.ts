@@ -49,6 +49,10 @@ const isRead = (p: ComparedPage | SkippedPage): p is ComparedPage =>
 const authorizations = (server: FixtureServer, from: number) =>
   server.requestHeaders.slice(from).map((h) => h.authorization ?? null);
 
+/** The cells of a Markdown table row, split on the pipes `cell` leaves unescaped. */
+const cells = (row: string | undefined) =>
+  (row ?? "").split(/(?<!\\)\|/u).length;
+
 /** The gaps as findings, for the fix helpers every rule's tests use. */
 const gapFindings = (c: Comparison): Finding[] =>
   c.gaps.map((g) => ({
@@ -380,6 +384,26 @@ describe(comparePages, () => {
 
     expect(markdown).toContain(`# Comparison: ${page}`);
     expect(markdown).toContain("Closed by: `aeo.article-author-missing`");
+  });
+
+  it("says nothing was compared when no competitor could be read, never that the page has what they have", async () => {
+    const c = await comparePages(page, [`${ours.origin}/gone`]);
+    const text = renderComparisonText(c);
+    const markdown = renderComparisonMarkdown(c);
+
+    const rows = markdown.split("\n").filter((line) => line.startsWith("| "));
+
+    expect(`${text}\n${markdown}`).not.toContain(
+      "has what most competitors have"
+    );
+    expect(text).toContain(
+      "Nothing was compared: no competitor's page could be read."
+    );
+    expect(markdown).toContain(
+      "Nothing was compared: no competitor's page could be read."
+    );
+    // Every row, the skipped page's too, has the header's 13 cells and the two ends.
+    expect(new Set(rows.map(cells))).toStrictEqual(new Set([15]));
   });
 
   it("trims long lists for an agent", async () => {

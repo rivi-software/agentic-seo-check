@@ -6,7 +6,7 @@
  */
 import { MAKER, MAKER_URL, PRODUCT_NAME } from "../../brand.js";
 import { VERSION } from "../../version.js";
-import { competitorCounts } from "../compare.js";
+import { competitorCounts, NOTHING_COMPARED } from "../compare.js";
 import {
   CORE_VITALS,
   FIELD_LABELS,
@@ -1353,8 +1353,13 @@ const leadLines = (lead: ComparisonLead, w: Writer): string[] =>
 
 const comparisonText = (c: Comparison, w: Writer): string[] => {
   const covered = c.gaps.filter((g) => g.fix.length > 0).length;
+  const { read } = competitorCounts(c);
 
   const advice = (): string => {
+    if (read === 0) {
+      return NOTHING_COMPARED;
+    }
+
     if (c.gaps.length === 0) {
       return "Nothing to close: this page has what most competitors have.";
     }
@@ -1382,7 +1387,12 @@ const comparisonText = (c: Comparison, w: Writer): string[] => {
     heading("Gaps", w, { count: c.gaps.length, style: "yellow" }),
     "",
     ...(c.gaps.length === 0
-      ? [`  ${w.style("green", "✓ None.")}`, ""]
+      ? [
+          read === 0
+            ? `  ${w.style("dim", NOTHING_COMPARED)}`
+            : `  ${w.style("green", "✓ None.")}`,
+          "",
+        ]
       : c.gaps.flatMap((gap) => gapLines(gap, w))),
     heading("Leads", w, { count: c.leads.length, style: "green" }),
     "",

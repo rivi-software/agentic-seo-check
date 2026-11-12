@@ -1,6 +1,6 @@
 import { MAKER, MAKER_URL, PRODUCT_NAME, REPOSITORY_URL } from "../../brand.js";
 import { VERSION } from "../../version.js";
-import { competitorCounts, keptOut } from "../compare.js";
+import { competitorCounts, keptOut, NOTHING_COMPARED } from "../compare.js";
 import {
   FIELD_LABELS,
   FIELD_METRICS,
@@ -623,7 +623,8 @@ const comparedRow = (p: Comparison["pages"][number]): string => {
   const who = `${p.role === "page" ? "**This page**" : "Competitor"}: ${cell(p.url)}`;
 
   if (!("signals" in p)) {
-    return `| ${who} | ${cell(`skipped: ${p.skipped.message}`)} |||||||||||`;
+    // Why it was skipped fills the SEO column; the 11 after it stay empty, as it has no signals.
+    return `| ${who} | ${cell(`skipped: ${p.skipped.message}`)} |${" |".repeat(11)}`;
   }
 
   const s = p.signals;
@@ -653,7 +654,12 @@ const comparisonMarkdown = (c: Comparison): string => {
   ];
 
   if (c.gaps.length === 0) {
-    lines.push("None: this page has what most competitors have.", "");
+    lines.push(
+      read === 0
+        ? NOTHING_COMPARED
+        : "None: this page has what most competitors have.",
+      ""
+    );
   }
 
   for (const gap of c.gaps) {

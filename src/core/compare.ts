@@ -786,6 +786,13 @@ export const comparePages = async (
     : insertBefore(comparison, "auditedAt", "keyword", keyword);
 };
 
+/**
+ * What a report says when no competitor could be read: no gap then means nothing was compared,
+ * never that the page has what its competitors have.
+ */
+export const NOTHING_COMPARED =
+  "Nothing was compared: no competitor's page could be read.";
+
 /** How many competitors a comparison named, and how many of them it read. */
 export interface CompetitorCounts {
   of: number;

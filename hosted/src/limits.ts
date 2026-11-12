@@ -301,8 +301,8 @@ export const MAX_INDEX_BYTES = 96;
  * One record per tool call in Analytics Engine, which keeps it for three months: the tool, the
  * outcome, the duration, the requests sent and pages audited, and the target hostname, so that an
  * abuse report about a site can be checked against what was sent to it. A comparison (issue #129)
- * adds one record for each other hostname it sent requests to, marked `competitor`, with the
- * requests that hostname got. Never a path, a query, the caller's address or anything the caller
+ * adds one record for each hostname of its competitors' sites it sent requests to, marked
+ * `competitor`, with the requests that hostname got. Never a path, a query, the caller's address or anything the caller
  * sent. A record that cannot be written is logged and reported, and never fails the call it is
  * about.
  */
@@ -507,6 +507,7 @@ export const hostedProfile = (
       }
 
       const sent: Sent = { requests: 0, counted: 0, byHost: new Map() };
+      const competitors = new Set((call.competitors ?? []).map(siteOf));
 
       return {
         gate: siteGate(
@@ -518,7 +519,7 @@ export const hostedProfile = (
             ? {
                 caller,
                 site: pageSites(env, caller, call.host),
-                competitors: new Set((call.competitors ?? []).map(siteOf)),
+                competitors,
               }
             : undefined
         ),
@@ -528,9 +529,10 @@ export const hostedProfile = (
           keep(call, outcome, { durationMs, requests: sent.requests, pages });
 
           // A comparison's requests to its competitors' sites, so an abuse report about one of
-          // them finds what was sent to it.
-          for (const [host, requests] of call.competitors ? sent.byHost : []) {
-            if (host !== call.host) {
+          // them finds what was sent to it. A site the page itself redirected to is no
+          // competitor's: the call's own record counts those requests.
+          for (const [host, requests] of sent.byHost) {
+            if (host !== call.host && competitors.has(siteOf(host))) {
               record(
                 env,
                 { ...call, host },
