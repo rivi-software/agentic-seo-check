@@ -34,6 +34,7 @@ import {
   InputError,
   LIST_RULES,
   listRules,
+  readOnlyTool,
   respond,
   respondAeo,
   toOptions,
@@ -624,7 +625,7 @@ const auditOptions = (
 
 /** seo_audit_page: one page, by URL or as HTML. */
 const AUDIT_PAGE = {
-  title: "Audit one page for SEO",
+  ...readOnlyTool("Audit one page for SEO", { openWorld: true }),
   description:
     `Audit a single page and return prioritised, actionable findings (rule id, severity, message, recommendation, CSS selector, evidence) with a \`fix\` for each: the exact edits that resolve it, quoting the code to replace (\`{{…}}\` marks words the author writes). ` +
     `Checks title, meta description, headings, canonical, robots/noindex, viewport/lang, Open Graph/Twitter cards, images, links, hreflang, structured data (JSON-LD/microdata), content quality and the HTTP response. ` +
@@ -634,17 +635,11 @@ const AUDIT_PAGE = {
       "hosted"
     )}`,
   inputSchema: AUDIT_PAGE_INPUT,
-  annotations: {
-    title: "Audit one page for SEO",
-    readOnlyHint: true,
-    openWorldHint: true,
-    idempotentHint: true,
-  },
 };
 
 /** seo_crawl_site: a site, up to the hosted crawl's limits. */
 const CRAWL_SITE = {
-  title: "Crawl a site and audit every page",
+  ...readOnlyTool("Crawl a site and audit every page", { openWorld: true }),
   description:
     `Crawl internal links from a start URL (at most ${LIMITS.maxPages} pages, depth ${LIMITS.maxDepth}), audit every HTML page, and run site-wide checks: robots.txt, XML sitemap coverage (missing/noindex/non-canonical/broken URLs), broken internal links with their sources, redirect chains, duplicate titles/descriptions/H1s/content, orphan and deep pages, soft-404 behaviour, http→https and www redirects, hreflang return links. ` +
     `Returns site findings plus \`issues\` (page findings rolled up by rule with example URLs) and per-page scores. Use seo_audit_page on a specific URL for full per-page detail. ` +
@@ -652,16 +647,13 @@ const CRAWL_SITE = {
       HOSTED_NOTE
     }${docsNote("hosted")}`,
   inputSchema: CRAWL_SITE_INPUT,
-  annotations: {
-    title: "Crawl a site and audit every page",
-    readOnlyHint: true,
-    openWorldHint: true,
-  },
 };
 
 /** seo_aeo_audit: a page or a site, for answer engines. */
 const AEO_AUDIT = {
-  title: "Audit a page or site for answer engines (AEO)",
+  ...readOnlyTool("Audit a page or site for answer engines (AEO)", {
+    openWorld: true,
+  }),
   description:
     `Answer engine optimization audit: can AI answer engines (ChatGPT search, Claude, Perplexity, Google AI Overviews and AI Mode, Copilot, Gemini) reach, quote and trust the content? ` +
     `Checks robots.txt for each AI crawler (search crawlers, answer bots, training bots), Content-Signal lines and the shared \`__usage_ai-training\` opt-out, /llms.txt, nosnippet/max-snippet/data-nosnippet, Bing's noarchive/nocache for Copilot, noai, content that needs JavaScript, question headings without a direct answer, FAQPage/HowTo markup that the page does not show, article author and dates, and Organization/Person entities with sameAs. ` +
@@ -672,11 +664,6 @@ const AEO_AUDIT = {
       "hosted"
     )}`,
   inputSchema: AEO_AUDIT_INPUT,
-  annotations: {
-    title: "Audit a page or site for answer engines (AEO)",
-    readOnlyHint: true,
-    openWorldHint: true,
-  },
 };
 
 /** What send_feedback answers: the feedback was kept, and nothing else changed. */

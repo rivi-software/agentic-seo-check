@@ -820,11 +820,17 @@ describe("the hosted server", () => {
       const { tools } = await client.listTools();
 
       for (const tool of tools) {
-        expect(tool.annotations?.title).toBe(tool.title);
         // Every tool reads, but send_feedback, which records what the agent sent (issue #101).
-        expect(tool.annotations?.readOnlyHint).toBe(
-          tool.name !== "send_feedback"
-        );
+        // Each sets all four hints, as OpenAI's plugin guidelines ask.
+        const reads = tool.name !== "send_feedback";
+        expect({ tool: tool.name, ...tool.annotations }).toStrictEqual({
+          tool: tool.name,
+          title: tool.title,
+          readOnlyHint: reads,
+          destructiveHint: false,
+          idempotentHint: reads,
+          openWorldHint: reads && tool.name !== "seo_list_rules",
+        });
       }
 
       for (const tool of tools.filter(
