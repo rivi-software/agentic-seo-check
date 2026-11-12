@@ -1,21 +1,34 @@
 /**
  * The stylesheet of every page on both hostnames, inlined in each: RIVI Software's look as
- * rivi.software has it. Dark only, set in Geist and Geist Mono, with its tokens (the ink ground,
- * hairlines in white, the signal green), its glow behind the hero, its windows with a catch of
- * light on the top edge, and its pills and buttons. The parts are split by what they style.
+ * rivi.software has it. Dark only, with its tokens (the ink ground, hairlines in white, the signal
+ * green), its glow behind the hero, its windows with a catch of light on the top edge, and its
+ * pills and buttons. The parts are split by what they style.
+ *
+ * The type has two voices, as rivi.software's Two-Voice Rule splits them (issue #128). Bricolage
+ * Grotesque, the help center's display face, sets what a page says out loud: every h1 and h2, the
+ * large titles under them (a row's title, a report's section) and the lockup's name, at 600 and
+ * -0.02em, since its display cut is already tight; one rule in BASE lists them. Geist sets
+ * everything else: the titles of cards and panels, labels, buttons, scores and body copy, and
+ * Geist Mono the machine text.
  */
 
-/** Where both hostnames serve the fonts (ui/fonts.ts). */
+/** Where both hostnames serve the fonts (ui/assets.ts). */
 export const FONT_PATHS = {
+  display: "/fonts/bricolage-grotesque-latin.woff2",
   sans: "/fonts/geist-latin.woff2",
   mono: "/fonts/geist-mono-latin.woff2",
 } as const;
 
-/** rivi.software's tokens, and the severity colours of its status page. */
+/**
+ * rivi.software's tokens, and the severity colours of its status page. Bricolage's file carries an
+ * optical-size axis, which browsers follow from the font size: a hero's h1 gets the display cut,
+ * the 1rem lockup the open text cut.
+ */
 const TOKENS = `
+@font-face{font-family:"Bricolage Grotesque";font-style:normal;font-weight:200 800;font-display:swap;src:url("${FONT_PATHS.display}") format("woff2")}
 @font-face{font-family:"Geist";font-style:normal;font-weight:100 900;font-display:swap;src:url("${FONT_PATHS.sans}") format("woff2")}
 @font-face{font-family:"Geist Mono";font-style:normal;font-weight:100 900;font-display:swap;src:url("${FONT_PATHS.mono}") format("woff2")}
-:root{color-scheme:dark;--bg:#08090a;--bg-raised:#0f1011;--bg-raised-2:#141517;--bg-inset:#0b0c0d;--bg-hover:#ffffff0a;--line-faint:#ffffff0d;--line:#ffffff14;--line-strong:#ffffff29;--text:#f7f8f8;--text-body:#d0d6e0;--text-muted:#8a8f98;--text-faint:#7b8089;--signal:#3be08a;--signal-text:#5ee89f;--signal-cue:#0e9f55;--signal-soft:#3be08a24;--error:#f0675f;--error-text:#f28b82;--error-soft:#f0675f1f;--warning:#f2a33a;--warning-text:#f5b866;--warning-soft:#f2a33a1f;--info:#6aa6f5;--info-text:#8dbaf7;--info-soft:#6aa6f51f;--btn-bg:#e9eaeb;--btn-bg-hover:#fff;--btn-text:#08090a;--logo-tile:#f7f8f8;--logo-bars:#08090a;--radius-btn:8px;--radius-card:12px;--radius-window:14px;--shadow-panel:0 24px 60px -28px #000c;--shadow-window:0 40px 120px -40px #000000d9;--ease:cubic-bezier(.2,.7,.2,1);--ease-out:cubic-bezier(.16,1,.3,1);--header-h:64px;--section:104px;--sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+:root{color-scheme:dark;--bg:#08090a;--bg-raised:#0f1011;--bg-raised-2:#141517;--bg-inset:#0b0c0d;--bg-hover:#ffffff0a;--line-faint:#ffffff0d;--line:#ffffff14;--line-strong:#ffffff29;--text:#f7f8f8;--text-body:#d0d6e0;--text-muted:#8a8f98;--text-faint:#7b8089;--signal:#3be08a;--signal-text:#5ee89f;--signal-cue:#0e9f55;--signal-soft:#3be08a24;--error:#f0675f;--error-text:#f28b82;--error-soft:#f0675f1f;--warning:#f2a33a;--warning-text:#f5b866;--warning-soft:#f2a33a1f;--info:#6aa6f5;--info-text:#8dbaf7;--info-soft:#6aa6f51f;--btn-bg:#e9eaeb;--btn-bg-hover:#fff;--btn-text:#08090a;--logo-tile:#f7f8f8;--logo-bars:#08090a;--radius-btn:8px;--radius-card:12px;--radius-window:14px;--shadow-panel:0 24px 60px -28px #000c;--shadow-window:0 40px 120px -40px #000000d9;--ease:cubic-bezier(.2,.7,.2,1);--ease-out:cubic-bezier(.16,1,.3,1);--header-h:64px;--section:104px;--display:"Bricolage Grotesque","Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 `;
 
 const BASE = `
@@ -24,8 +37,9 @@ html{-webkit-text-size-adjust:100%;scroll-padding-top:calc(var(--header-h) + 24p
 body{margin:0;background:var(--bg);color:var(--text-body);font:16px/1.6 var(--sans);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;overflow-x:clip}
 ::selection{color:#fff;background:#3be08a47}
 h1,h2,h3,h4{margin:0;color:var(--text);font-weight:500;text-wrap:balance}
-h1{font-size:clamp(2.6rem,6.2vw,4.6rem);line-height:1.03;letter-spacing:-.035em}
-h2{font-size:clamp(1.9rem,3.6vw,2.8rem);line-height:1.08;letter-spacing:-.028em}
+h1,h2,.row>h3,.report-section-head h3,.site-logo{font-family:var(--display);font-weight:600;letter-spacing:-.02em}
+h1{font-size:clamp(2.6rem,6.2vw,4.6rem);line-height:1.03}
+h2{font-size:clamp(1.9rem,3.6vw,2.8rem);line-height:1.08}
 h3{font-size:1.125rem;line-height:1.35;letter-spacing:-.01em}
 h4{font-size:.75rem;line-height:1.4;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint)}
 p{margin:0}
@@ -50,7 +64,7 @@ main:focus{outline:0}
 const HEADER = `
 .site-header{position:sticky;top:0;z-index:50;background:#08090ac7;-webkit-backdrop-filter:blur(14px) saturate(140%);backdrop-filter:blur(14px) saturate(140%);border-bottom:1px solid var(--line-faint)}
 .header-inner{display:flex;align-items:center;gap:20px;height:var(--header-h)}
-.site-logo{display:inline-flex;align-items:center;gap:10px;min-height:44px;color:var(--text);font-size:1rem;font-weight:600;letter-spacing:-.02em;line-height:1;white-space:nowrap;text-decoration:none}
+.site-logo{display:inline-flex;align-items:center;gap:10px;min-height:44px;color:var(--text);font-size:1rem;line-height:1;white-space:nowrap;text-decoration:none}
 .site-logo svg{flex:none;width:28px;height:28px}
 .nav{display:flex;gap:2px}
 .nav a{display:inline-flex;align-items:center;min-height:36px;padding:0 12px;border-radius:var(--radius-btn);color:var(--text-muted);font-size:.875rem;font-weight:500;text-decoration:none;transition:color .16s,background-color .16s}
@@ -156,7 +170,7 @@ const LAYOUT = `
 .card-icon .icon{width:18px;height:18px}
 .rows{display:grid;border-top:1px solid var(--line)}
 .row{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,7fr);gap:16px 64px;padding:44px 0;border-bottom:1px solid var(--line);scroll-margin-top:var(--header-h)}
-.row>h2,.row>h3{font-size:1.5rem;line-height:1.2;letter-spacing:-.02em}
+.row>h2,.row>h3{font-size:1.5rem;line-height:1.2}
 .row-body{display:grid;align-content:start;gap:16px;max-width:44rem}
 .row-body>ul{display:grid;gap:10px;padding-left:1.1rem}
 .facts-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--line);border-radius:var(--radius-card);background:var(--line);list-style:none}
@@ -275,7 +289,7 @@ const REPORT = `
 .report-window{box-shadow:var(--shadow-panel);overflow:clip}
 .report-bar{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:14px 20px;padding:18px 22px;border-bottom:1px solid var(--line);background:#ffffff04}
 .report-title{display:grid;flex:1 1 20rem;gap:6px;min-width:0}
-.report-title h2{font-size:1.375rem;letter-spacing:-.02em}
+.report-title h2{font-size:1.375rem}
 .report-url{display:flex;align-items:center;gap:8px;min-width:0;color:var(--text-muted);font-family:var(--mono);font-size:.8125rem;overflow-wrap:anywhere}
 .report-url .icon{width:14px;height:14px;color:var(--text-faint)}
 .report-actions{display:flex;flex-wrap:wrap;gap:8px}
@@ -323,7 +337,7 @@ a.score-card:hover{border-color:var(--line-strong)}
 .report-panels,.report-panel,.report-part,.finding-group,.finding-part,.finding{scroll-margin-top:68px}
 .report-section{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
 .report-section-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:0 4px}
-.report-section-head h3{font-size:1.375rem;letter-spacing:-.02em}
+.report-section-head h3{font-size:1.375rem}
 .report-card{display:grid;grid-template-columns:minmax(0,1fr);align-content:start;gap:16px;padding:20px;border:1px solid var(--line);border-radius:var(--radius-window);background:var(--bg-raised)}
 .card-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:8px 16px}
 .card-head>div{display:grid;gap:4px}
@@ -480,7 +494,7 @@ const SHARE = `
 const RULES = `
 .rules-layout{display:grid;grid-template-columns:230px minmax(0,1fr);gap:56px;padding-bottom:var(--section)}
 .rules-toc{position:sticky;top:calc(var(--header-h) + 24px);align-self:start;max-height:calc(100vh - var(--header-h) - 48px);overflow:auto;scrollbar-width:thin}
-.rules-toc h2{margin-bottom:12px;color:var(--text-faint);font-size:.75rem;font-weight:500;letter-spacing:.06em;text-transform:uppercase}
+.rules-toc h2{margin-bottom:12px;color:var(--text-faint);font-family:var(--sans);font-size:.75rem;font-weight:500;letter-spacing:.06em;text-transform:uppercase}
 .rules-toc ul{display:grid;gap:1px;list-style:none}
 .rules-toc a{display:flex;justify-content:space-between;gap:8px;padding:6px 10px;border-radius:7px;color:var(--text-muted);font-size:.875rem;text-decoration:none;transition:color .16s,background-color .16s}
 .rules-toc a:hover,.rules-toc a[aria-current]{background:var(--bg-hover);color:var(--text)}

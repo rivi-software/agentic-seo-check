@@ -1,10 +1,12 @@
 /**
- * The files both hostnames serve beside their pages: the fonts, Geist and Geist Mono as Latin
- * subsets (SIL OFL 1.1, assets/geist-OFL.txt), which rivi.software sets its pages in, and each
- * hostname's share image (ui/og.ts). Wrangler bundles their bytes (the Data rule in each
+ * The files both hostnames serve beside their pages: the fonts rivi.software sets its pages in, as
+ * Latin subsets under the SIL OFL 1.1 (Bricolage Grotesque for the headings,
+ * assets/bricolage-grotesque-OFL.txt; Geist and Geist Mono for the rest, assets/geist-OFL.txt),
+ * and each hostname's share image (ui/og.ts). Wrangler bundles their bytes (the Data rule in each
  * Worker's configuration). Only the routes import this module: Node runs the pages' tests and cannot
  * import a font or an image.
  */
+import bricolage from "../../assets/bricolage-grotesque-latin.woff2";
 import geist from "../../assets/geist-latin.woff2";
 import geistMono from "../../assets/geist-mono-latin.woff2";
 import serverCard from "../../assets/og-mcp.png";
@@ -12,6 +14,7 @@ import siteCard from "../../assets/og-site.png";
 import { FONT_PATHS } from "./style.js";
 
 const FONTS = new Map<string, ArrayBuffer>([
+  [FONT_PATHS.display, bricolage],
   [FONT_PATHS.sans, geist],
   [FONT_PATHS.mono, geistMono],
 ]);
