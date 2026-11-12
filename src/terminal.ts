@@ -1,7 +1,7 @@
 /**
  * What the CLI asks of the terminal it writes to (issue #65): whether it shows colour and links,
- * how wide it is, and a progress line that rewrites itself. Only `cli.ts` imports this; the core and
- * the text report never read `process`.
+ * how wide it is, and a progress line that rewrites itself. Only the CLI's own modules import this;
+ * the core and the text report never read `process`.
  */
 import { paint, terminalSafe } from "./core/report/text.js";
 import type { TextOptions } from "./core/report/text.js";
@@ -34,10 +34,14 @@ export const formatFor = (
   return isTTY ? "text" : "json";
 };
 
-/** The widest the text report gets, however wide the terminal: longer lines are hard to read. */
-const MAX_WIDTH = 100;
+/** The widest the text report and the help get, however wide the terminal: longer lines are hard to read. */
+export const MAX_WIDTH = 100;
 
-type Env = NodeJS.ProcessEnv;
+/**
+ * The variables read here. A plain record, not `NodeJS.ProcessEnv`, which the hosted Worker's types
+ * extend with its bindings: telemetry's own `env` passes through here too.
+ */
+type Env = Record<string, string | undefined>;
 
 /** What the CLI reads of stdout or stderr, and writes to them. */
 export type Terminal = Pick<
@@ -156,6 +160,8 @@ export const endQuietlyOnClosedPipe = (
 /** A line on a terminal that each `show` rewrites in place, for progress. */
 export interface StatusLine {
   show: (text: string) => void;
+  /** Writes `line` to stay, above the progress line, which goes on below it. */
+  print: (line: string) => void;
   /** Removes the line, so what is written next starts at the start of an empty line. */
   clear: () => void;
 }
@@ -220,6 +226,10 @@ export const statusLine = (stream: Terminal): StatusLine => {
       }
 
       text = terminalSafe(next).replaceAll("\n", " ");
+      draw();
+    },
+    print: (line) => {
+      stream.write(`${text === null ? "" : "\r\u001B[2K"}${line}\n`);
       draw();
     },
     clear: () => {

@@ -47,6 +47,25 @@ const freshEnv = async () => {
   return { home, env: { XDG_CONFIG_HOME: home } };
 };
 
+/** A stderr that records what is written to it: a pipe, or a terminal `columns` wide. */
+const stderrRecorder = (terminal?: { columns: number }) => {
+  const written: string[] = [];
+
+  return {
+    written,
+    stderr: {
+      isTTY: terminal !== undefined,
+      columns: terminal?.columns ?? 0,
+      hasColors: () => false,
+      write: (text: string) => {
+        written.push(text);
+
+        return true;
+      },
+    },
+  };
+};
+
 /** A local server with `analytics` on its transport, and a client connected to it. */
 const connect = async (analytics: McpAnalytics) => {
   const server = createMcpServer();
@@ -173,27 +192,40 @@ describe("telemetry", () => {
       await telemetryCommand("enable", fresh.env);
       const status = await telemetryStatus(fresh.env);
 
-      expect(before).toMatch(/^Telemetry is on:/u);
+      expect(before).toMatch(
+        /^Telemetry is on\n\n {2}Anonymous usage data goes to RIVI Software's PostHog project \(EU\)\.\n/u
+      );
       expect(off).toMatch(
-        /^Telemetry is off: turned off with `agentic-seo-check telemetry disable`/u
+        /^✓ Telemetry is off\.\n\n {2}Turned off with `agentic-seo-check telemetry disable`\.\n[^]*\n {2}Turn it on again: agentic-seo-check telemetry enable\n$/u
       );
       expect(sends).toBeFalsy();
       expect(status.enabled).toBeTruthy();
     });
 
+    it("says what is sent while it is on, and that the environment keeps it off", async () => {
+      const on = await telemetryCommand("status", fresh.env);
+
+      const kept = await telemetryCommand("enable", {
+        ...fresh.env,
+        DO_NOT_TRACK: "1",
+      });
+
+      expect(on).toMatch(
+        /^ {2}Never sent {2}a URL, a hostname, a path or anything from a page$/mu
+      );
+      expect(on).toContain(`  Settings    ${settingsPath(fresh.env)}\n`);
+      expect(kept).toMatch(/^▲ Telemetry stays off\. Your choice is kept/u);
+      expect(kept).toContain("\n  DO_NOT_TRACK is set.\n");
+      expect(kept).not.toContain("Turn it");
+    });
+
     it("is off, and says nothing, where there is no home directory", async () => {
-      const written: string[] = [];
+      const { written, stderr } = stderrRecorder();
 
       const sends = await prepareTelemetry({
         env: {},
         home: noHome,
-        stderr: {
-          write: (text: string) => {
-            written.push(text);
-
-            return true;
-          },
-        },
+        stderr,
       });
 
       expect(sends).toBeFalsy();
@@ -209,15 +241,7 @@ describe("telemetry", () => {
 
     it("says it is on once, on stderr, on the first run", async () => {
       const { home, env } = await freshEnv();
-      const written: string[] = [];
-
-      const stderr = {
-        write: (text: string) => {
-          written.push(text);
-
-          return true;
-        },
-      };
+      const { written, stderr } = stderrRecorder();
 
       const first = await prepareTelemetry({ env, stderr });
       const second = await prepareTelemetry({ env, stderr });
@@ -233,17 +257,31 @@ describe("telemetry", () => {
       await rm(home, { recursive: true, force: true });
     });
 
+    it("wraps the notice to a terminal's width, under a heading", async () => {
+      const { home, env } = await freshEnv();
+      const { written, stderr } = stderrRecorder({ columns: 60 });
+
+      await prepareTelemetry({ env, stderr });
+
+      const lines = written.join("").split("\n");
+
+      expect(lines[0]).toBe(`Telemetry ${"─".repeat(50)}`);
+      expect(lines.slice(2).join(" ").replaceAll(/\s+/gu, " ")).toContain(
+        "the type and stack of an unexpected error. Never a URL, a hostname, a path or anything from a page."
+      );
+      expect(lines.filter((line) => line.length > 60)).toStrictEqual([
+        "  Details      https://github.com/rivi-software/agentic-seo-check#telemetry",
+      ]);
+      expect(lines).toContain(
+        "  Turn it off  agentic-seo-check telemetry disable"
+      );
+
+      await rm(home, { recursive: true, force: true });
+    });
+
     it("says it once more to a user who saw the notice before it named errors", async () => {
       const { home, env } = await freshEnv();
-      const written: string[] = [];
-
-      const stderr = {
-        write: (text: string) => {
-          written.push(text);
-
-          return true;
-        },
-      };
+      const { written, stderr } = stderrRecorder();
 
       // The settings issue #57's release wrote: a notice, without its version.
       await mkdir(path.dirname(settingsPath(env)), { recursive: true });

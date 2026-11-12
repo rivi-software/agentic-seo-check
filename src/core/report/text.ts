@@ -121,6 +121,15 @@ const REQUIREMENT: Record<Requirement, string> = {
   "ai-bots": "Runs with --ai-bots.",
 };
 
+/** The flag a rule needs to run, for the command that checks it alone. */
+const REQUIRED_FLAG: Record<Requirement, string> = {
+  render: " --render",
+  lighthouse: " --lighthouse",
+  crawl: " --crawl",
+  keyword: " --keyword <keyword>",
+  "ai-bots": " --ai-bots",
+};
+
 const AEO_PAGE_RULE_IDS = new Set(AEO_PAGE_RULES.map((rule) => rule.meta.id));
 
 /**
@@ -131,8 +140,8 @@ const AEO_PAGE_RULE_IDS = new Set(AEO_PAGE_RULES.map((rule) => rule.meta.id));
 export const terminalSafe = (text: string): string =>
   withoutControls(text.replaceAll("\t", "  "));
 
-/** What the report is written with: the options, settled. */
-interface Writer {
+/** What the report is written with: the options, settled. The CLI's other screens use it too. */
+export interface Writer {
   style: (style: Style, text: string) => string;
   /** `text` as a link to `url`, when links are on and there is a URL. */
   link: (text: string, url: string | undefined) => string;
@@ -142,7 +151,10 @@ interface Writer {
   origin: string | null;
 }
 
-const writer = (options: TextOptions, origin: string | null): Writer => {
+export const writer = (
+  options: TextOptions,
+  origin: string | null = null
+): Writer => {
   const color = options.color === true;
 
   return {
@@ -158,7 +170,7 @@ const writer = (options: TextOptions, origin: string | null): Writer => {
 };
 
 /** `text` in lines of at most `width` characters, broken at spaces; a longer word keeps a line of its own. */
-const wrap = (text: string, width: number): string[] => {
+export const wrap = (text: string, width: number): string[] => {
   const lines: string[] = [];
 
   for (const paragraph of text.split("\n")) {
@@ -186,7 +198,7 @@ const wrap = (text: string, width: number): string[] => {
 };
 
 /** Page text, made safe and wrapped under `indent`. */
-const block = (text: string, indent: string, w: Writer): string[] =>
+export const block = (text: string, indent: string, w: Writer): string[] =>
   wrap(terminalSafe(text), w.width - indent.length).map(
     (line) => `${indent}${line}`
   );
@@ -222,7 +234,7 @@ const MIN_RULE = 3;
  * "Errors (3) ──────────": a section's heading, in bold and in `style` when given, with a dim rule
  * to the width after it, so each section stands out when a long report scrolls past.
  */
-const heading = (
+export const heading = (
   text: string,
   w: Writer,
   { count, style }: { count?: number; style?: Style } = {}
@@ -273,10 +285,10 @@ const countsText = (counts: SeverityCounts, w: Writer): string =>
 const dotted = (parts: readonly string[], w: Writer): string =>
   parts.filter(Boolean).join(w.style("dim", " · "));
 
-type Field = readonly [label: string, value: string | null];
+export type Field = readonly [label: string, value: string | null];
 
 /** Labels and values in two columns; a value wraps under itself, and a missing one says so. */
-const fieldLines = (
+export const fieldLines = (
   fields: readonly Field[],
   w: Writer,
   indent = "  "
@@ -560,7 +572,7 @@ const firstRule = (
   SEVERITIES.flatMap((s) => findings.filter((f) => f.severity === s))[0]?.rule;
 
 /** "What a rule checks: <command>", with the command on a line of its own when both do not fit. */
-const command = (label: string, run: string, w: Writer): string[] =>
+export const commandLines = (label: string, run: string, w: Writer): string[] =>
   2 + label.length + 1 + run.length <= w.width
     ? [`  ${label} ${w.style("cyan", run)}`]
     : [`  ${label}`, `    ${w.style("cyan", run)}`];
@@ -612,9 +624,9 @@ const summaryLines = (
 
   if (w.nextSteps) {
     lines.push(
-      ...command(`${detail}: run again with`, "-o report.md", w),
+      ...commandLines(`${detail}: run again with`, "-o report.md", w),
       ...(rule
-        ? command(
+        ? commandLines(
             "What a rule checks:",
             `agentic-seo-check rules --rule ${terminalSafe(rule)}`,
             w
@@ -1105,7 +1117,10 @@ export const renderVerdict = (
   options: TextOptions = {}
 ): string => verdictLine(audit, writer(options, null));
 
-/** One rule in full: what it checks, what to do, when it runs and where it is documented. */
+/**
+ * One rule in full: what it checks, what to do, when it runs and where it is documented, and for
+ * the CLI, the command that checks it alone.
+ */
 const ruleDetail = (rule: RuleMeta, w: Writer): string[] => [
   `${w.style("bold", w.link(rule.id, rule.docs))}${w.style("dim", " · ")}${w.style(SEVERITY_STYLE[rule.severity], rule.severity)}${w.style("dim", ` · ${CATEGORY_LABEL[rule.category]}`)}`,
   "",
@@ -1121,6 +1136,16 @@ const ruleDetail = (rule: RuleMeta, w: Writer): string[] => [
     ],
     w
   ),
+  ...(w.nextSteps
+    ? [
+        "",
+        ...commandLines(
+          "Check only this rule:",
+          `agentic-seo-check ${rule.category === "aeo" ? "aeo" : "audit"} <target> --rule ${rule.id}${rule.requires ? REQUIRED_FLAG[rule.requires] : ""}`,
+          w
+        ),
+      ]
+    : []),
 ];
 
 /** The rules, by category, one line each; or one rule in full. */
@@ -1180,7 +1205,7 @@ export const renderRulesText = (
 
   lines.push(
     w.nextSteps
-      ? `${plural(rules.length, "rule")}. One in full: agentic-seo-check rules --rule <id>`
+      ? `${plural(rules.length, "rule")}. One in full: ${w.style("cyan", "agentic-seo-check rules --rule <id>")}`
       : plural(rules.length, "rule")
   );
 

@@ -17,7 +17,17 @@ import { PRODUCT_NAME, REPOSITORY_URL } from "../brand.js";
 import { resolveTarget } from "../core/audit.js";
 import { onCaughtError } from "../core/errors.js";
 import type { CaughtErrorContext } from "../core/errors.js";
-import type { OutputFormat } from "../terminal.js";
+import { sentence } from "../core/report/labels.js";
+import {
+  block,
+  commandLines,
+  fieldLines,
+  heading,
+  writer,
+} from "../core/report/text.js";
+import type { TextOptions, Writer } from "../core/report/text.js";
+import { textOptionsFor } from "../terminal.js";
+import type { OutputFormat, Terminal } from "../terminal.js";
 import { exceptionEvents } from "./exceptions.js";
 import type { FrameMapper, ReportedError } from "./exceptions.js";
 import {
@@ -37,7 +47,40 @@ export const TELEMETRY_ENV = "AGENTIC_SEO_CHECK_TELEMETRY";
 
 export const TELEMETRY_DOCS = `${REPOSITORY_URL}#telemetry`;
 
-export const NOTICE = `${PRODUCT_NAME} sends anonymous usage data to RIVI Software (PostHog, EU): the command, the names of the flags, the kind of target, the exit code, the number of pages and findings, the rules that fired, and the type and stack of an unexpected error. Never a URL, a hostname, a path or anything from a page. Turn it off with \`agentic-seo-check telemetry disable\` or DO_NOT_TRACK=1. ${TELEMETRY_DOCS}`;
+/** What the CLI and the local MCP server send, as the notice and `telemetry` say it. */
+const SENT =
+  "the command, the names of the flags, the kind of target, the exit code, the number of pages and findings, the rules that fired, and the type and stack of an unexpected error";
+
+/** What they never send. */
+const NEVER = "a URL, a hostname, a path or anything from a page";
+
+const DISABLE = "agentic-seo-check telemetry disable";
+
+const ENABLE = "agentic-seo-check telemetry enable";
+
+/** What the notice says, before how to turn it off. */
+const SENDS = `${PRODUCT_NAME} sends anonymous usage data to RIVI Software (PostHog, EU): ${SENT}. Never ${NEVER}.`;
+
+export const NOTICE = `${SENDS} Turn it off with \`${DISABLE}\` or DO_NOT_TRACK=1. ${TELEMETRY_DOCS}`;
+
+/**
+ * The notice on a terminal (issue #144): under a heading, wrapped to the terminal's width, with the
+ * command that turns it off in the colour of a command to run. Elsewhere it is NOTICE, one line.
+ */
+export const renderNotice = (options: TextOptions): string => {
+  const w = writer(options);
+
+  return `${[
+    heading("Telemetry", w),
+    "",
+    ...block(SENDS, "  ", w),
+    "",
+    `  Turn it off  ${w.style("cyan", DISABLE)}`,
+    "               or set DO_NOT_TRACK=1",
+    `  Details      ${w.link(TELEMETRY_DOCS, TELEMETRY_DOCS)}`,
+    "",
+  ].join("\n")}\n`;
+};
 
 /**
  * Which NOTICE the user last saw: 1 said nothing of errors (issue #57), 2 does (issue #60). A user
@@ -145,7 +188,7 @@ export const telemetryStatus = async (
   return settings.enabled === false
     ? {
         enabled: false,
-        reason: "turned off with `agentic-seo-check telemetry disable`",
+        reason: `turned off with \`${DISABLE}\``,
         file,
         settings,
       }
@@ -166,7 +209,8 @@ export const telemetryStatus = async (
 export const prepareTelemetry = async (
   options: {
     env?: Env;
-    stderr?: Pick<NodeJS.WriteStream, "write">;
+    /** Where the notice goes: on a terminal, it is wrapped to its width. */
+    stderr?: Terminal;
     /** os.homedir(), or what stands in for it in the tests. */
     home?: () => string;
   } = {}
@@ -189,7 +233,13 @@ export const prepareTelemetry = async (
     : 0;
 
   if (seen < NOTICE_VERSION) {
-    (options.stderr ?? process.stderr).write(`${NOTICE}\n`);
+    const stderr = options.stderr ?? process.stderr;
+
+    stderr.write(
+      stderr.isTTY
+        ? renderNotice(textOptionsFor(stderr, options.env))
+        : `${NOTICE}\n`
+    );
 
     await writeSettings(status.file, {
       ...status.settings,
@@ -201,10 +251,79 @@ export const prepareTelemetry = async (
   return true;
 };
 
-/** `agentic-seo-check telemetry [status|enable|disable]`: what it prints. */
+/** The first line of `telemetry`: where it stands, or what `enable` or `disable` did. */
+const statusTitle = (
+  status: TelemetryStatus,
+  action: "status" | "enable" | "disable",
+  w: Writer
+): string => {
+  const state = status.enabled ? "on" : "off";
+
+  if (action === "status") {
+    return w.style("bold", `Telemetry is ${state}`);
+  }
+
+  if (status.enabled === (action === "enable")) {
+    return `${w.style("green", "✓")} ${w.style("bold", `Telemetry is ${state}.`)}`;
+  }
+
+  // `enable` while the environment turns telemetry off: the choice waits until it no longer does.
+  return `${w.style("yellow", "▲")} ${w.style("bold", "Telemetry stays off.")} Your choice is kept, for when the environment no longer turns it off.`;
+};
+
+/** The command that changes where telemetry stands; none while the environment decides. */
+const nextStep = (
+  status: TelemetryStatus,
+  byEnv: boolean,
+  w: Writer
+): string[] => {
+  if (status.enabled) {
+    return commandLines("Turn it off:", DISABLE, w);
+  }
+
+  return byEnv ? [] : commandLines("Turn it on again:", ENABLE, w);
+};
+
+/**
+ * Where telemetry stands, as `telemetry` prints it: on or off and why, what is sent while it is
+ * on, where the choice is kept, and the command that changes it. After `enable` or `disable`, the
+ * first line says what the command did, and when the environment overrules it.
+ */
+const statusLines = (
+  status: TelemetryStatus,
+  action: "status" | "enable" | "disable",
+  byEnv: boolean,
+  w: Writer
+): string[] => {
+  const next = nextStep(status, byEnv, w);
+
+  return [
+    statusTitle(status, action, w),
+    "",
+    ...block(sentence(status.reason), "  ", w),
+    "",
+    ...fieldLines(
+      [
+        ...(status.enabled
+          ? ([
+              ["Sent", SENT],
+              ["Never sent", NEVER],
+            ] as const)
+          : []),
+        ["Settings", status.file],
+        ["Details", TELEMETRY_DOCS],
+      ],
+      w
+    ),
+    ...(next.length > 0 ? ["", ...next] : []),
+  ];
+};
+
+/** `agentic-seo-check telemetry [status|enable|disable]`: what it prints, in `options`' colours and width. */
 export const telemetryCommand = async (
   action: "status" | "enable" | "disable",
-  env: Env = process.env
+  env: Env = process.env,
+  options: TextOptions = {}
 ): Promise<string> => {
   const file = settingsPath(env);
 
@@ -223,7 +342,14 @@ export const telemetryCommand = async (
 
   const status = await telemetryStatus(env);
 
-  return `Telemetry is ${status.enabled ? "on" : "off"}: ${status.reason}.\nThe choice is kept in ${status.file}.\nWhat is sent and why: ${TELEMETRY_DOCS}\n`;
+  const lines = statusLines(
+    status,
+    action,
+    offByEnv(env) !== null,
+    writer(options)
+  );
+
+  return `${lines.join("\n")}\n`;
 };
 
 /** The machine an event comes from, as far as it says nothing about who uses it. */

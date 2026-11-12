@@ -63,6 +63,14 @@ export const CATEGORY_LABEL: Record<Category, string> = {
   tool: "The audit itself",
 };
 
+/** "unknown option '--bogus'" as "Unknown option '--bogus'.": capitalised, with a full stop when it has none. */
+export const sentence = (text: string): string => {
+  const trimmed = text.trim();
+  const capital = `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+
+  return /[.!?]$/u.test(capital) ? capital : `${capital}.`;
+};
+
 /** "1 page", "2 pages". */
 export const plural = (count: number, noun: string): string =>
   `${count} ${noun}${count === 1 ? "" : "s"}`;
