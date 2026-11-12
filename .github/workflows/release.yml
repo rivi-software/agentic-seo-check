@@ -46,11 +46,15 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # The changesets action below publishes only when no changeset waits and package.json's
-      # version is not on npm yet. Otherwise it opens or updates the "Version packages" pull
-      # request, whose own CI verifies it, or does nothing. So Verify runs only before a publish
-      # (issue #127); CI verifies every push to main besides. When npm gives no answer, the version
-      # counts as unpublished, and Verify runs.
+      # Verify runs only before a publish (issue #127); CI verifies every push to main besides. The
+      # two conditions here are the ones the steps below apply:
+      # - The changesets action runs the publish script only when it finds no changeset (its
+      #   `hasChangesets` in src/index.ts). With one waiting, it opens or updates the "Version
+      #   packages" pull request, whose own CI verifies it, and publishes nothing.
+      # - `changeset publish` then skips a version npm already has. `npm view` asks the same
+      #   registry: neither .npmrc nor setup-node names another.
+      # A failed `find` stops the job before anything publishes. When npm gives no answer, the
+      # version counts as unpublished, and Verify runs.
       - name: Will this run publish?
         id: plan
         run: |
