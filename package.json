@@ -1,6 +1,6 @@
 {
   "name": "@rivi-software/agentic-seo-check",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "description": "SEO and AEO analysis for coding agents: a CLI and MCP server that audit URLs, static build output or raw HTML for search engines and AI answer engines, and return machine-actionable findings.",
   "license": "MIT",
   "author": "RIVI Software (https://rivi.software)",
