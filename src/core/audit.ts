@@ -15,6 +15,14 @@ import {
   toResponseInfo,
 } from "./fetch.js";
 import type { FetchOptions } from "./fetch.js";
+import {
+  answeredOk,
+  fieldDataForCrawl,
+  fieldDataForPage,
+  fieldDataOptions,
+  isFieldRecord,
+} from "./field-data.js";
+import type { FieldDataOptions } from "./field-data.js";
 import { extractPage } from "./html/extract.js";
 import { runLighthouse, LighthouseUnavailableError } from "./lighthouse.js";
 import { performanceFindings } from "./performance-rules.js";
@@ -43,8 +51,10 @@ import { countFindings, DEFAULT_THRESHOLDS } from "./types.js";
 import type {
   Audit,
   BaselineComparison,
+  FieldData,
   Finding,
   IssueRollup,
+  NoFieldData,
   PageAudit,
   PageSource,
   Requirement,
@@ -64,6 +74,12 @@ export interface AuditOptions {
   /** Run Lighthouse (performance + SEO + agentic-browsing categories). */
   lighthouse?: boolean;
   formFactor?: "mobile" | "desktop";
+  /**
+   * Real-user Core Web Vitals from the Chrome UX Report for a URL, or its origin when it has too
+   * few visits; a crawl asks for its first pages (issue #130). `true` reads the API key from
+   * CRUX_API_KEY. Never sent for localhost, a private address, or an audit with headers.
+   */
+  fieldData?: boolean | FieldDataOptions;
   /** Include info-level findings (default true). */
   includeInfo?: boolean;
   /** Rule ids to skip. */
@@ -107,6 +123,8 @@ export interface HtmlAuditInput {
   source?: PageSource;
   target?: string;
   depth?: number;
+  /** The page's field data, which the audit keeps and the `perf.field-*` rules read. */
+  fieldData?: FieldData | NoFieldData;
 }
 
 export const DEFAULT_CRAWL = {
@@ -199,8 +217,25 @@ const seoCapabilities = (
     active.add("keyword");
   }
 
+  if (options.fieldData) {
+    active.add("field-data");
+  }
+
   return active;
 };
+
+/** The rules that read field data, which ran on the pages with a Chrome UX Report record alone. */
+const FIELD_RULE_IDS: ReadonlySet<string> = new Set(
+  SEO_RULES.filter((r) => r.requires === "field-data").map((r) => r.id)
+);
+
+/** The URLs of the audited pages, in every form, that had a Chrome UX Report record. */
+const fieldUrlsOf = (pages: readonly PageAudit[]): string[] =>
+  pages.flatMap((p) =>
+    isFieldRecord(p.fieldData)
+      ? [p.url, p.target, ...(p.response ? [p.response.finalUrl] : [])]
+      : []
+  );
 
 /**
  * Gives every finding its id and, with `baseline`, compares them with the earlier audit's.
@@ -209,7 +244,13 @@ const seoCapabilities = (
 const recheck = (
   findings: Finding[],
   options: AuditOptions,
-  scope: { urls: Iterable<string>; site: boolean; hidden: Finding[] }
+  scope: {
+    urls: Iterable<string>;
+    site: boolean;
+    hidden: Finding[];
+    /** The pages whose field data the `perf.field-*` rules read. */
+    fieldUrls: readonly string[];
+  }
 ): BaselineComparison | null => {
   assignIds([...findings, ...scope.hidden]);
 
@@ -229,6 +270,8 @@ const recheck = (
       },
       SEO_RULES
     ),
+    // A page without a record had nothing for them to judge.
+    onlyOn: { rules: FIELD_RULE_IDS, urls: scope.fieldUrls },
   });
 };
 
@@ -243,6 +286,7 @@ const finishPage = (audit: PageAudit, options: AuditOptions): PageAudit => {
     urls,
     site: false,
     hidden: hiddenInfo.get(audit) ?? [],
+    fieldUrls: fieldUrlsOf([audit]),
   });
 
   return comparison
@@ -262,6 +306,7 @@ const finishSite = (
       urls,
       site: true,
       hidden: [site, ...site.pages].flatMap((a) => hiddenInfo.get(a) ?? []),
+      fieldUrls: fieldUrlsOf(site.pages),
     }
   );
 
@@ -276,6 +321,62 @@ const finishSite = (
  */
 const checkOptions = <T extends AuditOptions>(options: T): T =>
   selectRules(options, SEO_RULES, "SEO");
+
+/**
+ * `options` with `fieldData` resolved, its API key read: an audit without one fails here, before it
+ * requests anything.
+ */
+const withFieldData = <T extends AuditOptions>(options: T): T =>
+  options.fieldData
+    ? { ...options, fieldData: fieldDataOptions(options.fieldData) }
+    : options;
+
+/** The audit sends the user's headers, as for a site behind a login. */
+const sendsHeaders = (options: AuditOptions): boolean =>
+  Object.keys(options.fetch?.headers ?? {}).length > 0;
+
+/** The field data of a page that answered, when the audit asks for it. */
+const pageFieldData = async (
+  url: string,
+  response: ResponseInfo,
+  options: AuditOptions
+): Promise<FieldData | NoFieldData | undefined> => {
+  const fieldOptions = fieldDataOptions(options.fieldData);
+
+  if (!(fieldOptions && answeredOk(response))) {
+    return undefined;
+  }
+
+  options.onProgress?.({
+    phase: "field-data",
+    message: `Asking the Chrome UX Report for real-user Core Web Vitals of ${url}`,
+  });
+
+  return await fieldDataForPage(url, fieldOptions, sendsHeaders(options));
+};
+
+/** The field data of a crawl's first pages, by URL, when the audit asks for it. */
+const crawlFieldData = async (
+  result: CrawlResult,
+  options: CrawlOptions
+): Promise<Map<string, FieldData | NoFieldData> | undefined> => {
+  const fieldOptions = fieldDataOptions(options.fieldData);
+
+  if (!fieldOptions) {
+    return undefined;
+  }
+
+  options.onProgress?.({
+    phase: "field-data",
+    message: "Asking the Chrome UX Report for real-user Core Web Vitals",
+  });
+
+  return await fieldDataForCrawl(
+    result.records,
+    fieldOptions,
+    sendsHeaders(options)
+  );
+};
 
 // The raw HTML is not kept on the audit (too large); re-fetch it for the render comparison.
 const rawHtmlFor = async (
@@ -415,7 +516,8 @@ const enrichPage = async (
 const auditRecord = (
   record: PageRecord,
   source: PageSource,
-  options: CrawlOptions
+  options: CrawlOptions,
+  fieldData: FieldData | NoFieldData | undefined
 ): PageAudit => {
   const thresholds = { ...DEFAULT_THRESHOLDS, ...options.thresholds };
 
@@ -427,6 +529,7 @@ const auditRecord = (
       keyword: options.keyword,
       thresholds,
       depth: record.depth,
+      fieldData: isFieldRecord(fieldData) ? fieldData : undefined,
     },
     ruleFilter(options)
   );
@@ -452,6 +555,10 @@ const auditRecord = (
 
   if (record.response) {
     audit.response = record.response;
+  }
+
+  if (fieldData) {
+    audit.fieldData = fieldData;
   }
 
   audit.score = pageScore(audit.counts);
@@ -524,7 +631,8 @@ const buildSiteAudit = (
   result: CrawlResult,
   source: "crawl" | "directory",
   target: string,
-  options: CrawlOptions
+  options: CrawlOptions,
+  fieldData?: ReadonlyMap<string, FieldData | NoFieldData>
 ): SiteAudit => {
   options.onProgress?.({
     phase: "rules",
@@ -534,7 +642,12 @@ const buildSiteAudit = (
   const thresholds = { ...DEFAULT_THRESHOLDS, ...options.thresholds };
 
   const pages = result.records.map((record) =>
-    auditRecord(record, source === "directory" ? "file" : "url", options)
+    auditRecord(
+      record,
+      source === "directory" ? "file" : "url",
+      options,
+      fieldData?.get(record.url)
+    )
   );
 
   let siteFindings = runSiteRules({
@@ -626,6 +739,7 @@ const auditHtmlPage = (
       keyword: options.keyword,
       thresholds,
       depth: input.depth,
+      fieldData: isFieldRecord(input.fieldData) ? input.fieldData : undefined,
     },
     ruleFilter(options)
   );
@@ -656,6 +770,10 @@ const auditHtmlPage = (
     audit.depth = input.depth;
   }
 
+  if (input.fieldData) {
+    audit.fieldData = input.fieldData;
+  }
+
   audit.score = pageScore(audit.counts);
 
   return audit;
@@ -678,7 +796,7 @@ export const auditUrl = async (
   url: string,
   given: AuditOptions = {}
 ): Promise<PageAudit> => {
-  const input = checkOptions(given);
+  const input = withFieldData(checkOptions(given));
 
   // The user's headers are for this URL's origin, whatever it redirects to.
   const options: AuditOptions = input.fetch
@@ -690,7 +808,15 @@ export const auditUrl = async (
 
   const audit = auditHtmlPage(
     res.body ?? "",
-    { url: res.finalUrl, response, source: "url", target: url },
+    {
+      url: res.finalUrl,
+      response,
+      source: "url",
+      target: url,
+      fieldData: res.error
+        ? undefined
+        : await pageFieldData(res.finalUrl, response, options),
+    },
     options
   );
 
@@ -776,7 +902,14 @@ export const auditCrawled = async (
   startUrl: string,
   options: CrawlOptions
 ): Promise<{ site: SiteAudit; start: PageAudit | null }> => {
-  const site = buildSiteAudit(result, "crawl", startUrl, options);
+  const site = buildSiteAudit(
+    result,
+    "crawl",
+    startUrl,
+    options,
+    await crawlFieldData(result, options)
+  );
+
   // Render/Lighthouse are expensive: apply them to the start page only.
   const startPage = site.pages.find((p) => p.depth === 0) ?? site.pages[0];
 
@@ -800,7 +933,7 @@ export const auditSite = async (
   startUrl: string,
   given: CrawlOptions = {}
 ): Promise<SiteAudit> => {
-  const options = checkOptions(given);
+  const options = withFieldData(checkOptions(given));
   const result = await crawlSite(startUrl, seoCrawlOptions(options));
   const { site } = await auditCrawled(result, startUrl, options);
 

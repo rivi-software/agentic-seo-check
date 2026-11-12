@@ -29,7 +29,8 @@ import type { HostedCall, HostedCallEnd } from "../../../src/mcp.js";
 import { inRun, reportRun, reportTask } from "../analytics.js";
 import type { AnalyticsEnv, FormRun } from "../analytics.js";
 import { callerOf } from "../callers.js";
-import { hostedProfile } from "../limits.js";
+import { cruxOptions } from "../crux.js";
+import { hostedProfile, SITE_ORIGIN } from "../limits.js";
 import type { CallRecord, LimitsEnv } from "../limits.js";
 import type { FailureKind, HomeState } from "./home.js";
 import { renderReport } from "./report.js";
@@ -174,14 +175,17 @@ const shareFor = async (
   return link ? shareMenu(link) : "";
 };
 
-/** The two audits of the page `target`, as a report. */
+/** The two audits of the page `target`, as a report, with its field data when the site has a key. */
 const runAudits = async (
   target: URL,
   fetchOptions: FetchOptions,
-  env: ShareEnv
+  env: SiteEnv
 ): Promise<string> => {
   const [seo, aeo] = await Promise.all([
-    auditUrl(target.href, { fetch: fetchOptions }),
+    auditUrl(target.href, {
+      fetch: fetchOptions,
+      fieldData: cruxOptions(env, SITE_ORIGIN),
+    }),
     auditAeoUrl(target.href, { fetch: fetchOptions }),
   ]);
 
@@ -292,7 +296,7 @@ const runCrawl = async (
   typed: string,
   fetchOptions: FetchOptions,
   run: Run,
-  env: ShareEnv
+  env: SiteEnv
 ): Promise<AuditAnswer> => {
   const feed = progressFeed();
 
@@ -302,6 +306,7 @@ const runCrawl = async (
       const audits = await auditSiteBoth(target.href, {
         ...SITE_CRAWL,
         fetch: fetchOptions,
+        fieldData: cruxOptions(env, SITE_ORIGIN),
         onProgress: feed.add,
       });
 

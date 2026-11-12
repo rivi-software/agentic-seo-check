@@ -358,6 +358,11 @@ const KEEPS: [iconName: IconName, title: string, text: string][] = [
     "Visits, counted",
     "PostHog (EU) counts visits, actions and our own errors, never the address you audited. A cookie only if you accept one.",
   ],
+  [
+    "globe",
+    "The address, to Google",
+    "For the speed of real visits, the page's address goes to Google's Chrome UX Report, and nothing else of the run.",
+  ],
 ];
 
 const DESCRIPTION = `Audit a page or a whole site for search engines and AI answer engines, free. ${PRODUCT_NAME} gives each finding the exact fix, for you or your coding agent.`;

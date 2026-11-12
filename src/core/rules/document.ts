@@ -1,4 +1,4 @@
-import type { ExtractedPage } from "../types.js";
+import type { ExtractedPage, FixEdit } from "../types.js";
 import { addHtml, escapeAttribute, setAttributeEdit, slot } from "./fix.js";
 import { defineRule, GOOGLE_DOCS } from "./rule.js";
 
@@ -8,6 +8,25 @@ const VIEWPORT = 'head > meta[name="viewport"]';
 
 const VIEWPORT_CODE =
   '<meta name="viewport" content="width=device-width, initial-scale=1">';
+
+/**
+ * The viewport a page without one needs: content for an empty viewport tag, else the tag in <head>.
+ * Null when the page has a viewport.
+ */
+export const viewportEdit = (page: ExtractedPage): FixEdit | null => {
+  if (page.viewport) {
+    return null;
+  }
+
+  return page.markup.viewport
+    ? setAttributeEdit(
+        page.markup.viewport,
+        VIEWPORT,
+        "content",
+        "width=device-width, initial-scale=1"
+      )
+    : addHtml("head", VIEWPORT_CODE);
+};
 
 /** What the page itself says about its language, for the agent to confirm. */
 const languageHint = (page: ExtractedPage): string => {
@@ -110,23 +129,16 @@ export const documentRules = [
         'Add <meta name="viewport" content="width=device-width, initial-scale=1"> to <head>. Google indexes the mobile version of pages first.',
       docs: GOOGLE_DOCS.mobile,
     },
-    ({ page }, make) =>
-      page.viewport
-        ? null
-        : make("Page has no viewport meta tag.", {
-            // An empty viewport tag gets its content; with none, the tag goes into <head>.
-            fix: [
-              page.markup.viewport
-                ? setAttributeEdit(
-                    page.markup.viewport,
-                    VIEWPORT,
-                    "content",
-                    "width=device-width, initial-scale=1"
-                  )
-                : addHtml("head", VIEWPORT_CODE),
-            ],
+    ({ page }, make) => {
+      const edit = viewportEdit(page);
+
+      return edit
+        ? make("Page has no viewport meta tag.", {
+            fix: [edit],
             selector: VIEWPORT,
           })
+        : null;
+    }
   ),
   defineRule(
     {

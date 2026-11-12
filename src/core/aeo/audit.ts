@@ -21,6 +21,7 @@ import {
   toResponseInfo,
 } from "../fetch.js";
 import type { FetchOptions } from "../fetch.js";
+import { fieldDataOptions } from "../field-data.js";
 import { extractPage } from "../html/extract.js";
 import {
   assignIds,
@@ -673,6 +674,7 @@ export type SiteAuditsOptions = Pick<
   | "includeInfo"
   | "pageDetail"
   | "fetch"
+  | "fieldData"
   | "onProgress"
 >;
 
@@ -698,7 +700,12 @@ export const auditSiteBoth = async (
   startUrl: string,
   input: SiteAuditsOptions = {}
 ): Promise<SiteAudits> => {
-  const options = headersFor(input, startUrl);
+  // A key the field data needs is read before the crawl, so its absence fails the run at once.
+  const options = headersFor(
+    { ...input, fieldData: fieldDataOptions(input.fieldData) },
+    startUrl
+  );
+
   const result = await crawlSite(startUrl, seoCrawlOptions(options));
   const seo = await auditCrawled(result, startUrl, options);
 

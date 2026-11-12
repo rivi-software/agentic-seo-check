@@ -1,6 +1,6 @@
 import { isHomePage } from "../aeo/page.js";
 import { seesContentEncoding } from "../fetch.js";
-import type { FixEdit, ImageInfo } from "../types.js";
+import type { ExtractedPage, FixEdit, ImageInfo } from "../types.js";
 import { isLocalHost } from "./canonical.js";
 import {
   addEdit,
@@ -22,7 +22,7 @@ const imageAt = (image: ImageInfo): string =>
  * The edit that takes loading="lazy" off an image and, for the main image, asks the browser to
  * fetch it first.
  */
-const eagerEdit = (image: ImageInfo, priority: boolean): FixEdit => {
+export const eagerEdit = (image: ImageInfo, priority: boolean): FixEdit => {
   const withoutLazy = withoutAttribute(image.tag, "loading");
 
   const rewritten =
@@ -79,7 +79,6 @@ const isLazy = (image: ImageInfo): boolean =>
 const isFixedFormat = (src: string): boolean =>
   /^data:/iu.test(src) || /\.(?:svg|gif)(?:[?#]|$)/iu.test(src);
 
-/** defer on a script in <head>, which the page's tags do not quote, so the attribute is added at it. */
 /** `defer` on a blocking script, written into its tag as the page writes it. */
 const deferEdit = (src: string, tag: string | undefined): FixEdit =>
   setAttributeEdit(
@@ -89,6 +88,30 @@ const deferEdit = (src: string, tag: string | undefined): FixEdit =>
     true,
     "Only when no inline script further down calls this one before the page has loaded (a jQuery plugin set-up, for instance), and it is not a consent manager or A/B test that must run before anything renders; async suits independent scripts such as analytics."
   );
+
+/** `defer` on each script in <head> that blocks the parser. */
+export const deferEdits = (page: ExtractedPage): FixEdit[] =>
+  page.head.blockingScripts.map((src, i) =>
+    deferEdit(src, page.head.sources.blockingScripts[i])
+  );
+
+/**
+ * The first large image of the page, likely in the first screen and often the Largest Contentful
+ * Paint, when it has loading="lazy": null otherwise. An image in a <template> is not on the page
+ * until a script stamps it out.
+ */
+export const lazyFirstImage = (page: ExtractedPage): ImageInfo | null => {
+  const first = page.images.find(
+    (i) => i.src && i.wordsBefore !== null && !isVector(i.src) && !isSmall(i)
+  );
+
+  return first &&
+    first.wordsBefore !== null &&
+    isLazy(first) &&
+    first.wordsBefore < ABOVE_FOLD_WORDS
+    ? first
+    : null;
+};
 
 /**
  * srcset and sizes for a large image: the file it has at its own width, plus smaller copies only
@@ -132,9 +155,7 @@ export const loadingRules = [
         ? make(
             `${scripts.length} script(s) in <head> block rendering: ${cap(scripts, 3).join(", ")}.`,
             {
-              fix: scripts.map((src, i) =>
-                deferEdit(src, page.head.sources.blockingScripts[i])
-              ),
+              fix: deferEdits(page),
               selector: "head > script[src]:not([async]):not([defer])",
               evidence: { count: scripts.length, scripts: cap(scripts) },
             }
@@ -214,24 +235,15 @@ export const loadingRules = [
         );
       }
 
-      // An image in a <template> is not on the page until a script stamps it out.
-      const first = page.images.find(
-        (i) =>
-          i.src && i.wordsBefore !== null && !isVector(i.src) && !isSmall(i)
-      );
+      const first = lazyFirstImage(page);
 
-      const wordsBefore = first?.wordsBefore ?? null;
-
-      return first &&
-        wordsBefore !== null &&
-        isLazy(first) &&
-        wordsBefore < ABOVE_FOLD_WORDS
+      return first
         ? make(
-            `The first image (${first.src}) comes after ${wordsBefore} words of text and has loading="lazy".`,
+            `The first image (${first.src}) comes after ${first.wordsBefore} words of text and has loading="lazy".`,
             {
               fix: [eagerEdit(first, true)],
               selector: 'img[loading="lazy"]',
-              evidence: { src: first.src, wordsBefore },
+              evidence: { src: first.src, wordsBefore: first.wordsBefore },
             }
           )
         : null;

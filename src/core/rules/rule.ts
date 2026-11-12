@@ -1,5 +1,6 @@
 import type {
   ExtractedPage,
+  FieldData,
   Finding,
   FixEdit,
   PageSource,
@@ -16,6 +17,8 @@ export interface PageContext {
   keyword?: string;
   thresholds: Thresholds;
   depth?: number;
+  /** The page's record in the Chrome UX Report (`fieldData`), its origin's when it has none. */
+  fieldData?: FieldData;
 }
 
 export interface Rule {

@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { assert, describe, expect, it } from "vitest";
+import { assert, describe, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 
 import { REPOSITORY_URL, WEBSITE_URL } from "../src/brand.js";
@@ -242,6 +242,32 @@ describe("MCP server", () => {
       },
       findings: [],
     });
+  });
+
+  it("offers field data on the page and crawl tools, and fails without a key (issue #130)", async () => {
+    vi.stubEnv("CRUX_API_KEY", "");
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+
+    const withFieldData = tools.flatMap((t) =>
+      "fieldData" in (t.inputSchema.properties ?? {}) ? [t.name] : []
+    );
+
+    const result = await client.callTool({
+      name: "seo_audit_page",
+      arguments: { url: "https://www.example.com/", fieldData: true },
+    });
+
+    expect(withFieldData.toSorted()).toStrictEqual([
+      "seo_audit_page",
+      "seo_crawl_site",
+    ]);
+    expect(result.isError).toBeTruthy();
+    expect(firstText(result)).toContain("CRUX_API_KEY");
   });
 
   it("reports errors as isError results", async () => {

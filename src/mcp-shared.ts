@@ -8,6 +8,7 @@ import { compactAudit } from "./core/audit.js";
 import type { CrawlOptions } from "./core/audit.js";
 import { ExpectedError } from "./core/errors.js";
 import { RequestRefusedError } from "./core/fetch.js";
+import { FIELD_DATA_PAGES } from "./core/field-data.js";
 import { baselineFromIds } from "./core/recheck.js";
 import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
 import { ALL_RULES } from "./core/rules/index.js";
@@ -28,6 +29,18 @@ export const detail = z
   .describe(
     "compact trims evidence lists and bulky fields to save tokens (default); full returns everything."
   );
+
+/**
+ * `fieldData` on seo_audit_page and seo_crawl_site (issue #130): the same switch on both servers,
+ * whose descriptions say where the API key comes from.
+ */
+export const fieldDataOption = (key: string) =>
+  z
+    .boolean()
+    .default(false)
+    .describe(
+      `With \`url\`: also read real-user Core Web Vitals from the Chrome UX Report (LCP, INP, CLS, FCP and TTFB at the 75th percentile, Chrome on phones, the last 28 days), for the URL or, when it has too few visits, its origin; a crawl asks for its first ${FIELD_DATA_PAGES} pages. Adds \`fieldData\` to each page audit and perf.field-* findings with Google's thresholds. A page without a record gets \`fieldData.reason: "no-data"\` and no finding: few visits say nothing against it. ${key}`
+    );
 
 export const commonOptions = {
   keyword: z

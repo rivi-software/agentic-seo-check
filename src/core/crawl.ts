@@ -50,6 +50,7 @@ export interface ProgressEvent {
     | "rules"
     | "render"
     | "lighthouse"
+    | "field-data"
     | "llms-txt"
     | "ai-bots";
   message: string;

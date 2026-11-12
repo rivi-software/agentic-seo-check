@@ -93,14 +93,20 @@ export const describedEdit = (title: string, description: string): FixEdit =>
     `${title}: ${description}`
   );
 
-/** HTML a CDN may cache: the fix for a slow server answer when the page is the same for everyone. */
-export const cacheHtmlEdit = (ms: number | null): FixEdit =>
+/**
+ * HTML a CDN may cache: the fix for a slow server answer when the page is the same for everyone.
+ * `measured` says who waited `ms` for the first byte: Lighthouse, or real visits (field data).
+ */
+export const cacheHtmlEdit = (
+  ms: number | null,
+  measured: "lighthouse" | "field" = "lighthouse"
+): FixEdit =>
   addEdit(
     "http",
     "Cache-Control",
     "Cache-Control: public, max-age=0, s-maxage=300, stale-while-revalidate=86400",
     {
-      write: `${ms === null ? "The server answers slowly." : `Lighthouse waited ${Math.round(ms)} ms for the first byte of the HTML.`} This header lets a CDN serve the HTML from its cache for 5 minutes and refresh it in the background; replace the Cache-Control the HTML has now. Use it only when the HTML is the same for every visitor, never on pages that show a signed-in user's data; for those, speed up the server work for this URL instead (slow queries, uncached API calls).`,
+      write: `${ms === null ? "The server answers slowly." : `${measured === "field" ? "Real visits on phones wait" : "Lighthouse waited"} ${Math.round(ms)} ms for the first byte of the HTML${measured === "field" ? " at the 75th percentile" : ""}.`} This header lets a CDN serve the HTML from its cache for 5 minutes and refresh it in the background; replace the Cache-Control the HTML has now. Use it only when the HTML is the same for every visitor, never on pages that show a signed-in user's data; for those, speed up the server work for this URL instead (slow queries, uncached API calls).`,
     }
   );
 

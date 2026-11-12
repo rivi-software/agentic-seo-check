@@ -14,6 +14,13 @@
 import { MAKER, PRODUCT_NAME, WEBSITE_URL } from "../../../src/brand.js";
 import { compactAeoAudit } from "../../../src/core/aeo/audit.js";
 import { compactAudit } from "../../../src/core/audit.js";
+import {
+  FIELD_LABELS,
+  FIELD_METRICS,
+  fieldBand,
+  fieldValue,
+} from "../../../src/core/field-data.js";
+import type { FieldBand } from "../../../src/core/field-data.js";
 import { HOSTED_LIMITS } from "../../../src/core/hosted.js";
 import {
   ACTION_LABEL,
@@ -513,6 +520,46 @@ export const seoFacts = (audit: PageAudit): string => {
   ])}`;
 };
 
+/** The tone of each rating Google gives a metric of the Chrome UX Report. */
+const FIELD_TONE: Record<FieldBand, Tone> = {
+  good: "good",
+  "needs improvement": "warn",
+  poor: "bad",
+};
+
+/**
+ * Real-user Core Web Vitals of a page (issue #130): each 75th percentile as a tile in its rating's
+ * tone, and whose visits they are; or why there are none. Nothing when the audit did not ask.
+ */
+export const fieldFacts = (field: PageAudit["fieldData"]): string => {
+  if (!field) {
+    return "";
+  }
+
+  if (field.source === null) {
+    return `<p>${esc(field.message)}</p>`;
+  }
+
+  return `${facts(
+    "tiles",
+    FIELD_METRICS.map((key): Fact => {
+      const metric = field[key];
+
+      return [
+        FIELD_LABELS[key],
+        metric ? fieldValue(key, metric.p75) : null,
+        metric ? FIELD_TONE[fieldBand(key, metric.p75)] : null,
+      ];
+    })
+  )}<p>The 75th percentile of real Chrome visits on phones ${field.source === "url" ? "to this page" : "to the whole site, as this page has too few of its own"}, ${esc(field.period.firstDate)} to ${esc(field.period.lastDate)}, from the Chrome UX Report, which Google ranks on.</p>`;
+};
+
+/** The card of a page's field data, which the overview shows when the audit has some. */
+export const fieldCard = (field: PageAudit["fieldData"]): string =>
+  cardRow([
+    overviewPart("Real visits on phones", fieldFacts(field), "field-data"),
+  ]);
+
 /** The tone of each value the AEO summary's states take. */
 const TONES = {
   found: "good",
@@ -712,6 +759,7 @@ export const renderReport = (
           overviewPart("The page", seoFacts(seo)),
           overviewPart("For AI answer engines", aeoFacts(aeo, "page")),
         ]),
+        fieldCard(seo.fieldData),
       ].join("\n"),
     },
     {
