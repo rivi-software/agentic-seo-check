@@ -16,6 +16,7 @@ import { esc, scriptSafe } from "../site/html.js";
 import { GITHUB_MARK, icon, MARK } from "./icons.js";
 import { cardAlt, OG_IMAGE } from "./og.js";
 import type { ShareCard } from "./og.js";
+import { productHuntBadge } from "./product-hunt.js";
 import { FONT_PATHS, STYLE } from "./style.js";
 
 export const ABUSE_URL = "https://help.rivi.software/contact";
@@ -39,6 +40,10 @@ export const CLAUDE_DIRECTORY_URL =
  */
 export const directoryBadge = (): string =>
   `<a class="badge" href="${CLAUDE_DIRECTORY_URL}"><span class="badge-key">Claude Directory</span><span class="badge-value">${icon("check")}Listed</span></a>`;
+
+/** Where the tool is listed, side by side: the Claude Directory and Product Hunt. */
+export const listingBadges = (): string =>
+  `<div class="badges">${directoryBadge()}${productHuntBadge()}</div>`;
 
 /** RIVI Software's page of the code it publishes, which lists this project. */
 const OPEN_SOURCE_URL = `${MAKER_URL}/open-source`;

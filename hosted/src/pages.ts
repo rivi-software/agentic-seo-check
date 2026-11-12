@@ -16,8 +16,8 @@ import { scoreRing, severityChip } from "./site/report.js";
 import {
   ABUSE_URL,
   CLAUDE_DIRECTORY_URL,
-  directoryBadge,
   frame,
+  listingBadges,
   PRIVACY_URL,
   publisher,
 } from "./ui/frame.js";
@@ -212,7 +212,7 @@ export const landingPage = (daily: DailyLimits): string =>
 <p class="endpoint-label">The server's address</p>
 ${install(MCP_URL, "mcp_url")}
 <ul class="endpoint-facts"><li class="chip">${icon("check")}MCP over Streamable HTTP</li><li class="chip">${icon("check")}Read-only audits</li><li class="chip">${icon("check")}Obeys robots.txt</li></ul>
-${directoryBadge()}
+${listingBadges()}
 </div>
 </div>
 ${CHAT}
