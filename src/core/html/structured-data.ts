@@ -1,7 +1,14 @@
 import { isTag } from "domhandler";
 
 import type { StructuredDataError, StructuredDataItem } from "../types.js";
-import { attr, childElements, hasAttr, queryAll, text } from "./dom.js";
+import {
+  attr,
+  childElements,
+  detached,
+  hasAttr,
+  queryAll,
+  text,
+} from "./dom.js";
 import type { Document, Element } from "./dom.js";
 import { collapseWhitespace } from "./text.js";
 
@@ -355,8 +362,9 @@ export const extractStructuredData = (
     }
 
     script += 1;
-    // Script text is raw text in HTML, so this is the source as written.
-    const written = text(el).slice(0, MAX_SCRIPT_TEXT);
+    // Script text is raw text in HTML, so this is the source as written. Kept on every item and
+    // error, so a copy: a slice would keep the whole script alive.
+    const written = detached(text(el).slice(0, MAX_SCRIPT_TEXT));
     const raw = text(el).trim();
 
     if (!raw) {
@@ -379,7 +387,7 @@ export const extractStructuredData = (
       errors.push({
         source: "json-ld",
         message: `Invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
-        snippet: raw.slice(0, 200),
+        snippet: detached(raw.slice(0, 200)),
         script,
         text: written,
       });

@@ -385,3 +385,43 @@ export const extractPage = (
     answer: extractAnswerSignals(doc, bodyText, html),
   };
 };
+
+/**
+ * Gives each page's links the strings of an equal link an earlier page had, for an audit that
+ * keeps many pages' extracts (a crawl, a directory). A site repeats its menu and footer on every
+ * page, and the site rules read every page's links at the end: 100 pages with an 800-link menu
+ * kept 80,000 copies of the same few strings, the largest part of what ran the hosted Worker out
+ * of memory. Only strings are shared, never a link, so each page still has links of its own.
+ */
+export const linkStringSharer = (): ((links: LinkInfo[]) => void) => {
+  /** The first link with each `outer`, the whole `<a>` element as the page writes it. */
+  const seen = new Map<string, LinkInfo>();
+
+  return (links) => {
+    for (const link of links) {
+      const known = seen.get(link.outer);
+
+      if (!known) {
+        seen.set(link.outer, link);
+        continue;
+      }
+
+      // `outer` is cut at 500 characters, and `url` depends on the page's address: share the
+      // strings only when every one of them is equal.
+      if (
+        known.href === link.href &&
+        known.url === link.url &&
+        known.text === link.text &&
+        known.rel === link.rel &&
+        known.tag === link.tag
+      ) {
+        link.href = known.href;
+        link.url = known.url;
+        link.text = known.text;
+        link.rel = known.rel;
+        link.tag = known.tag;
+        link.outer = known.outer;
+      }
+    }
+  };
+};

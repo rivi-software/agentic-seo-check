@@ -122,11 +122,22 @@ export const parseDocument = (html: string): Document =>
 /** Longest quote of the source a fix carries; a page with a 50 KB data: URI in a tag gets a prefix. */
 export const MAX_QUOTE_CHARS = 500;
 
-/** `text` cut to `MAX_QUOTE_CHARS`, ending in "…" when cut. */
+/**
+ * `text` as a string of its own. V8 makes a slice of a long string a view into it, so a tag quoted
+ * from a page's HTML would keep the whole page alive for as long as the quote: a crawl keeps every
+ * page's quotes to the end, and 100 large pages ran the hosted Worker out of memory that way.
+ * Joining a character on flattens the text into a new string, and the slice after it is a view
+ * into that copy alone.
+ */
+export const detached = (text: string): string => ` ${text}`.slice(1);
+
+/** `text` cut to `MAX_QUOTE_CHARS`, ending in "…" when cut, as a string of its own (`detached`). */
 export const quote = (text: string): string =>
-  text.length > MAX_QUOTE_CHARS
-    ? `${text.slice(0, MAX_QUOTE_CHARS - 1)}…`
-    : text;
+  detached(
+    text.length > MAX_QUOTE_CHARS
+      ? `${text.slice(0, MAX_QUOTE_CHARS - 1)}…`
+      : text
+  );
 
 /**
  * The element as `html` writes it: its start tag (`start`) or the whole element (`outer`), cut to
