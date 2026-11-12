@@ -1,0 +1,122 @@
+name: CI
+
+# Runs on Depot CI (issue #127), which reports each job to GitHub as a check from the Depot Code
+# Access app, named `CI / <job>`: the main ruleset (.github/rulesets/main.json) requires
+# `CI / verify` from that app. Its runs and logs are in Depot's dashboard, linked from each check,
+# not in the Actions tab. Depot CI runs nothing for a pull request from a fork: a maintainer reads
+# it, then recreates it from a branch here (CONTRIBUTING.md, "Pull requests from forks"). GitHub's
+# `workflows` permission does not guard this file (CONTRIBUTING.md, "CI").
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# A push to a pull request cancels the run before it. On main, every commit gets its own run, so a
+# red main names the commit that broke it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+# Depot bills a runner by the second, times its CPUs: every job takes the smallest, 2 CPUs. The test
+# suite, the longest step, runs in about the same time on 2 workers as on 10. A job that takes many
+# times its usual minute has hung.
+jobs:
+  # What gives the same answer on every Node version, once, on the one we develop on
+  # (.node-version): the format, the lint, the typecheck, and the hosted server and the website
+  # (hosted/), typechecked, bundled as a deploy bundles them, so a Node-only import fails here
+  # rather than in the deploy, and tested in workerd.
+  checks:
+    name: Checks and the hosted server
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          # The pnpm store, through Depot Cache, which every branch shares. No job here holds a
+          # secret, and its token only reads.
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Format
+        run: pnpm run format:check
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run check
+
+      - name: Typecheck, bundle and test the Workers
+        run: pnpm run hosted:verify
+
+  # What the Node version changes: the tests, and the package as npm gets it, run on each version
+  # the package supports. It supports Node 22.19 and later, until 22's end of life on 2027-04-30;
+  # then the floor moves to 24 (here, in `engines` and in @types/node).
+  node:
+    name: Node ${{ matrix.node }}
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24", "26"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Check the packed package
+        run: pnpm run check:package
+
+  # The check the main ruleset requires, `CI / verify`. It passes only when the checks and every
+  # Node version passed, so the jobs can change without changing the ruleset. It runs even when one
+  # of them failed or was cancelled: a skipped check would count as passing.
+  verify:
+    name: verify
+    if: always()
+    needs: [checks, node]
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: The checks and every Node version passed
+        env:
+          CHECKS: ${{ needs.checks.result }}
+          NODE: ${{ needs.node.result }}
+        run: |
+          echo "The checks and the hosted server: $CHECKS; the Node versions together: $NODE"
+          test "$CHECKS" = success && test "$NODE" = success
