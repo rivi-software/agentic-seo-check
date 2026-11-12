@@ -44,6 +44,13 @@ const POSTHOG = "https://posthog.test";
 const CRUX = "https://chromeuxreport.googleapis.com/v1/records:queryRecord";
 const CRUX_KEY = "test-crux-key-not-secret";
 
+/** Product Hunt's badge, as the Workers fetch it to serve it from their own hostnames. */
+const PRODUCT_HUNT_BADGE =
+  "https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1313023&theme=dark";
+
+const PRODUCT_HUNT_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="250" height="54"><text>12</text></svg>';
+
 /** The queries the Workers sent the Chrome UX Report: the URL or origin each asked for. */
 const cruxQueries: string[] = [];
 
@@ -355,6 +362,13 @@ const start = (
           cruxQueries.push(query.url ?? query.origin ?? "");
 
           return cruxAnswer(query);
+        }
+
+        // Product Hunt's badge, which no audit asks for.
+        if (request.url === PRODUCT_HUNT_BADGE) {
+          return new Response(PRODUCT_HUNT_SVG, {
+            headers: { "content-type": "image/svg+xml" },
+          });
         }
 
         // Turnstile, as the audit form asks it: only the token "a-person" passes.
@@ -780,6 +794,7 @@ describe("the hosted Worker in workerd", () => {
           "/site.js",
           "/ph.js",
           "/og.png",
+          "/product-hunt.svg",
           "/fonts/bricolage-grotesque-latin.woff2",
           "/fonts/geist-latin.woff2",
           "/fonts/geist-mono-latin.woff2",
@@ -800,11 +815,33 @@ describe("the hosted Worker in workerd", () => {
         ["/site.js", 200, "text/javascript; charset=utf-8"],
         ["/ph.js", 200, "text/javascript; charset=utf-8"],
         ["/og.png", 200, "image/png"],
+        ["/product-hunt.svg", 200, "image/svg+xml"],
         ["/fonts/bricolage-grotesque-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-mono-latin.woff2", 200, "font/woff2"],
         ["/nope", 404, "text/html; charset=utf-8"],
       ]);
+    });
+
+    it("serve Product Hunt's badge on both hostnames, as the Worker fetched it", async () => {
+      const badges = await Promise.all([
+        fetchRead(worker, `${ORIGIN}/product-hunt.svg`),
+        fetchRead(website, `${SITE}/product-hunt.svg`),
+      ]);
+
+      expect(
+        badges.map(({ res, text }) => [
+          text,
+          res.headers.get("content-security-policy"),
+        ])
+      ).toStrictEqual(
+        Array.from({ length: 2 }, () => [
+          PRODUCT_HUNT_SVG,
+          "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        ])
+      );
+      // A request to Product Hunt is no site's: not in the audits' requests.
+      expect(requests.map((r) => r.url)).not.toContain(PRODUCT_HUNT_BADGE);
     });
 
     it("answer browsers' preflight and leave GET /mcp to POST", async () => {
@@ -938,6 +975,7 @@ describe("the hosted Worker in workerd", () => {
           "/site.js",
           "/favicon.svg",
           "/og.png",
+          "/product-hunt.svg",
           "/fonts/bricolage-grotesque-latin.woff2",
           "/fonts/geist-latin.woff2",
           "/fonts/geist-mono-latin.woff2",
@@ -959,6 +997,7 @@ describe("the hosted Worker in workerd", () => {
         ["/site.js", 200, "text/javascript; charset=utf-8"],
         ["/favicon.svg", 200, "image/svg+xml"],
         ["/og.png", 200, "image/png"],
+        ["/product-hunt.svg", 200, "image/svg+xml"],
         ["/fonts/bricolage-grotesque-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-mono-latin.woff2", 200, "font/woff2"],

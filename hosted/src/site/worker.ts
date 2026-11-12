@@ -8,6 +8,7 @@
 import { onCaughtError } from "../../../src/core/errors.js";
 import { hearCaughtError, inRequest, reportError } from "../analytics.js";
 import type { ErrorRoute } from "../analytics.js";
+import { PRODUCT_HUNT_BADGE_PATH } from "../ui/product-hunt.js";
 import type { SiteEnv } from "./audit.js";
 import { siteRoute } from "./routes.js";
 
@@ -25,6 +26,7 @@ const KNOWN_PATHS = new Set([
   "/site.js",
   "/ph.js",
   "/favicon.svg",
+  PRODUCT_HUNT_BADGE_PATH,
 ]);
 
 /** Where a request went, as an error's event names it: never its address, nor a share link's result. */

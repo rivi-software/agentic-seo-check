@@ -24,6 +24,10 @@ import {
 } from "../src/site/site-report.ts";
 import { CLAUDE_DIRECTORY_URL } from "../src/ui/frame.ts";
 import { OG_IMAGE, SERVER_CARD, SITE_CARD } from "../src/ui/og.ts";
+import {
+  PRODUCT_HUNT_BADGE_PATH,
+  PRODUCT_HUNT_URL,
+} from "../src/ui/product-hunt.ts";
 import { FONT_PATHS, STYLE } from "../src/ui/style.ts";
 
 /** The daily limits as wrangler.jsonc sets them. */
@@ -234,6 +238,23 @@ describe("the website's pages", () => {
     }
 
     expect(LLMS_TXT).toContain(`](${CLAUDE_DIRECTORY_URL})`);
+  });
+
+  it("show Product Hunt's badge beside the Claude Directory's, from the page's own hostname", () => {
+    const link = `<a class="badge-image" href="${PRODUCT_HUNT_URL.replaceAll("&", "&amp;")}" target="_blank" rel="noopener noreferrer"><img alt="Agentic SEO Check - SEO and AEO audits with the fix for every finding | Product Hunt" width="250" height="54" src="${PRODUCT_HUNT_BADGE_PATH}"></a>`;
+
+    const shown = [
+      homePage(OPEN),
+      landingPage(DAILY),
+      rulesPage(),
+      crawlerPage(),
+      notFoundPage(),
+    ].map((html) => html.includes(link));
+
+    expect(shown).toStrictEqual([true, true, false, false, false]);
+    expect(homePage(OPEN)).toMatch(
+      /<div class="badges"><a class="badge" [^>]+>.*?<\/a><a class="badge-image" /u
+    );
   });
 });
 

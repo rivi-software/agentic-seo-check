@@ -13,7 +13,7 @@ import {
 import { AEO_RULES, SEO_RULES } from "../../../src/core/rules/index.js";
 import type { Severity } from "../../../src/core/types.js";
 import { ORIGIN as MCP_ORIGIN } from "../limits.js";
-import { directoryBadge, PRIVACY_URL } from "../ui/frame.js";
+import { listingBadges, PRIVACY_URL } from "../ui/frame.js";
 import { GITHUB_MARK, icon } from "../ui/icons.js";
 import type { IconName } from "../ui/icons.js";
 import { esc } from "./html.js";
@@ -474,7 +474,7 @@ ${botChips()}
 <h2 id="cta-title">Audit, fix and check again <span class="hero-accent">from your assistant.</span></h2>
 <p>One address for Claude, ChatGPT, Cursor and VS Code: <code>${MCP_ORIGIN}/mcp</code></p>
 <div class="cta-actions"><a class="btn btn-primary" href="${HOSTED_PAGE}#add">Add it to your assistant${icon("arrow", "arrow")}</a><a class="btn btn-secondary" href="${REPOSITORY_URL}">${GITHUB_MARK}Read the code</a></div>
-${directoryBadge()}
+${listingBadges()}
 </div>
 </div>
 </section>`,
