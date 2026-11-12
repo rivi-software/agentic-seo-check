@@ -1,14 +1,18 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import { text as readAll } from "node:stream/consumers";
+import { fileURLToPath } from "node:url";
 
 import {
   afterAll,
+  afterEach,
   beforeAll,
+  beforeEach,
   describe,
   expect,
   it,
   vi,
-  afterEach,
-  beforeEach,
 } from "vitest";
 
 import { auditAeoHtml, auditAeoSite } from "../src/core/aeo/audit.js";
@@ -415,6 +419,40 @@ describe("the text list of rules", () => {
   });
 });
 
+/**
+ * The CLI from source, run with `args` and its output piped, under the environment's colour
+ * settings `env` adds to; whatever the test runner sets for colour is left out.
+ */
+const runCli = async (
+  args: string[],
+  env: NodeJS.ProcessEnv = {}
+): Promise<{ stdout: string; stderr: string }> => {
+  const rest = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => !["FORCE_COLOR", "NO_COLOR", "CLICOLOR_FORCE"].includes(name)
+    )
+  );
+
+  const child = spawn(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      fileURLToPath(new URL("../src/cli.ts", import.meta.url)),
+      ...args,
+    ],
+    { env: { ...rest, ...env }, stdio: ["ignore", "pipe", "pipe"] }
+  );
+
+  const [stdout, stderr] = await Promise.all([
+    readAll(child.stdout),
+    readAll(child.stderr),
+    once(child, "close"),
+  ]);
+
+  return { stdout, stderr };
+};
+
 describe("the CLI's terminal", () => {
   it("prints text on a terminal and JSON when piped, unless a format or a file decides", () => {
     expect([
@@ -484,6 +522,29 @@ describe("the CLI's terminal", () => {
       textOptionsFor(fakeTerminal({ columns: 200 }), {}).width,
       textOptionsFor(fakeTerminal({ isTTY: false }), {}).width,
     ]).toStrictEqual([72, 100, undefined]);
+  });
+
+  it("writes no escape codes in the help or an error where colour does not show", async () => {
+    const help = await runCli(["audit", "--help"]);
+    const error = await runCli(["audit", "--bogus"]);
+
+    expect(help.stdout).toMatch(/^Usage: agentic-seo-check audit \[options\]/u);
+    expect(help.stdout).toContain("\nExamples:\n  $ agentic-seo-check audit");
+    expect(error.stderr).toMatch(
+      /^error: unknown option '--bogus'\n\nUsage: agentic-seo-check audit/u
+    );
+    expect(`${help.stdout}${error.stderr}`).not.toContain(ESC);
+  });
+
+  it("colours an error in red and the help after it, with FORCE_COLOR", async () => {
+    const { stderr } = await runCli(["audit", "--bogus"], { FORCE_COLOR: "1" });
+
+    expect(stderr).toMatch(
+      new RegExp(
+        `^${ESC}\\[31merror: unknown option '--bogus'${ESC}\\[39m\\n\\n${ESC}\\[1mUsage:${ESC}\\[22m`,
+        "u"
+      )
+    );
   });
 
   describe("the progress line", () => {
