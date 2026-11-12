@@ -3,7 +3,6 @@ import { promises as fs } from "node:fs";
 
 import { Argument, Command, InvalidArgumentError, Option } from "commander";
 
-import { MAKER, MAKER_URL, PRODUCT_NAME, REPOSITORY_URL } from "./brand.js";
 import { auditAeoTarget, compactAeoAudit } from "./core/aeo/audit.js";
 import { auditTarget, compactAudit } from "./core/audit.js";
 import type { CrawlOptions, ProgressEvent } from "./core/audit.js";
@@ -26,7 +25,15 @@ import type { TextOptions } from "./core/report/text.js";
 import { ALL_RULES } from "./core/rules/index.js";
 import { SEVERITY_RANK } from "./core/types.js";
 import type { AeoAudit, Audit, Severity } from "./core/types.js";
+import { errorText, formatHelp, usageHint, withExamples } from "./help.js";
 import { startMcpServer } from "./mcp.js";
+import {
+  announceMcpServer,
+  CLAUDE_CODE_ADD,
+  INSTALLING,
+  installProgress,
+  noRuleMatches,
+} from "./screens.js";
 import {
   localMcpTelemetry,
   noteCliError,
@@ -51,20 +58,12 @@ import { VERSION } from "./version.js";
 
 const program = new Command();
 
-/**
- * The help's styles, always painted: commander takes the codes out again when the help goes where
- * colour does not show (a pipe, `NO_COLOR`).
- */
-const bold = (text: string): string => paint(true, "bold", text);
-const dim = (text: string): string => paint(true, "dim", text);
-const cyan = (text: string): string => paint(true, "cyan", text);
-
 /** Whether stderr shows colour, for the CLI's own lines there. */
 const stderrColor = colorFor(process.stderr);
 
-/** A command's examples, as its help ends with them. */
-const examples = (lines: readonly string[]): string =>
-  `\n${bold("Examples:")}\n${lines.map((line) => `  ${dim("$")} agentic-seo-check ${line}`).join("\n")}`;
+/** Runs of the CLI, for a command's examples. */
+const runs = (lines: readonly string[]): string[] =>
+  lines.map((line) => `agentic-seo-check ${line}`);
 
 const OVERVIEW_EXAMPLES = [
   "audit https://www.example.com/pricing",
@@ -100,6 +99,13 @@ const RULES_EXAMPLES = [
   "rules --category structured-data",
   "rules --rule canonical.multiple",
 ];
+
+const INSTALL_BROWSER_EXAMPLES = [
+  ...runs(["install-browser", "install-browser --with-deps"]),
+  "npx @rivi-software/agentic-seo-check install-browser",
+];
+
+const TELEMETRY_EXAMPLES = ["telemetry", "telemetry disable"];
 
 /** The commands that send a `cli_command` event (issue #57); `mcp` reports its tool calls instead. */
 const TRACKED = new Set(["audit", "crawl", "aeo", "rules"]);
@@ -153,29 +159,21 @@ const watchErrors = (): void => {
   });
 };
 
-program
+withExamples(program, runs(OVERVIEW_EXAMPLES))
   .name("agentic-seo-check")
+  .summary("SEO and AEO analysis for coding agents")
   .description(
-    `${PRODUCT_NAME}: SEO and AEO analysis for coding agents. Audits URLs, static build output or raw HTML for search engines (audit, crawl) and AI answer engines (aeo), and prints machine-readable findings.`
+    "Audits URLs, static build output or raw HTML for search engines (audit, crawl) and AI answer engines (aeo), and prints machine-readable findings."
   )
-  .version(VERSION)
+  .version(VERSION, "-V, --version", "Show the version")
   // Set before the commands are added, which take these from the program.
-  .configureHelp({
-    styleTitle: bold,
-    styleSubcommandText: cyan,
-    styleOptionText: cyan,
-  })
+  .helpOption("-h, --help", "Show this help")
+  .configureHelp({ formatHelp })
   .configureOutput({
     outputError: (text, write) => {
-      write(`${paint(stderrColor, "red", text.trimEnd())}\n`);
+      write(errorText(text, stderrColor));
     },
   })
-  .addHelpText("after", examples(OVERVIEW_EXAMPLES))
-  .addHelpText(
-    "afterAll",
-    dim(`\nMade by ${MAKER} (${MAKER_URL}). Docs and issues: ${REPOSITORY_URL}`)
-  )
-  .showHelpAfterError()
   .hook("preAction", async (_program, action) => {
     // The MCP server's stdout is its connection to the client, whose end is the transport's to handle.
     if (action.name() !== "mcp") {
@@ -203,7 +201,13 @@ const intArg = (value: string): number => {
 /** Which command the options are for: the SEO audit of a target, of a whole site, or the AEO audit. */
 type Mode = "audit" | "crawl" | "aeo";
 
+/**
+ * The options of `audit`, `crawl` and `aeo`, in the groups their help shows: what to crawl, what to
+ * check, what to print, and how to send requests.
+ */
 const addAuditOptions = (cmd: Command, mode: Mode): Command => {
+  cmd.optionsGroup("Crawling");
+
   if (mode !== "crawl") {
     cmd.option(
       "--crawl",
@@ -220,7 +224,24 @@ const addAuditOptions = (cmd: Command, mode: Mode): Command => {
       3
     )
     .option("--concurrency <n>", "Parallel requests while crawling", intArg, 5)
-    .option("--delay <ms>", "Delay between requests per worker", intArg, 0);
+    .option("--delay <ms>", "Delay between requests per worker", intArg, 0)
+    .option("--ignore-robots", "Do not obey robots.txt while crawling")
+    .option(
+      "--include-subdomains",
+      "Treat subdomains as internal when crawling"
+    );
+
+  if (mode !== "aeo") {
+    cmd.option(
+      "--check-external",
+      "Probe external links for 4xx/5xx while crawling"
+    );
+  }
+
+  cmd
+    .option("--include <regex...>", "Only crawl URLs matching these patterns")
+    .option("--exclude <regex...>", "Skip URLs matching these patterns")
+    .optionsGroup("Checks");
 
   if (mode === "aeo") {
     cmd.option(
@@ -245,27 +266,21 @@ const addAuditOptions = (cmd: Command, mode: Mode): Command => {
       );
   }
 
-  cmd
+  return cmd
     .option(
       "--base-url <url>",
       "Origin used for directories, files and stdin HTML (default http://localhost/)"
     )
-    .option("--ignore-robots", "Do not obey robots.txt while crawling")
     .option(
-      "--include-subdomains",
-      "Treat subdomains as internal when crawling"
-    );
-
-  if (mode !== "aeo") {
-    cmd.option(
-      "--check-external",
-      "Probe external links for 4xx/5xx while crawling"
-    );
-  }
-
-  return cmd
-    .option("--include <regex...>", "Only crawl URLs matching these patterns")
-    .option("--exclude <regex...>", "Skip URLs matching these patterns")
+      "--rule <id...>",
+      "Run only these rule ids or categories (space- or comma-separated): re-check the findings a fix was for, or check one category"
+    )
+    .option("--disable <rule...>", "Rule ids or categories to skip")
+    .option(
+      "--baseline <file>",
+      "Compare with an earlier audit saved as JSON: lists the findings since fixed, still open and new"
+    )
+    .optionsGroup("Output")
     .addOption(
       new Option(
         "-f, --format <format>",
@@ -291,22 +306,14 @@ const addAuditOptions = (cmd: Command, mode: Mode): Command => {
         .choices(["full", "summary"])
         .default("full")
     )
-    .option("--disable <rule...>", "Rule ids or categories to skip")
-    .option(
-      "--rule <id...>",
-      "Run only these rule ids or categories (space- or comma-separated): re-check the findings a fix was for, or check one category"
-    )
-    .option(
-      "--baseline <file>",
-      "Compare with an earlier audit saved as JSON: lists the findings since fixed, still open and new"
-    )
+    .option("-q, --quiet", "Suppress progress output on stderr")
+    .optionsGroup("Requests")
     .option("--timeout <ms>", "Per-request timeout", intArg, 15_000)
     .option("--user-agent <ua>", "Custom User-Agent header")
     .option(
       "-H, --header <header...>",
       'Extra request header "Name: value" (repeatable), sent to the audited origin only'
-    )
-    .option("-q, --quiet", "Suppress progress output on stderr");
+    );
 };
 
 interface CliOptions {
@@ -553,148 +560,204 @@ const runAudit = async (
   }
 };
 
+program.commandsGroup("Audit commands");
+
 addAuditOptions(
-  program
-    .command("audit")
-    .argument(
-      "<target>",
-      'URL, directory of HTML files, .html file, or "-" for HTML on stdin'
-    )
-    .description(
-      "Audit a page, a site (--crawl), a build directory or raw HTML"
-    )
-    .addHelpText("after", examples(AUDIT_EXAMPLES)),
+  withExamples(
+    program
+      .command("audit")
+      .argument(
+        "<target>",
+        'URL, directory of HTML files, .html file, or "-" for HTML on stdin'
+      )
+      .description(
+        "Audit a page, a site (--crawl), a build directory or raw HTML"
+      ),
+    runs(AUDIT_EXAMPLES)
+  ),
   "audit"
 ).action(async (target: string, opts: CliOptions) => {
   await runAudit(target, opts, "audit");
 });
 
 addAuditOptions(
-  program
-    .command("crawl")
-    .argument("<url>", "Start URL")
-    .description('Crawl a site and audit every page (same as "audit --crawl")')
-    .addHelpText("after", examples(CRAWL_EXAMPLES)),
+  withExamples(
+    program
+      .command("crawl")
+      .argument("<url>", "Start URL")
+      .description(
+        'Crawl a site and audit every page (same as "audit --crawl")'
+      ),
+    runs(CRAWL_EXAMPLES)
+  ),
   "crawl"
 ).action(async (url: string, opts: CliOptions) => {
   await runAudit(url, opts, "crawl");
 });
 
 addAuditOptions(
-  program
-    .command("aeo")
-    .argument(
-      "<target>",
-      'URL, directory of HTML files, .html file, or "-" for HTML on stdin'
-    )
-    .description(
-      "Answer engine optimization audit: AI crawler access (robots.txt, llms.txt), snippet and AI opt-outs, answer-ready content, entities and freshness, with its own score"
-    )
-    .addHelpText("after", examples(AEO_EXAMPLES)),
+  withExamples(
+    program
+      .command("aeo")
+      .argument(
+        "<target>",
+        'URL, directory of HTML files, .html file, or "-" for HTML on stdin'
+      )
+      .summary("Answer engine optimization (AEO) audit, with its own score")
+      .description(
+        "Answer engine optimization audit: AI crawler access (robots.txt, llms.txt), snippet and AI opt-outs, answer-ready content, entities and freshness, with its own score"
+      ),
+    runs(AEO_EXAMPLES)
+  ),
   "aeo"
 ).action(async (target: string, opts: CliOptions) => {
   await runAudit(target, opts, "aeo");
 });
 
-program
-  .command("rules")
-  .description("List the rules this tool can report")
-  .option("--category <category>", "Filter by category")
-  .option("--rule <id>", "Show one rule")
-  .addOption(
-    new Option(
-      "-f, --format <format>",
-      "Output format (default: text on a terminal, json when piped)"
-    ).choices(["text", "md", "json"])
-  )
-  .addHelpText("after", examples(RULES_EXAMPLES))
-  .action(
-    (opts: { category?: string; rule?: string; format?: OutputFormat }) => {
-      const rules = ALL_RULES.filter(
-        (r) =>
-          (!opts.category || r.category === opts.category) &&
-          (!opts.rule || r.id === opts.rule)
+program.commandsGroup("Other commands");
+
+withExamples(
+  program
+    .command("rules")
+    .description("List the rules this tool can report")
+    .option("--category <category>", "Filter by category")
+    .option("--rule <id>", "Show one rule")
+    .addOption(
+      new Option(
+        "-f, --format <format>",
+        "Output format: text for people, md, or json for scripts and agents (default: text on a terminal, json when piped)"
+      ).choices(["text", "md", "json"])
+    ),
+  runs(RULES_EXAMPLES)
+).action(
+  (opts: { category?: string; rule?: string; format?: OutputFormat }) => {
+    const rules = ALL_RULES.filter(
+      (r) =>
+        (!opts.category || r.category === opts.category) &&
+        (!opts.rule || r.id === opts.rule)
+    );
+
+    const format = formatFor(opts.format, undefined, process.stdout.isTTY);
+
+    if (run) {
+      run.format = format;
+    }
+
+    if (format === "json") {
+      process.stdout.write(
+        `${JSON.stringify({ count: rules.length, rules }, null, 2)}\n`
       );
 
-      const format = formatFor(opts.format, undefined, process.stdout.isTTY);
-
-      if (run) {
-        run.format = format;
-      }
-
-      if (format === "json") {
-        process.stdout.write(
-          `${JSON.stringify({ count: rules.length, rules }, null, 2)}\n`
-        );
-
-        return;
-      }
-
-      if (format === "text") {
-        process.stdout.write(
-          renderRulesText(rules, textOptionsFor(process.stdout))
-        );
-
-        return;
-      }
-
-      const lines = [
-        "| Rule | Severity | Category | Checks |",
-        "| --- | --- | --- | --- |",
-      ];
-
-      for (const r of rules) {
-        lines.push(
-          `| \`${r.id}\` | ${r.severity} | ${r.category} | ${r.description.replaceAll("|", "\\|")}${r.requires ? ` _(requires ${r.requires})_` : ""} |`
-        );
-      }
-
-      process.stdout.write(`${lines.join("\n")}\n`);
+      return;
     }
+
+    if (format === "text") {
+      const options = textOptionsFor(process.stdout);
+
+      process.stdout.write(
+        rules.length === 0
+          ? noRuleMatches(opts, ALL_RULES, options)
+          : renderRulesText(rules, options)
+      );
+
+      return;
+    }
+
+    const lines = [
+      "| Rule | Severity | Category | Checks |",
+      "| --- | --- | --- | --- |",
+    ];
+
+    for (const r of rules) {
+      lines.push(
+        `| \`${r.id}\` | ${r.severity} | ${r.category} | ${r.description.replaceAll("|", "\\|")}${r.requires ? ` _(requires ${r.requires})_` : ""} |`
+      );
+    }
+
+    process.stdout.write(`${lines.join("\n")}\n`);
+  }
+);
+
+withExamples(
+  program
+    .command("install-browser")
+    .summary("Download Chromium for --render and --lighthouse")
+    .description(
+      "Download the Chromium build the installed Playwright expects, for --render and --lighthouse on a machine without Google Chrome"
+    )
+    .option(
+      "--with-deps",
+      "Also install the system libraries Chromium needs (Linux; may ask for sudo)"
+    ),
+  INSTALL_BROWSER_EXAMPLES
+).action(async (opts: { withDeps?: boolean }) => {
+  // On a terminal the download shows on the progress line. With --with-deps, sudo may ask for a
+  // password, which the progress line would draw over; and a log keeps Playwright's own lines.
+  const live = opts.withDeps !== true && process.stderr.isTTY === true;
+
+  if (live) {
+    status.show(INSTALLING);
+  }
+
+  await installBrowser({
+    withDeps: opts.withDeps,
+    onLine: live ? installProgress(status, stderrColor) : undefined,
+  });
+
+  status.clear();
+  process.stderr.write(
+    `${paint(stderrColor, "green", "✓")} The browser for --render and --lighthouse is installed.\n`
   );
+});
 
-program
-  .command("install-browser")
-  .description(
-    "Download the Chromium build the installed Playwright expects, for --render and --lighthouse on a machine without Google Chrome"
-  )
-  .option(
-    "--with-deps",
-    "Also install the system libraries Chromium needs (Linux; may ask for sudo)"
-  )
-  .action(async (opts: { withDeps?: boolean }) => {
-    await installBrowser(opts);
-  });
+withExamples(
+  program
+    .command("mcp")
+    .description(
+      "Start the MCP server on stdio (for Claude Code, Cursor, Codex, etc.)"
+    ),
+  [CLAUDE_CODE_ADD]
+).action(async () => {
+  const analytics = await localMcpTelemetry();
 
-program
-  .command("mcp")
-  .description(
-    "Start the MCP server on stdio (for Claude Code, Cursor, Codex, etc.)"
-  )
-  .action(async () => {
-    const analytics = await localMcpTelemetry();
+  try {
+    await startMcpServer({ analytics });
+  } catch (error) {
+    await analytics?.crashed(error);
+    throw error;
+  }
 
-    try {
-      await startMcpServer({ analytics });
-    } catch (error) {
-      await analytics?.crashed(error);
-      throw error;
-    }
-  });
+  announceMcpServer();
+});
 
-program
-  .command("telemetry")
-  .description(
-    "Show, turn off or turn on the anonymous usage data the CLI and the local MCP server send"
-  )
-  .addArgument(
-    new Argument("[action]", "What to do")
-      .choices(["status", "enable", "disable"])
-      .default("status")
-  )
-  .action(async (action: "status" | "enable" | "disable") => {
-    process.stdout.write(await telemetryCommand(action));
-  });
+withExamples(
+  program
+    .command("telemetry")
+    .summary("Show, turn off or turn on the anonymous usage data")
+    .description(
+      "Show, turn off or turn on the anonymous usage data the CLI and the local MCP server send"
+    )
+    .addArgument(
+      new Argument("[action]", "What to do")
+        .choices(["status", "enable", "disable"])
+        .default("status")
+    ),
+  runs(TELEMETRY_EXAMPLES)
+).action(async (action: "status" | "enable" | "disable") => {
+  process.stdout.write(
+    await telemetryCommand(action, process.env, textOptionsFor(process.stdout))
+  );
+});
+
+program.helpCommand("help [command]", "Show the help for a command");
+
+// On a terminal, a usage error ends with the usage and the command for the help, so the error
+// stays in view. Piped, it ends with the whole help, which an agent reads to correct its call.
+for (const command of [program, ...program.commands]) {
+  command.showHelpAfterError(
+    process.stderr.isTTY ? usageHint(command, stderrColor) : true
+  );
+}
 
 try {
   await program.parseAsync(process.argv);
@@ -702,7 +765,10 @@ try {
 } catch (error) {
   status.clear();
   process.stderr.write(
-    `${paint(stderrColor, "red", "agentic-seo-check:")} ${terminalSafe(error instanceof Error ? error.message : String(error))}\n`
+    errorText(
+      error instanceof Error ? error.message : String(error),
+      stderrColor
+    )
   );
 
   if (run) {

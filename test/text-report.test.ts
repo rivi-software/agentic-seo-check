@@ -417,6 +417,33 @@ describe("the text list of rules", () => {
   it("says when no rule matches", () => {
     expect(renderRulesText([])).toBe("No rule matches.\n");
   });
+
+  it("gives the CLI's commands: one rule in full, and the audit that checks only it", () => {
+    const list = renderRulesText(ALL_RULES, { nextSteps: true, color: true });
+
+    const checks = [
+      "canonical.multiple",
+      "rendering.title-changed",
+      "aeo.llms-txt-missing",
+    ].map((id) =>
+      renderRulesText(
+        ALL_RULES.filter((r) => r.id === id),
+        { nextSteps: true, width: 120 }
+      )
+        .trimEnd()
+        .split("\n")
+        .at(-1)
+    );
+
+    expect(checks).toStrictEqual([
+      "  Check only this rule: agentic-seo-check audit <target> --rule canonical.multiple",
+      "  Check only this rule: agentic-seo-check audit <target> --rule rendering.title-changed --render",
+      "  Check only this rule: agentic-seo-check aeo <target> --rule aeo.llms-txt-missing",
+    ]);
+    expect(list.trimEnd().split("\n").at(-1)).toBe(
+      `${ALL_RULES.length} rules. One in full: ${ESC}[36magentic-seo-check rules --rule <id>${ESC}[39m`
+    );
+  });
 });
 
 /**
@@ -528,10 +555,21 @@ describe("the CLI's terminal", () => {
     const help = await runCli(["audit", "--help"]);
     const error = await runCli(["audit", "--bogus"]);
 
-    expect(help.stdout).toMatch(/^Usage: agentic-seo-check audit \[options\]/u);
-    expect(help.stdout).toContain("\nExamples:\n  $ agentic-seo-check audit");
+    expect(help.stdout).toMatch(
+      new RegExp(
+        `^Agentic SEO Check ${VERSION} · audit\\n\\n {2}Audit a page`,
+        "u"
+      )
+    );
+    expect(help.stdout).toMatch(
+      /\nExamples ─+\n {2}\$ agentic-seo-check audit /u
+    );
+    // Piped, an error is followed by the whole help, which an agent reads to correct its call.
     expect(error.stderr).toMatch(
-      /^error: unknown option '--bogus'\n\nUsage: agentic-seo-check audit/u
+      new RegExp(
+        `^✖ Unknown option '--bogus'\\.\\n\\nAgentic SEO Check ${VERSION} · audit\\n`,
+        "u"
+      )
     );
     expect(`${help.stdout}${error.stderr}`).not.toContain(ESC);
   });
@@ -541,7 +579,7 @@ describe("the CLI's terminal", () => {
 
     expect(stderr).toMatch(
       new RegExp(
-        `^${ESC}\\[31merror: unknown option '--bogus'${ESC}\\[39m\\n\\n${ESC}\\[1mUsage:${ESC}\\[22m`,
+        `^${ESC}\\[31m✖ Unknown option '--bogus'\\.${ESC}\\[39m\\n\\n${ESC}\\[1mAgentic SEO Check${ESC}\\[22m`,
         "u"
       )
     );
@@ -596,6 +634,24 @@ describe("the CLI's terminal", () => {
         `\r${ESC}[2K⠹ Running Lighthouse (mobile)  1 min 5 s`,
       ]);
       expect(terminal.written).toHaveLength(cleared);
+    });
+
+    it("writes a line that stays above it, and goes on below", () => {
+      const terminal = fakeTerminal({ columns: 40, hasColors: () => false });
+      const line = statusLine(terminal);
+
+      line.print("before it shows");
+      line.show("Downloading Chrome");
+      line.print("✓ FFmpeg downloaded");
+      line.clear();
+
+      expect(terminal.written).toStrictEqual([
+        "before it shows\n",
+        `\r${ESC}[2K⠋ Downloading Chrome`,
+        `\r${ESC}[2K✓ FFmpeg downloaded\n`,
+        `\r${ESC}[2K⠋ Downloading Chrome`,
+        `\r${ESC}[2K`,
+      ]);
     });
 
     it("colours the spinner and dims the step, on a terminal with colour", () => {

@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { promises as fs } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { createInterface } from "node:readline";
 
 import type { Browser, Page } from "playwright";
 import type * as Playwright from "playwright";
@@ -44,7 +45,14 @@ export const BROWSER_INSTALL_HINT =
  * build fetched by `npx playwright install` for another Playwright version does not launch.
  */
 export const installBrowser = async (
-  options: { withDeps?: boolean } = {}
+  options: {
+    withDeps?: boolean;
+    /**
+     * Each line Playwright prints, instead of printing it: the CLI shows the download on its
+     * progress line. Without it, Playwright's output goes to stderr as it is.
+     */
+    onLine?: (line: string) => void;
+  } = {}
 ): Promise<void> => {
   let manifestPath: string;
 
@@ -74,10 +82,23 @@ export const installBrowser = async (
     args.push("--with-deps");
   }
 
+  const { onLine } = options;
+
   // Playwright's progress goes to stderr, like the CLI's own: stdout is for reports.
   const child = spawn(process.execPath, args, {
-    stdio: ["inherit", 2, "inherit"],
+    stdio: onLine ? ["inherit", "pipe", "pipe"] : ["inherit", 2, "inherit"],
   });
+
+  if (onLine) {
+    for (const output of [child.stdout, child.stderr]) {
+      if (output) {
+        createInterface({ input: output, crlfDelay: Infinity }).on(
+          "line",
+          onLine
+        );
+      }
+    }
+  }
 
   await once(child, "close");
 
