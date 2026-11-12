@@ -613,9 +613,9 @@ export interface NoFieldData {
   source: null;
   /**
    * `no-data`: the Chrome UX Report has no record for the URL (or its origin), as for any page
-   * with few visits, which says nothing against it; `not-public`: the audit never sends a URL on
-   * localhost, a private network or behind a login (`headers`); `unavailable`: the API did not
-   * answer.
+   * with few visits, which says nothing against it; `not-public`: there is no public URL to ask
+   * for, as the audit read HTML, or never sends a URL on localhost, a private network or behind a
+   * login (`headers`); `unavailable`: the API did not answer.
    */
   reason: "no-data" | "not-public" | "unavailable";
   message: string;

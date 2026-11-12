@@ -262,12 +262,21 @@ describe("MCP server", () => {
       arguments: { url: "https://www.example.com/", fieldData: true },
     });
 
+    // Inline HTML needs no key: it has no URL to ask for, and the audit says so.
+    const inline = await client.callTool({
+      name: "seo_audit_page",
+      arguments: { html: "<title>Inline page</title>", fieldData: true },
+    });
+
     expect(withFieldData.toSorted()).toStrictEqual([
       "seo_audit_page",
       "seo_crawl_site",
     ]);
     expect(result.isError).toBeTruthy();
     expect(firstText(result)).toContain("CRUX_API_KEY");
+    expect(inline.structuredContent).toMatchObject({
+      fieldData: { source: null, reason: "not-public" },
+    });
   });
 
   it("reports errors as isError results", async () => {

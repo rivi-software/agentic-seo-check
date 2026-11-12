@@ -1939,7 +1939,9 @@ describe("the hosted server", () => {
 
       expect(result.isError).toBeTruthy();
       expect(textOf(result)).toContain("it has no API key");
-      expect(inline.isError).toBeFalsy();
+      expect(inline.structuredContent).toMatchObject({
+        fieldData: { source: null, reason: "not-public" },
+      });
       expect(started.map((c) => c.fetches)).toStrictEqual([false]);
       expect(calls[0]?.properties?.reason).toBe("field_data");
     });

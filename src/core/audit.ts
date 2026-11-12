@@ -20,6 +20,7 @@ import {
   fieldDataForCrawl,
   fieldDataForPage,
   fieldDataOptions,
+  htmlFieldData,
   isFieldRecord,
 } from "./field-data.js";
 import type { FieldDataOptions } from "./field-data.js";
@@ -788,7 +789,15 @@ export const auditHtml = async (
 ): Promise<PageAudit> => {
   const options = checkOptions(given);
 
-  return finishPage(auditHtmlPage(html, input, options), options);
+  // HTML has no address the Chrome UX Report could know: the audit says so, rather than leave
+  // `fieldData` out as if it had not been asked for.
+  const fieldData =
+    input.fieldData ?? (options.fieldData ? htmlFieldData() : undefined);
+
+  return finishPage(
+    auditHtmlPage(html, { ...input, fieldData }, options),
+    options
+  );
 };
 
 /** Fetch and audit one URL. Optionally render and/or run Lighthouse. */

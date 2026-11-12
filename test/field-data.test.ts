@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { auditSite, auditUrl } from "../src/core/audit.js";
+import { auditHtml, auditSite, auditUrl } from "../src/core/audit.js";
 import {
   CRUX_ENDPOINT,
   FieldDataKeyError,
@@ -280,6 +282,45 @@ describe("field data (issue #130)", () => {
         ["perf.field-cls-needs-improvement", "info"],
         ["perf.field-lcp-needs-improvement", "info"],
       ]);
+      // CrUX gives CLS to two places, as the message shows it.
+      expect(
+        mine.find((f) => f.rule === "perf.field-cls-needs-improvement")?.message
+      ).toContain("is 0.12 over 28 days");
+    });
+
+    it("stays quiet on good-page.html with a good record, and quotes it in the fixes of a poor one", async () => {
+      const html = readFileSync(
+        new URL("fixtures/good-page.html", import.meta.url),
+        "utf-8"
+      );
+
+      const good = await auditPage(html, () => record(GOOD));
+      const poor = await auditPage(html, () => record(SLOW));
+
+      expect(good.mine).toStrictEqual([]);
+      expect(rulesOf(poor.mine)).toStrictEqual([
+        "perf.field-cls-poor",
+        "perf.field-inp-poor",
+        "perf.field-lcp-poor",
+      ]);
+    });
+
+    it("says HTML has no URL to ask for, without a key or a query", async () => {
+      vi.stubEnv("CRUX_API_KEY", "");
+      serve({});
+
+      const audit = await auditHtml(
+        page(),
+        { url: PAGE_URL, source: "html" },
+        { fieldData: true }
+      );
+
+      expect(audit.fieldData).toMatchObject({
+        source: null,
+        reason: "not-public",
+        message: expect.stringContaining("The audit read HTML"),
+      });
+      expect(queries).toStrictEqual([]);
     });
 
     it("says the value, whose it is and the period", async () => {

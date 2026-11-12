@@ -757,7 +757,8 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
           const options = {
             ...auditOptions(input, fetch),
             baseUrl: input.baseUrl,
-            fieldData: field,
+            // Inline HTML asks for no key: the audit answers that it has no URL to ask for.
+            fieldData: inline ? input.fieldData : field,
           };
 
           const audit =

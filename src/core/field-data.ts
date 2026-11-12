@@ -451,6 +451,16 @@ const NO_RECORD =
 const NO_URL_RECORD =
   "The Chrome UX Report has no record for this URL: too few Chrome visits on phones in the last 28 days. The start page's field data has its origin's.";
 
+/**
+ * Why an audit of HTML, a file or stdin has no field data although it asked for some: the report
+ * keys its records by the address a page is served at, and HTML has none.
+ */
+export const htmlFieldData = (): NoFieldData =>
+  none(
+    "not-public",
+    "The audit read HTML, not a page at an address, so there is nothing to ask the Chrome UX Report for. Audit the page's public URL for its field data."
+  );
+
 /** The URL CrUX keys a page by: no fragment, no tracking parameters. */
 const cruxUrl = (url: string): string => normalizeUrl(url) ?? url;
 
