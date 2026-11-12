@@ -2,6 +2,9 @@ name: Release
 
 # Publishes to npm only. The hosted server and the website deploy from deploy-hosted.yml, which the
 # push of a release's version commit starts like any other change to main.
+#
+# On GitHub Actions, not Depot CI with CI (issue #127): npm's trusted publishing takes the OIDC
+# token of a GitHub-hosted runner.
 on:
   push:
     branches:
@@ -43,7 +46,24 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # The changesets action below publishes only when no changeset waits and package.json's
+      # version is not on npm yet. Otherwise it opens or updates the "Version packages" pull
+      # request, whose own CI verifies it, or does nothing. So Verify runs only before a publish
+      # (issue #127); CI verifies every push to main besides. When npm gives no answer, the version
+      # counts as unpublished, and Verify runs.
+      - name: Will this run publish?
+        id: plan
+        run: |
+          waiting=$(find .changeset -maxdepth 1 -name '*.md' ! -name README.md | wc -l)
+          spec=$(node -p 'const { name, version } = require("./package.json"); `${name}@${version}`')
+          published=$(npm view "$spec" version 2>/dev/null || true)
+          publish=false
+          if [ "$waiting" -eq 0 ] && [ "$published" != "${spec##*@}" ]; then publish=true; fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Changesets waiting: $waiting; $spec on npm: ${published:-no}; publish: $publish"
+
       - name: Verify
+        if: steps.plan.outputs.publish == 'true'
         run: pnpm run verify
 
       # RIVI Bot, not github-actions, writes the version commit, the "Version packages" pull

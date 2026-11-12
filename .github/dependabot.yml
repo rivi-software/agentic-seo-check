@@ -1,7 +1,10 @@
 version: 2
 updates:
+  # Depot CI's workflows are in /.depot/workflows (issue #127); one group bumps an action in both.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.depot/workflows
     schedule:
       interval: weekly
     cooldown:

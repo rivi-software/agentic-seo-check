@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/rivi-software/agentic-seo-check/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/rivi-software/agentic-seo-check/ci.yml?branch=main&label=CI" alt="CI status"></a>
+  <a href="https://github.com/rivi-software/agentic-seo-check/commits/main/"><img src="https://img.shields.io/github/check-runs/rivi-software/agentic-seo-check/main?nameFilter=CI%20%2F%20verify&label=CI" alt="CI status"></a>
   <a href="https://www.npmjs.com/package/@rivi-software/agentic-seo-check"><img src="https://img.shields.io/npm/v/@rivi-software/agentic-seo-check?color=0b6b3a" alt="npm version"></a>
   <a href="https://www.npmjs.com/package/@rivi-software/agentic-seo-check"><img src="https://img.shields.io/npm/dm/@rivi-software/agentic-seo-check?color=0b6b3a" alt="Monthly npm downloads"></a>
   <a href="https://github.com/rivi-software/agentic-seo-check/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b6b3a" alt="MIT License"></a>
