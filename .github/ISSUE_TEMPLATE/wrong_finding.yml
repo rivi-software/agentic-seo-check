@@ -1,13 +1,13 @@
 name: Wrong finding
 description: A rule fires on a page that is fine, or misses a real problem
 type: Bug
-labels: ["area:rules", "false-positive"]
+labels: ["area:rules", "false-positive", "needs-triage"]
 body:
   - type: input
     id: rule
     attributes:
       label: Rule id
-      description: The `rule` of the finding, or the rule you expected to fire. `agentic-seo-check rules` lists them.
+      description: The `rule` of the finding, from the SEO audit or the AEO audit (`aeo.*`), or the rule you expected to fire. `agentic-seo-check rules` and [the website's rules page](https://agentic-seo.rivi.software/rules) list them.
       placeholder: canonical.multiple
     validations:
       required: true
@@ -15,8 +15,8 @@ body:
     id: version
     attributes:
       label: Version
-      description: "`agentic-seo-check --version`"
-      placeholder: "0.1.0"
+      description: "`agentic-seo-check --version`. The hosted server and the website run the latest `main`: for them, say which, and the date and time you saw it, in UTC."
+      placeholder: "0.18.0"
     validations:
       required: true
   - type: textarea
@@ -31,7 +31,7 @@ body:
     id: finding
     attributes:
       label: What it reported
-      description: The finding as JSON, or what it left out.
+      description: The finding as JSON (the website's report downloads as JSON), or what it left out.
       render: json
     validations:
       required: true
@@ -39,6 +39,6 @@ body:
     id: why
     attributes:
       label: Why it is wrong
-      description: What a search engine does with this page instead, with a link to its documentation if you have one.
+      description: What a search engine or an AI answer engine does with this page instead, with a link to its documentation if you have one.
     validations:
       required: true
