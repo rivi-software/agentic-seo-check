@@ -27,11 +27,11 @@ Closes #
 
 <!-- Keep one option on each line. -->
 
-**Changeset:** `patch` / `minor` / none, because …
+**Changeset:** `patch` / `minor` / `major` / none, because …
 **Contract:** unchanged / extended / broken, agreed in #
 **Deploys on merge:** yes / no
 
-<!-- Contract: a rule's id, severity, message and recommendation, the MCP tools' names and input schemas (local and hosted), the CLI's flags and exit codes, and the audit JSON. Extended is a new rule, option, tool or field, and a minor changeset. Broken is a rename, a removal or a change in meaning, and needs a maintainer's agreement in an issue first. -->
+<!-- Contract: a rule's id, severity, message and recommendation, the MCP tools' names and input schemas (local and hosted), the CLI's flags and exit codes, and the audit JSON. Extended is a new rule, option, tool or field, and a minor changeset. Broken is a rename, a removal or a change in meaning, a major changeset, and needs a maintainer's agreement in an issue first. -->
 <!-- Deploys: yes when the diff changes a path in the `paths:` filter of .github/workflows/deploy-hosted.yml, which decides: both Workers then deploy with the merge. Most often that is src/, hosted/ outside its tests and docs, or package.json; check the filter for the rest. -->
 
 ## Docs update

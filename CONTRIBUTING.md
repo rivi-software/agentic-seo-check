@@ -25,7 +25,7 @@ Each issue has a type: **Bug** (something does not do what the README says, or a
 | Family | Values | Meaning |
 | --- | --- | --- |
 | Area | `area:rules`, `area:crawl`, `area:render`, `area:mcp`, `area:cli`, `area:skill` | Where the change lands: the page rules, crawl and site checks, rendering and Lighthouse, the MCP server, the command line, the agent skill |
-| Topic | `false-positive`, `security`, `performance`, `documentation`, `breaking-change` | What else it is about. `breaking-change` needs a major (or, before 1.0, a minor) release, and only a maintainer adds it |
+| Topic | `false-positive`, `security`, `performance`, `documentation`, `breaking-change` | What else it is about. `breaking-change` needs a major release, and only a maintainer adds it |
 | Triage | `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `duplicate`, `wontfix` | Where an issue stands. `needs-triage` waits for a maintainer, `needs-info` for its author; `ready-for-agent` is specified well enough for a coding agent, `ready-for-human` needs a person |
 | Contributors | `good first issue`, `help wanted` | Ready for someone outside the team to take |
 | Bot | `rivi-bot:review` | A maintainer asks [RIVI Bot](#reviews-by-rivi-bot) to review an outside pull request |
@@ -63,7 +63,7 @@ Work on a branch in your fork. One pull request makes one change. Two unrelated 
 - A rule's id, severity, message and recommendation are what agents act on. A new rule lives in the file of its category under `src/core/rules/` (or `site-rules.ts`, `render-rules.ts`, `performance-rules.ts`), has a `docs` link to the search engine's own documentation where one exists, and recommends a fix someone can make, not only names the problem. Renaming a rule id or removing one is a breaking change: agents and CI configurations name rules in `disableRules`.
 - The JSON an audit returns has a `schemaVersion`. A field may be added; a field renamed, removed or changed in meaning is a breaking change.
 - When what the tool does changes, the README changes with it, and the agent skill (`skills/seo-audit/SKILL.md`) when it changes how an agent should use the tool.
-- A change users notice comes with a changeset. Run `pnpm changeset`, pick the bump (`patch` for a fix, `minor` for a feature or, before 1.0, a breaking change), and write the line for the changelog, for the people who use the tool. Not sure of the bump? Say so in the pull request, and a maintainer settles it. A change only to tests, CI or the repository's own docs needs no changeset.
+- A change users notice comes with a changeset. Run `pnpm changeset`, pick the bump (`patch` for a fix, `minor` for a feature, `major` for a breaking change), and write the line for the changelog, for the people who use the tool. Not sure of the bump? Say so in the pull request, and a maintainer settles it. A change only to tests, CI or the repository's own docs needs no changeset.
 - A new runtime dependency ends up in every install, so it needs a maintainer's agreement in the issue first. pnpm runs a dependency's install script only when `pnpm-workspace.yaml` allows it, and takes no dependency from a git or tarball URL.
 - `pnpm run verify` passes before you open the pull request.
 

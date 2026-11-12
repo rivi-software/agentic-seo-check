@@ -13,7 +13,8 @@ description: Write a changeset for agentic-seo-check as a file, without the inte
 
 2. **Pick the bump.**
    - `patch`: a fix, such as a false positive gone.
-   - `minor`: a feature, or an extended contract (a new rule, option, tool or field). Before 1.0 a breaking change is `minor` too, and it needs a maintainer's agreement in an issue first.
+   - `minor`: a feature, or an extended contract (a new rule, option, tool or field).
+   - `major`: a breaking change: a rule id, option, tool or field renamed, removed or changed in meaning. It needs a maintainer's agreement in an issue first.
 
 3. **Write `.changeset/<topic-in-kebab-case>.md`:**
 
