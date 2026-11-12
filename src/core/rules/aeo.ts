@@ -58,6 +58,14 @@ export const AEO_DOCS = {
 /** A question answered in more words than this does not start with a direct answer. */
 const LONG_ANSWER_WORDS = 100;
 
+/**
+ * Whether a short, direct answer follows a question heading: text under it, whose first block is
+ * at most LONG_ANSWER_WORDS long. A comparison (issue #129) counts the answered questions with it.
+ */
+export const answersFirst = (q: QuestionHeading): boolean =>
+  q.sectionWords > 0 &&
+  (q.firstBlockWords ?? q.sectionWords) <= LONG_ANSWER_WORDS;
+
 const sourcesOf = (
   meta: { name: string; content: string }[],
   header: string | undefined,
@@ -323,7 +331,20 @@ interface BareAuthor {
   target: MarkupTarget;
 }
 
-const bareAuthors = (page: ExtractedPage): BareAuthor[] =>
+/** Article markup whose author is missing or empty, as aeo.article-author-missing reads it. */
+export const hasNoAuthor = (node: JsonObject): boolean => {
+  const { author } = node;
+
+  return (
+    author === undefined ||
+    author === null ||
+    (Array.isArray(author) && author.length === 0) ||
+    (isString(author) && !author.trim())
+  );
+};
+
+/** Authors with no url or sameAs, as aeo.article-author-incomplete reads them; a comparison too. */
+export const bareAuthors = (page: ExtractedPage): BareAuthor[] =>
   articles(page).flatMap(({ node, types }) => {
     const target: MarkupTarget = {
       type: types[0] ?? "Article",
@@ -868,11 +889,7 @@ export const aeoRules = [
         "Answer each question in the first sentence or two under its heading (under about 60 words), then add detail. A direct answer right under the question is the passage answer engines find easiest to quote.",
     },
     ({ page }, make) => {
-      const weak = page.answer.questions.filter(
-        (q) =>
-          q.sectionWords === 0 ||
-          (q.firstBlockWords ?? q.sectionWords) > LONG_ANSWER_WORDS
-      );
+      const weak = page.answer.questions.filter((q) => !answersFirst(q));
 
       return weak.length
         ? make(
@@ -987,16 +1004,7 @@ export const aeoRules = [
       docs: AEO_DOCS.article,
     },
     ({ page }, make) => {
-      const missing = articles(page).filter(({ node }) => {
-        const { author } = node;
-
-        return (
-          author === undefined ||
-          author === null ||
-          (Array.isArray(author) && author.length === 0) ||
-          (isString(author) && !author.trim())
-        );
-      });
+      const missing = articles(page).filter(({ node }) => hasNoAuthor(node));
 
       return missing.length
         ? make(

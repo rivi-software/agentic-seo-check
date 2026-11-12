@@ -6,13 +6,18 @@ import { PRODUCT_NAME, REPOSITORY_URL, WEBSITE_URL } from "./brand.js";
 import { compactAeoAudit } from "./core/aeo/audit.js";
 import { compactAudit } from "./core/audit.js";
 import type { CrawlOptions } from "./core/audit.js";
+import { compactComparison, MAX_COMPETITORS } from "./core/compare.js";
 import { ExpectedError } from "./core/errors.js";
 import { RequestRefusedError } from "./core/fetch.js";
 import { FIELD_DATA_PAGES } from "./core/field-data.js";
 import { baselineFromIds } from "./core/recheck.js";
-import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
+import {
+  renderAeoMarkdown,
+  renderComparisonMarkdown,
+  renderMarkdown,
+} from "./core/report/markdown.js";
 import { ALL_RULES } from "./core/rules/index.js";
-import type { AeoAudit, Audit } from "./core/types.js";
+import type { AeoAudit, Audit, Comparison } from "./core/types.js";
 import { noteCall, withErrorType } from "./telemetry/mcp.js";
 import type { McpErrorType } from "./telemetry/mcp.js";
 
@@ -149,12 +154,65 @@ export const respondAeo = (
   };
 };
 
+export const respondComparison = (
+  comparison: Comparison,
+  fmt: "json" | "markdown",
+  det: "full" | "compact"
+) => {
+  const report = det === "compact" ? compactComparison(comparison) : comparison;
+
+  const text =
+    fmt === "markdown"
+      ? renderComparisonMarkdown(report)
+      : JSON.stringify(report, null, 2);
+
+  return {
+    content: [{ type: "text" as const, text }],
+    structuredContent: { ...report },
+  };
+};
+
 /**
  * The end of an audit tool's description: where its documentation is. Directory listings ask for
  * it, and an agent that meets a rule id finds what it checks and the search engine's own docs.
  */
 export const docsNote = (server: "local" | "hosted"): string =>
   `Documentation: ${REPOSITORY_URL}#${server === "hosted" ? "hosted-server" : "mcp-server"}. Every rule, with the search engine documentation it follows: ${WEBSITE_URL}/rules.`;
+
+/**
+ * What seo_compare_pages does (issue #129), on both servers; `note` is what the server adds before
+ * its documentation.
+ */
+export const compareDescription = (
+  server: "local" | "hosted",
+  note = ""
+): string =>
+  `Compare one page with 1 to ${MAX_COMPETITORS} competitors' pages, such as those that rank for the page's query or that an AI answer cited. Runs the SEO and the AEO audit of each page, reading each site's robots.txt and llms.txt once, and returns each page's two scores and \`signals\` (words, <h2> subheadings, question headings and how many have a direct answer, tables, lists, structured data types, the Article's author and dates, \`keyword\` in the title, H1, description and text, the AI search crawlers and answer bots robots.txt keeps out, llms.txt, response time, and with \`fieldData\` real-user Core Web Vitals). ` +
+  `\`gaps\` lists what at least half of the competitors read have and this page lacks, each with the \`rules\` and \`fix\` that close it on this page; the fix is empty when only the author can write what is missing, such as more text or a table. \`leads\` lists where this page is ahead. A gap is no finding: it has no severity and changes no score. ` +
+  `This tool does not search for competitors: bring their URLs, from your own web search for the query, from the user, or from the pages an AI answer cited. A competitor that cannot be read is listed in \`pages\` with \`skipped\` and why, and left out of the gaps. For every finding on one page, use seo_audit_page and seo_aeo_audit. ${note}${docsNote(server)}`;
+
+/** `competitors` on both servers: `url` is each server's schema for a URL to request. */
+export const competitorsOption = (url: z.ZodString) =>
+  z
+    .array(url)
+    .min(1)
+    .max(MAX_COMPETITORS)
+    .describe(
+      `1 to ${MAX_COMPETITORS} competitors' pages to compare with, as absolute http(s) URLs: pages that rank for the same query, or that an AI answer cited.`
+    );
+
+/** `keyword` of seo_compare_pages, which reads it on every page rather than checking one. */
+export const COMPARE_KEYWORD =
+  "The query the pages compete for. Adds `keywordIn` to each page's signals (in the title, an H1, the meta description, the text), and gaps with the keyword.* rules' fix where the competitors have it and this page lacks it.";
+
+/** `fieldData` of seo_compare_pages; `key` says where the server's API key comes from. */
+export const compareFieldDataOption = (key: string) =>
+  z
+    .boolean()
+    .default(false)
+    .describe(
+      `Also read each page's real-user Core Web Vitals from the Chrome UX Report (the 75th percentile of LCP, INP and CLS, Chrome on phones, the last 28 days, for the URL or its origin): \`coreWebVitals\` in its signals, and a gap, with the perf.field-* rule's fix, where competitors rate better. A page without a record has \`coreWebVitals: null\`. ${key}`
+    );
 
 /**
  * The title and annotations of a tool that only reads, spread into its config so the title is

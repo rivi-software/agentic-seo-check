@@ -153,6 +153,11 @@ const TOOLS: [name: string, iconName: IconName, text: string][] = [
     "bot",
     "Checks a page or site for answer engines: AI crawler access, llms.txt, snippet controls, answer-ready content.",
   ],
+  [
+    "seo_compare_pages",
+    "chart",
+    "Compares a page with up to five competitors' pages you name: what they have that it lacks, with the fix that closes each gap.",
+  ],
   ["seo_list_rules", "list", "Lists every rule the audits report."],
 ];
 
@@ -226,8 +231,8 @@ ${CHAT}
 <div class="wrap">
 <div class="section-head">
 <p class="kicker">The tools</p>
-<h2 id="tools-title">Four read-only audit tools, and one for feedback.</h2>
-<p>Ask your assistant to audit a page, crawl a site or check how answer engines see it. With a fifth tool, <code>send_feedback</code>, it can tell us about a capability it missed, a tool that failed or misled it, or one that worked well.</p>
+<h2 id="tools-title">Five read-only audit tools, and one for feedback.</h2>
+<p>Ask your assistant to audit a page, crawl a site, check how answer engines see it, or compare a page with competitors' pages. With a sixth tool, <code>send_feedback</code>, it can tell us about a capability it missed, a tool that failed or misled it, or one that worked well.</p>
 </div>
 <ul class="cards tools">${TOOLS.map(([name, iconName, text]) => `<li class="card"><span class="card-icon">${icon(iconName)}</span><h3><code>${name}</code></h3><p>${text}</p></li>`).join("")}</ul>
 </div>
@@ -238,7 +243,7 @@ ${CHAT}
 <p class="kicker">Fair use</p>
 <h2 id="limits-title">Limits.</h2>
 <p>Free for everyone, so each site and each caller gets a fair share. A call past a limit names the limit and when to try again.</p>
-<p>The limits a minute are counted per Cloudflare location, so approximate. <code>seo_list_rules</code> is not counted, and inline HTML counts for no site. A page that redirects to another hostname, a subdomain included, counts that hostname as a site too.</p>
+<p>The limits a minute are counted per Cloudflare location, so approximate. <code>seo_list_rules</code> is not counted, and inline HTML counts for no site. A page that redirects to another hostname, a subdomain included, counts that hostname as a site too, and a comparison counts each competitor's site.</p>
 </div>
 <div class="spec"><table>
 <thead><tr><th scope="col">What</th><th scope="col">Limit</th></tr></thead>
@@ -277,7 +282,7 @@ ${limitRow("A page", `the first ${MB(HOSTED_LIMITS.maxBodyBytes)} of its HTML, w
 </div>
 <div class="rows">
 <div class="row" id="robots"><h3>robots.txt</h3><div class="row-body"><p>The server obeys robots.txt for every request it sends, an audit of one page included: the group for <code>agentic-seo-check</code>, or <code>*</code> when there is none. A crawl waits between requests to a site as its <code>Crawl-delay</code> asks, for at most ${CRAWL_DELAY_BUDGET} in all. When robots.txt keeps it out, or a site turns it away, the server says so and requests nothing more there.</p></div></div>
-<div class="row" id="privacy"><h3>Privacy</h3><div class="row-body"><p>The server keeps no HTML you send, no reports and no headers. With <code>fieldData</code>, the audited URL and its origin go to Google's Chrome UX Report, which answers with the speed of real visits; the answer is kept in Cloudflare's cache for a day. For each call it records the tool, the outcome, the duration, the requests and pages, and the hostname audited, for three months, so a report of too many requests to a site can be checked. Never the path, the query or your IP address. To count the different sites an address audits in a day, it keeps a hash of the address and of each hostname, keyed with a random key made for the day, in the EU, and deletes them with the key at 00:00 UTC.</p><p>PostHog (EU) gets one event per call, and one per bug of ours: the tool, the outcome, the duration, the counts, the score and the rules that fired, the names of the options used, which limit or refusal stopped a call, and the MCP client. The tools take a <code>context</code>, a few words from the agent on what a call is for: it goes to PostHog with URLs, hostnames, emails and quoted text taken out. They also take the model the agent runs as, and the id of the conversation from the last answer, so the calls of one conversation share a session; the id is random and names no one. An agent's <code>send_feedback</code> goes to PostHog with the same text taken out. Never the hostname, an option's value, the answer or your IP address. These pages count visits with it too, without a cookie unless you accept one. The <a href="${PRIVACY_URL}">privacy policy</a> has the details.</p></div></div>
+<div class="row" id="privacy"><h3>Privacy</h3><div class="row-body"><p>The server keeps no HTML you send, no reports and no headers. With <code>fieldData</code>, the audited URL and its origin go to Google's Chrome UX Report, which answers with the speed of real visits; the answer is kept in Cloudflare's cache for a day. For each call it records the tool, the outcome, the duration, the requests and pages, and the hostname audited (and each competitor's in a comparison), for three months, so a report of too many requests to a site can be checked. Never the path, the query or your IP address. To count the different sites an address audits in a day, it keeps a hash of the address and of each hostname, keyed with a random key made for the day, in the EU, and deletes them with the key at 00:00 UTC.</p><p>PostHog (EU) gets one event per call, and one per bug of ours: the tool, the outcome, the duration, the counts, the score and the rules that fired, the names of the options used, which limit or refusal stopped a call, and the MCP client. The tools take a <code>context</code>, a few words from the agent on what a call is for: it goes to PostHog with URLs, hostnames, emails and quoted text taken out. They also take the model the agent runs as, and the id of the conversation from the last answer, so the calls of one conversation share a session; the id is random and names no one. An agent's <code>send_feedback</code> goes to PostHog with the same text taken out. Never the hostname, an option's value, the answer or your IP address. These pages count visits with it too, without a cookie unless you accept one. The <a href="${PRIVACY_URL}">privacy policy</a> has the details.</p></div></div>
 <div class="row" id="requests"><h3>Requests to your site</h3><div class="row-body"><p><a href="/crawler">The page for site owners</a> says what the requests are and how to stop them. Report abuse through <a href="${ABUSE_URL}">help.rivi.software/contact</a>.</p></div></div>
 </div>
 </div>

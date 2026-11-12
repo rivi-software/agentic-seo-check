@@ -216,6 +216,40 @@ const namedArguments = (entries: [string, Iterable<string>][]) =>
 
 const rulesOf = (findings: { rule: string }[]) => findings.map((f) => f.rule);
 
+/** A page, a competitor's with a table, and a site whose robots.txt keeps every crawler out. */
+const serveCompared = () =>
+  serve({
+    "https://shop.example.com/widgets": {
+      body: page("Widgets for every bench", "<p>Our widgets.</p>"),
+    },
+    "https://rival.example.com/robots.txt": {
+      headers: { "content-type": "text/plain" },
+      body: "User-agent: *\nAllow: /\n",
+    },
+    "https://rival.example.com/widgets": {
+      body: page(
+        "Widgets compared",
+        "<table><tr><th>Size</th></tr><tr><td>Medium</td></tr></table>"
+      ),
+    },
+    "https://closed.example.org/robots.txt": {
+      headers: { "content-type": "text/plain" },
+      body: "User-agent: *\nDisallow: /\n",
+    },
+    "https://closed.example.org/widgets": {
+      body: page("A page robots.txt keeps out", ""),
+    },
+  });
+
+const COMPARED = {
+  url: "https://shop.example.com/widgets",
+  competitors: [
+    "https://rival.example.com/widgets",
+    "https://closed.example.org/widgets",
+  ],
+  context: "compare a product page with two rivals",
+};
+
 describe("the hosted server", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -324,6 +358,7 @@ describe("the hosted server", () => {
         "send_feedback",
         "seo_aeo_audit",
         "seo_audit_page",
+        "seo_compare_pages",
         "seo_crawl_site",
         "seo_list_rules",
       ]);
@@ -1839,6 +1874,106 @@ describe("the hosted server", () => {
 
       expect(rulesOf(findings)).toContain("aeo.crawl-stopped");
       expect(rulesOf(findings)).not.toContain("aeo.llms-txt-missing");
+    });
+  });
+
+  describe("its comparison with competitors' pages (issue #129)", () => {
+    it("lists a competitor robots.txt keeps out with its answer, and compares the rest", async () => {
+      const requests = serveCompared();
+      const client = await connect(profileWith().profile);
+
+      const result = await client.callTool({
+        name: "seo_compare_pages",
+        arguments: COMPARED,
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toMatchObject({
+        kind: "comparison",
+        pages: [
+          { url: COMPARED.url, role: "page" },
+          { url: COMPARED.competitors[0], role: "competitor" },
+          {
+            url: COMPARED.competitors[1],
+            role: "competitor",
+            skipped: {
+              reason: "refused",
+              message:
+                'https://closed.example.org/robots.txt keeps agentic-seo-check from https://closed.example.org/widgets (line 2: "Disallow: /"), so the hosted server did not request it.',
+            },
+          },
+        ],
+        gaps: [
+          {
+            signal: "tables",
+            competitors: [COMPARED.competitors[0]],
+          },
+        ],
+      });
+      expect(requests.map((r) => r.url)).not.toContain(
+        "https://closed.example.org/widgets"
+      );
+    });
+
+    it("counts a comparison as one call that names its competitors' sites, and tells its analytics what it found", async () => {
+      serveCompared();
+      const { profile, calls: started, ends } = profileWith();
+      const { client, calls } = await connectWatched(profile);
+
+      await client.callTool({ name: "seo_compare_pages", arguments: COMPARED });
+
+      expect(started).toStrictEqual([
+        {
+          tool: "seo_compare_pages",
+          fetches: true,
+          crawl: false,
+          host: "shop.example.com",
+          competitors: ["rival.example.com", "closed.example.org"],
+        },
+      ]);
+      expect(ends).toStrictEqual([{ outcome: "ok", pages: 2 }]);
+      expect(calls).toMatchObject([
+        {
+          tool: "seo_compare_pages",
+          isError: false,
+          arguments: ["competitors", "context", "url"],
+          properties: {
+            target: "url",
+            competitors: 2,
+            skipped: 1,
+            gaps: 1,
+            leads: expect.any(Number),
+            rules: [],
+            format: "json",
+            detail: "compact",
+          },
+        },
+      ]);
+      expect(JSON.stringify(calls)).not.toContain("example.com");
+    });
+
+    it("refuses a competitor it may not request, or none but the page, before the call starts", async () => {
+      serveCompared();
+      const { profile, calls } = profileWith();
+      const client = await connect(profile);
+
+      const local = await client.callTool({
+        name: "seo_compare_pages",
+        arguments: { ...COMPARED, competitors: ["http://localhost:3000/"] },
+      });
+
+      const itself = await client.callTool({
+        name: "seo_compare_pages",
+        arguments: { ...COMPARED, competitors: [COMPARED.url] },
+      });
+
+      expect(textOf(local)).toContain(
+        "The hosted server cannot reach localhost"
+      );
+      expect(textOf(itself)).toBe(
+        "Agentic SEO Check error: Name at least one competitor's page other than the page itself."
+      );
+      expect(calls).toStrictEqual([]);
     });
   });
 

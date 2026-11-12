@@ -22,6 +22,7 @@ import {
   auditSite,
   auditUrl,
 } from "./core/audit.js";
+import { comparePages } from "./core/compare.js";
 import { runLighthouse } from "./core/lighthouse.js";
 import { performanceFindings } from "./core/performance-rules.js";
 import { assignIds } from "./core/recheck.js";
@@ -35,6 +36,10 @@ import { registerHostedTools } from "./mcp-hosted.js";
 import type { HostedProfile } from "./mcp-hosted.js";
 import {
   commonOptions,
+  COMPARE_KEYWORD,
+  compareDescription,
+  compareFieldDataOption,
+  competitorsOption,
   detail,
   docsNote,
   fail,
@@ -46,6 +51,7 @@ import {
   readOnlyTool,
   respond,
   respondAeo,
+  respondComparison,
   toOptions,
 } from "./mcp-shared.js";
 import { instrumentTransport } from "./telemetry/mcp.js";
@@ -576,6 +582,54 @@ export const createMcpServer = (
     }
   );
 
+  server.registerTool(
+    "seo_compare_pages",
+    {
+      ...readOnlyTool("Compare a page with competitors' pages", {
+        openWorld: true,
+      }),
+      description: compareDescription("local"),
+      inputSchema: {
+        url: z
+          .string()
+          .url()
+          .describe(
+            "The page to compare: an absolute http(s) URL, live, on staging or on http://localhost."
+          ),
+        competitors: competitorsOption(z.string().url()),
+        keyword: z.string().optional().describe(COMPARE_KEYWORD),
+        fieldData: compareFieldDataOption(LOCAL_KEY),
+        timeoutMs: commonOptions.timeoutMs,
+        userAgent: commonOptions.userAgent,
+        headers: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            'Extra request headers, e.g. {"Authorization": "Basic ..."} for a staging site. Sent to the origin of `url` only, never to a competitor.'
+          ),
+        format,
+        detail,
+      },
+    },
+    async (input) => {
+      try {
+        const comparison = await comparePages(input.url, input.competitors, {
+          keyword: input.keyword,
+          fieldData: input.fieldData,
+          fetch: {
+            timeoutMs: input.timeoutMs,
+            userAgent: input.userAgent,
+            headers: input.headers,
+          },
+        });
+
+        return respondComparison(comparison, input.format, input.detail);
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
   server.registerTool("seo_list_rules", LIST_RULES, (input) =>
     listRules(input)
   );
@@ -590,6 +644,7 @@ export const LOCAL_TOOLS: ReadonlySet<string> = new Set([
   "seo_audit_directory",
   "seo_lighthouse",
   "seo_aeo_audit",
+  "seo_compare_pages",
   "seo_list_rules",
 ]);
 

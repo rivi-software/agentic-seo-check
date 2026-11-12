@@ -52,7 +52,8 @@ export interface ProgressEvent {
     | "lighthouse"
     | "field-data"
     | "llms-txt"
-    | "ai-bots";
+    | "ai-bots"
+    | "compare";
   message: string;
   crawled?: number;
   discovered?: number;

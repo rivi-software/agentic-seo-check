@@ -6,6 +6,7 @@
  */
 import { MAKER, MAKER_URL, PRODUCT_NAME } from "../../brand.js";
 import { VERSION } from "../../version.js";
+import { competitorCounts } from "../compare.js";
 import {
   CORE_VITALS,
   FIELD_LABELS,
@@ -22,6 +23,9 @@ import type {
   AeoPageSummary,
   AiBotAccess,
   BaselineComparison,
+  Comparison,
+  ComparisonGap,
+  ComparisonLead,
   FieldData,
   FieldMetric,
   Finding,
@@ -390,7 +394,11 @@ const findingHead = (
   finding: Pick<Finding, "severity" | "message" | "rule" | "docs">,
   w: Writer,
   indent: string,
-  { lead = "", strong = false }: { lead?: string; strong?: boolean } = {}
+  {
+    lead = "",
+    strong = false,
+    symbol: mark,
+  }: { lead?: string; strong?: boolean; symbol?: string } = {}
 ): string[] => {
   const inner = `${indent}  ${" ".repeat(lead.length)}`;
   const room = w.width - inner.length;
@@ -400,10 +408,9 @@ const findingHead = (
   const fits = (lines[last] ?? "").length + 2 + id.length <= room;
   const idText = w.link(w.style("dim", id), finding.docs);
 
-  const symbol = w.style(
-    SEVERITY_STYLE[finding.severity],
-    SYMBOL[finding.severity]
-  );
+  // A comparison's gaps and leads draw their own mark, as they are no findings.
+  const symbol =
+    mark ?? w.style(SEVERITY_STYLE[finding.severity], SYMBOL[finding.severity]);
 
   const out = lines.map(
     (line, i) =>
@@ -1236,6 +1243,183 @@ export const renderAeoText = (
 
   return finish(aeoText(audit, w), w);
 };
+
+/* ---------------------------------------------------------------------------
+ * Comparison (issue #129)
+ * ------------------------------------------------------------------------- */
+
+type ComparedRow = Comparison["pages"][number];
+
+/** "4 gaps · 2 leads · 3 of 3 competitor pages read" */
+const comparisonVerdict = (c: Comparison, w: Writer): string => {
+  const { of, read } = competitorCounts(c);
+
+  return dotted(
+    [
+      c.gaps.length > 0
+        ? w.style("yellow", plural(c.gaps.length, "gap"))
+        : w.style("dim", "0 gaps"),
+      c.leads.length > 0
+        ? w.style("green", plural(c.leads.length, "lead"))
+        : w.style("dim", "0 leads"),
+      `${read} of ${plural(of, "competitor page")} read`,
+    ],
+    w
+  );
+};
+
+/** A compared page's words, or nothing for a page that was skipped. */
+const comparedWords = (p: ComparedRow): string =>
+  "signals" in p ? p.signals.words.toLocaleString("en-US") : "";
+
+/** Each page's scores and words, the page itself first; a skipped page with why. */
+const comparedPageLines = (c: Comparison, w: Writer): string[] => {
+  const wordWidth = Math.max(5, ...c.pages.map((p) => comparedWords(p).length));
+
+  const score = (value: number): string =>
+    w.style(BAND_STYLE[band(value)], String(value).padStart(3));
+
+  const rows = c.pages.flatMap((p) => {
+    const where = `${terminalSafe(pathOf(p.url, w.origin))}${p.role === "page" ? w.style("dim", " (this page)") : ""}`;
+
+    if (!("signals" in p)) {
+      return [
+        `  ${" ".repeat(12 + wordWidth)}${where}`,
+        ...block(
+          `skipped: ${p.skipped.message}`,
+          `  ${" ".repeat(12 + wordWidth)}`,
+          w
+        ).map((line) => w.style("dim", line)),
+      ];
+    }
+
+    return [
+      `  ${score(p.score.seo)}  ${score(p.score.aeo)}  ${comparedWords(p).padStart(wordWidth)}  ${where}`,
+    ];
+  });
+
+  return [
+    heading("Pages", w, { count: c.pages.length }),
+    "",
+    w.style("dim", `  SEO  AEO  ${"Words".padStart(wordWidth)}  Page`),
+    ...rows,
+    "",
+  ];
+};
+
+/** What a gap without a fix says instead: there is nothing exact to write for the author. */
+const NO_EDIT =
+  "No edit: no rule's fix closes it on this page, so what to add is the author's to write.";
+
+/** A gap in full: what the competitors have, and the edits that close it here. */
+const gapLines = (gap: ComparisonGap, w: Writer): string[] => {
+  const inner = "    ";
+
+  return [
+    ...findingHead(
+      {
+        severity: "warning",
+        message: gap.message,
+        rule: gap.type ? `${gap.signal} ${gap.type}` : gap.signal,
+      },
+      w,
+      "  ",
+      { strong: gap.fix.length > 0 }
+    ),
+    ...(gap.rules.length > 0
+      ? block(`Closed by ${gap.rules.join(", ")}.`, inner, w)
+      : block(NO_EDIT, inner, w).map((line) => w.style("dim", line))),
+    ...gap.fix.slice(0, MAX_EDITS).flatMap((edit) => editLines(edit, w, inner)),
+    ...(gap.fix.length > MAX_EDITS
+      ? [
+          `${inner}${w.style("dim", `… and ${plural(gap.fix.length - MAX_EDITS, "more edit")}`)}`,
+        ]
+      : []),
+    "",
+  ];
+};
+
+const leadLines = (lead: ComparisonLead, w: Writer): string[] =>
+  findingHead(
+    {
+      severity: "info",
+      message: lead.message,
+      rule: lead.type ? `${lead.signal} ${lead.type}` : lead.signal,
+    },
+    w,
+    "  ",
+    { symbol: w.style("green", "✓") }
+  );
+
+const comparisonText = (c: Comparison, w: Writer): string[] => {
+  const covered = c.gaps.filter((g) => g.fix.length > 0).length;
+
+  const advice = (): string => {
+    if (c.gaps.length === 0) {
+      return "Nothing to close: this page has what most competitors have.";
+    }
+
+    if (covered === 0) {
+      return "No rule covers these gaps: they need the author's own words.";
+    }
+
+    const fixes =
+      covered === 1
+        ? "Apply the fix of the gap a rule covers"
+        : `Apply the fixes of the ${covered} gaps a rule covers`;
+
+    return covered < c.gaps.length
+      ? `${fixes}; the others need the author's own words.`
+      : `${fixes}.`;
+  };
+
+  return [
+    titleLine("Comparison", c.url, w),
+    "",
+    `  ${dotted([comparisonVerdict(c, w), c.keyword ? `keyword "${terminalSafe(c.keyword)}"` : ""], w)}`,
+    "",
+    ...comparedPageLines(c, w),
+    heading("Gaps", w, { count: c.gaps.length, style: "yellow" }),
+    "",
+    ...(c.gaps.length === 0
+      ? [`  ${w.style("green", "✓ None.")}`, ""]
+      : c.gaps.flatMap((gap) => gapLines(gap, w))),
+    heading("Leads", w, { count: c.leads.length, style: "green" }),
+    "",
+    ...(c.leads.length === 0
+      ? [`  ${w.style("dim", "None.")}`]
+      : c.leads.flatMap((lead) => leadLines(lead, w))),
+    "",
+    heading("Summary", w),
+    "",
+    `  ${comparisonVerdict(c, w)}`,
+    "",
+    `  ${advice()}`,
+    ...(w.nextSteps && covered > 0
+      ? commandLines("Every edit in full: run again with", "-o report.md", w)
+      : []),
+    "",
+  ];
+};
+
+/** A comparison with competitors' pages, for a person at a terminal. */
+export const renderComparisonText = (
+  comparison: Comparison,
+  options: TextOptions = {}
+): string => {
+  const w = writer(options, null);
+
+  return finish(comparisonText(comparison, w), w);
+};
+
+/**
+ * "4 gaps · 2 leads · 3 of 3 competitor pages read" on its own, for the CLI to say what a
+ * comparison it wrote to a file found.
+ */
+export const renderComparisonVerdict = (
+  comparison: Comparison,
+  options: TextOptions = {}
+): string => comparisonVerdict(comparison, writer(options, null));
 
 /**
  * "Score 72/100 fair · 3 errors · 19 warnings · 13 info" on its own, for the CLI to say what a

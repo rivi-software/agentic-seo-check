@@ -300,21 +300,24 @@ export const MAX_INDEX_BYTES = 96;
 /**
  * One record per tool call in Analytics Engine, which keeps it for three months: the tool, the
  * outcome, the duration, the requests sent and pages audited, and the target hostname, so that an
- * abuse report about a site can be checked against what was sent to it. Never a path, a query, the
- * caller's address or anything the caller sent. A record that cannot be written is logged and
- * reported, and never fails the call it is about.
+ * abuse report about a site can be checked against what was sent to it. A comparison (issue #129)
+ * adds one record for each other hostname it sent requests to, marked `competitor`, with the
+ * requests that hostname got. Never a path, a query, the caller's address or anything the caller
+ * sent. A record that cannot be written is logged and reported, and never fails the call it is
+ * about.
  */
 const record = (
   env: LimitsEnv,
   call: HostedCallInfo,
   outcome: Outcome,
   numbers: { durationMs: number; requests: number; pages: number },
-  report: ReportTask | undefined
+  report: ReportTask | undefined,
+  role?: "competitor"
 ): void => {
   try {
     env.CALLS.writeDataPoint({
       indexes: [(call.host ?? call.tool).slice(0, MAX_INDEX_BYTES)],
-      blobs: [call.tool, outcome, call.host ?? ""],
+      blobs: [call.tool, outcome, call.host ?? "", ...(role ? [role] : [])],
       doubles: [numbers.durationMs, numbers.requests, numbers.pages],
     });
   } catch (error) {
@@ -335,6 +338,8 @@ const COUNT_BATCH = 25;
 interface Sent {
   requests: number;
   counted: number;
+  /** The requests by hostname, for a comparison's records of its competitors' sites. */
+  byHost: Map<string, number>;
 }
 
 /**
@@ -398,19 +403,31 @@ const pageSites = (
  * The gate of one call: the sites a page audit may reach (`reaches`), the limit per site, and a
  * count of the requests it lets through.
  */
+/** The sites a call that audits one page may reach, and the competitors' among them (issue #129). */
+interface Reaches {
+  caller: Caller;
+  site: (hostname: string) => Promise<boolean>;
+  /** The sites of a comparison's competitors, which are no redirect of the page's. */
+  competitors: ReadonlySet<string>;
+}
+
 const siteGate = (
   env: LimitsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
   sent: Sent,
   report: ReportTask | undefined,
-  reaches?: { caller: Caller; site: (hostname: string) => Promise<boolean> }
+  reaches?: Reaches
 ): RequestGate => ({
   beforeRequest: async (url) => {
     if (reaches && !(await reaches.site(url.hostname))) {
+      const whose = reaches.competitors.has(siteOf(url.hostname))
+        ? `${url.hostname} is a competitor's site, one more for today.`
+        : `The page led to ${url.hostname}, another site than the one audited.`;
+
       return {
         scope: "host",
         reason: `${scopeOf(reaches.caller)}_sites`,
-        message: `The page led to ${url.hostname}, another site than the one audited. ${sitesRefusal(reaches.caller, sitesLimit(env, reaches.caller))}`,
+        message: `${whose} ${sitesRefusal(reaches.caller, sitesLimit(env, reaches.caller))}`,
       };
     }
 
@@ -425,6 +442,7 @@ const siteGate = (
     }
 
     sent.requests += 1;
+    sent.byHost.set(url.hostname, (sent.byHost.get(url.hostname) ?? 0) + 1);
 
     if (sent.requests - sent.counted >= COUNT_BATCH) {
       countSent(env, ctx, sent, report);
@@ -488,7 +506,7 @@ export const hostedProfile = (
         throw error;
       }
 
-      const sent: Sent = { requests: 0, counted: 0 };
+      const sent: Sent = { requests: 0, counted: 0, byHost: new Map() };
 
       return {
         gate: siteGate(
@@ -497,15 +515,32 @@ export const hostedProfile = (
           sent,
           report,
           call.host && !call.crawl
-            ? { caller, site: pageSites(env, caller, call.host) }
+            ? {
+                caller,
+                site: pageSites(env, caller, call.host),
+                competitors: new Set((call.competitors ?? []).map(siteOf)),
+              }
             : undefined
         ),
         end: ({ outcome, pages }) => {
-          keep(call, outcome, {
-            durationMs: Date.now() - started,
-            requests: sent.requests,
-            pages,
-          });
+          const durationMs = Date.now() - started;
+
+          keep(call, outcome, { durationMs, requests: sent.requests, pages });
+
+          // A comparison's requests to its competitors' sites, so an abuse report about one of
+          // them finds what was sent to it.
+          for (const [host, requests] of call.competitors ? sent.byHost : []) {
+            if (host !== call.host) {
+              record(
+                env,
+                { ...call, host },
+                outcome,
+                { durationMs, requests, pages: 0 },
+                report,
+                "competitor"
+              );
+            }
+          }
 
           countSent(env, ctx, sent, report);
         },

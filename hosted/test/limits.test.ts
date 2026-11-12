@@ -138,6 +138,14 @@ const CRAWL: HostedCallInfo = {
   host: "www.example.com",
 };
 
+const COMPARE: HostedCallInfo = {
+  tool: "seo_compare_pages",
+  fetches: true,
+  crawl: false,
+  host: "www.example.com",
+  competitors: ["rival.example.org", "www.other.example.net"],
+};
+
 const INLINE: HostedCallInfo = {
   tool: "seo_audit_page",
   fetches: false,
@@ -391,6 +399,27 @@ describe("the hosted server's limits", () => {
     ]);
   });
 
+  it("count each competitor's site of a comparison, and say whose site a refused one is (issue #129)", async () => {
+    const { env, ctx, sites } = fakeEnv({ CALLER_SITES: 2 });
+
+    const call = await hostedProfile(env, ctx, PERSON).startCall(COMPARE);
+
+    const go = (url: string) => call.gate?.beforeRequest(new URL(url));
+
+    await expect(
+      go("https://rival.example.org/robots.txt")
+    ).resolves.toBeUndefined();
+    await expect(go("https://www.other.example.net/a")).resolves.toStrictEqual({
+      scope: "host",
+      reason: "caller_sites",
+      message:
+        "www.other.example.net is a competitor's site, one more for today. This address has audited 2 different sites on the hosted server today, its daily limit per caller. Sites it audited today still work; others wait until 00:00 UTC. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp",
+    });
+    expect([...sites.values()].map((s) => [...s])).toStrictEqual([
+      ["example.com", "rival.example.org"],
+    ]);
+  });
+
   it("share a platform's 100 sites a day among its users, apart from other callers", async () => {
     const { env, ctx } = fakeEnv();
     const claude = hostedProfile(env, ctx, CLAUDE);
@@ -489,6 +518,36 @@ describe("the hosted server's limits", () => {
       },
     ]);
     expect(JSON.stringify(points)).not.toMatch(/\/a|b=c|203\.0\.113\.9/u);
+  });
+
+  it("record each competitor's hostname a comparison sent requests to, with its requests (issue #129)", async () => {
+    const { env, ctx, points } = fakeEnv();
+    const call = await hostedProfile(env, ctx, PERSON).startCall(COMPARE);
+
+    await Promise.all(
+      [
+        "https://www.example.com/robots.txt",
+        "https://www.example.com/widgets",
+        "https://rival.example.org/robots.txt",
+        "https://rival.example.org/widgets",
+        "https://rival.example.org/llms.txt",
+      ].map((url) => call.gate?.beforeRequest(new URL(url)))
+    );
+
+    call.end?.({ outcome: "ok", pages: 2 });
+
+    expect(points).toMatchObject([
+      {
+        indexes: ["www.example.com"],
+        blobs: ["seo_compare_pages", "ok", "www.example.com"],
+        doubles: [expect.any(Number), 5, 2],
+      },
+      {
+        indexes: ["rival.example.org"],
+        blobs: ["seo_compare_pages", "ok", "rival.example.org", "competitor"],
+        doubles: [expect.any(Number), 3, 0],
+      },
+    ]);
   });
 
   it("record a hostname longer than an index holds, cut in the index and whole in the blob", async () => {

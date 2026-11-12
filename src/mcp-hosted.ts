@@ -15,6 +15,11 @@ import { PRODUCT_NAME } from "./brand.js";
 import { auditAeoHtml, auditAeoSite, auditAeoUrl } from "./core/aeo/audit.js";
 import type { AeoOptions } from "./core/aeo/audit.js";
 import { auditHtml, auditSite, auditUrl } from "./core/audit.js";
+import {
+  comparePages,
+  competitorCounts,
+  competitorsOf,
+} from "./core/compare.js";
 import { caughtError, ExpectedError } from "./core/errors.js";
 import { RequestRefusedError } from "./core/fetch.js";
 import type { FetchOptions, RequestGate } from "./core/fetch.js";
@@ -25,9 +30,13 @@ import {
   hostedUrlProblem,
   LOCAL_SERVER,
 } from "./core/hosted.js";
-import type { AeoAudit, Audit } from "./core/types.js";
+import type { AeoAudit, Audit, Comparison } from "./core/types.js";
 import {
   commonOptions,
+  COMPARE_KEYWORD,
+  compareDescription,
+  compareFieldDataOption,
+  competitorsOption,
   detail,
   docsNote,
   fail,
@@ -39,6 +48,7 @@ import {
   readOnlyTool,
   respond,
   respondAeo,
+  respondComparison,
   toOptions,
 } from "./mcp-shared.js";
 import {
@@ -49,7 +59,7 @@ import {
 } from "./telemetry/mcp.js";
 import type { CallProperties, CountedTool } from "./telemetry/mcp.js";
 import { uuidv7 } from "./telemetry/posthog.js";
-import { runReport } from "./telemetry/report.js";
+import { comparisonReport, runReport } from "./telemetry/report.js";
 
 /** One tool call, as the hosted server's `startCall` is told it. */
 export interface HostedCallInfo {
@@ -60,6 +70,11 @@ export interface HostedCallInfo {
   crawl: boolean;
   /** The host of the `url` the call audits, or null. */
   host: string | null;
+  /**
+   * seo_compare_pages (issue #129): the hosts of the competitors' pages it reads besides `host`,
+   * each a site of the day once it is requested.
+   */
+  competitors?: string[];
 }
 
 /** How a hosted tool call ended. */
@@ -386,6 +401,24 @@ const AEO_AUDIT_INPUT = {
   ...agentArguments,
 };
 
+/** The arguments of seo_compare_pages (issue #129). */
+const COMPARE_PAGES_INPUT = {
+  url: url.describe("The page to compare: an absolute, public http(s) URL."),
+  competitors: competitorsOption(url),
+  keyword: z
+    .string()
+    .max(LIMITS.maxKeywordChars)
+    .optional()
+    .describe(COMPARE_KEYWORD),
+  fieldData: compareFieldDataOption(
+    "This server asks with RIVI Software's own key, so you need none, and keeps each answer for a day. The URLs go to Google's Chrome UX Report API, never to the sites themselves."
+  ),
+  timeoutMs: hostedOptions.timeoutMs,
+  format,
+  detail,
+  ...agentArguments,
+};
+
 /** The arguments of seo_list_rules: the local server's, and those for the analytics. */
 const LIST_RULES_INPUT = { ...LIST_RULES.inputSchema, ...agentArguments };
 
@@ -503,6 +536,8 @@ interface Answer {
   result: CallToolResult;
   pages: number;
   audit?: Audit | AeoAudit;
+  /** What a call that is no audit found, for its event: a comparison's. */
+  properties?: CallProperties;
 }
 
 /** The answer of a tool's work, or its error as a tool error, and how the call ended. */
@@ -512,11 +547,12 @@ const settle = async (
   result: CallToolResult;
   end: HostedCallEnd;
   audit?: Audit | AeoAudit;
+  properties?: CallProperties;
 }> => {
   try {
-    const { result, pages, audit } = await work();
+    const { result, pages, audit, properties } = await work();
 
-    return { result, end: { outcome: "ok", pages }, audit };
+    return { result, end: { outcome: "ok", pages }, audit, properties };
   } catch (error) {
     return {
       result: fail(error),
@@ -565,10 +601,16 @@ const runCall = async (
     crawlStopped: (refusal) => noteCall({ reason: refusal.reason }),
   };
 
-  const { result, end, audit } = await settle(() => work({ ...fetch, gate }));
+  const { result, end, audit, properties } = await settle(() =>
+    work({ ...fetch, gate })
+  );
 
   if (audit) {
     noteCall(auditProperties(audit, info.fetches ? "url" : "html"));
+  }
+
+  if (properties) {
+    noteCall(properties);
   }
 
   try {
@@ -701,6 +743,18 @@ const AEO_AUDIT = {
       "hosted"
     )}`,
   inputSchema: AEO_AUDIT_INPUT,
+};
+
+/** seo_compare_pages: a page beside its competitors' pages (issue #129). */
+const COMPARE_PAGES = {
+  ...readOnlyTool("Compare a page with competitors' pages", {
+    openWorld: true,
+  }),
+  description: compareDescription(
+    "hosted",
+    `${HOSTED_NOTE}It obeys each competitor's robots.txt as any page's, and lists a competitor that robots.txt, its site or a limit keeps out with that answer. Each competitor's site counts toward the different sites a caller may audit in a day; a comparison counts as one tool call. `
+  ),
+  inputSchema: COMPARE_PAGES_INPUT,
 };
 
 /** What send_feedback answers: the feedback was kept, and nothing else changed. */
@@ -895,6 +949,75 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
   );
 };
 
+/**
+ * What a comparison found, for its call's event (issue #129): the pages it compared and skipped,
+ * its gaps and leads, and the rules whose fix closes a gap.
+ */
+const comparisonProperties = (comparison: Comparison): CallProperties => {
+  const { of, read } = competitorCounts(comparison);
+
+  return {
+    target: "url",
+    competitors: of,
+    skipped: of - read,
+    gaps: comparison.gaps.length,
+    leads: comparison.leads.length,
+    rules: comparisonReport(comparison).rules,
+  };
+};
+
+const registerComparePages = (
+  server: McpServer,
+  profile: HostedProfile
+): void => {
+  server.registerTool("seo_compare_pages", COMPARE_PAGES, (input) =>
+    inConversation(profile, input.conversation_id, () => {
+      noteOptions(input);
+
+      let host: string;
+      let competitors: string[];
+      let field: FieldDataOptions | undefined;
+
+      try {
+        host = allowedHost(input.url);
+        // A list with only the page itself in it fails here, before the call counts.
+        competitors = [
+          ...new Set(
+            competitorsOf(input.url, input.competitors).map(allowedHost)
+          ),
+        ].filter((h) => h !== host);
+        field = fieldDataOf(profile, input.fieldData);
+      } catch (error) {
+        return fail(error);
+      }
+
+      return runCall(
+        profile,
+        {
+          tool: "seo_compare_pages",
+          fetches: true,
+          crawl: false,
+          host,
+          competitors,
+        },
+        async (fetch) => {
+          const comparison = await comparePages(input.url, input.competitors, {
+            keyword: input.keyword,
+            fieldData: field,
+            fetch: { ...fetch, timeoutMs: input.timeoutMs },
+          });
+
+          return {
+            result: respondComparison(comparison, input.format, input.detail),
+            pages: comparisonReport(comparison).pages,
+            properties: comparisonProperties(comparison),
+          };
+        }
+      );
+    })
+  );
+};
+
 /** seo_list_rules: the local server's tool, with the arguments for the analytics. */
 const LIST_RULES_TOOL = { ...LIST_RULES, inputSchema: LIST_RULES_INPUT };
 
@@ -908,6 +1031,7 @@ export const HOSTED_TOOLS: ReadonlyMap<string, CountedTool> = new Map(
     seo_audit_page: AUDIT_PAGE,
     seo_crawl_site: CRAWL_SITE,
     seo_aeo_audit: AEO_AUDIT,
+    seo_compare_pages: COMPARE_PAGES,
     seo_list_rules: LIST_RULES_TOOL,
     send_feedback: FEEDBACK,
   }).map(([tool, listed]) => [
@@ -934,6 +1058,7 @@ export const registerHostedTools = (
   registerAuditPage(server, profile);
   registerCrawlSite(server, profile);
   registerAeoAudit(server, profile);
+  registerComparePages(server, profile);
 
   server.registerTool("seo_list_rules", LIST_RULES_TOOL, (input) =>
     inConversation(profile, input.conversation_id, () =>

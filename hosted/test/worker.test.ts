@@ -449,6 +449,7 @@ describe("the hosted Worker in workerd", () => {
         "send_feedback",
         "seo_aeo_audit",
         "seo_audit_page",
+        "seo_compare_pages",
         "seo_crawl_site",
         "seo_list_rules",
       ]);

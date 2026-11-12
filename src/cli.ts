@@ -4,17 +4,28 @@ import { promises as fs } from "node:fs";
 import { Argument, Command, InvalidArgumentError, Option } from "commander";
 
 import { auditAeoTarget, compactAeoAudit } from "./core/aeo/audit.js";
-import { auditTarget, compactAudit } from "./core/audit.js";
+import { auditTarget, compactAudit, resolveTarget } from "./core/audit.js";
 import type { CrawlOptions, ProgressEvent } from "./core/audit.js";
+import {
+  compactComparison,
+  comparePages,
+  MAX_COMPETITORS,
+} from "./core/compare.js";
 import { ExpectedError, onCaughtError } from "./core/errors.js";
 import type { FetchOptions } from "./core/fetch.js";
 import { baselineFromAudit } from "./core/recheck.js";
 import type { BaselineEntry } from "./core/recheck.js";
 import { installBrowser } from "./core/render.js";
 import { plural } from "./core/report/labels.js";
-import { renderAeoMarkdown, renderMarkdown } from "./core/report/markdown.js";
+import {
+  renderAeoMarkdown,
+  renderComparisonMarkdown,
+  renderMarkdown,
+} from "./core/report/markdown.js";
 import {
   renderAeoText,
+  renderComparisonText,
+  renderComparisonVerdict,
   renderRulesText,
   renderText,
   paint,
@@ -45,7 +56,7 @@ import {
   telemetryCommand,
 } from "./telemetry/local.js";
 import type { CliRun } from "./telemetry/local.js";
-import { runReport } from "./telemetry/report.js";
+import { comparisonReport, runReport } from "./telemetry/report.js";
 import {
   colorFor,
   endQuietlyOnClosedPipe,
@@ -95,6 +106,12 @@ const AEO_EXAMPLES = [
   "aeo ./dist --base-url https://www.example.com",
 ];
 
+const COMPARE_EXAMPLES = [
+  "compare https://www.example.com/widgets https://competitor.example/blue-widgets",
+  'compare https://www.example.com/widgets https://a.example/widgets https://b.example/widgets --keyword "blue widgets"',
+  "compare https://www.example.com/widgets https://a.example/widgets -o comparison.md",
+];
+
 const RULES_EXAMPLES = [
   "rules",
   "rules --category structured-data",
@@ -109,7 +126,7 @@ const INSTALL_BROWSER_EXAMPLES = [
 const TELEMETRY_EXAMPLES = ["telemetry", "telemetry disable"];
 
 /** The commands that send a `cli_command` event (issue #57); `mcp` reports its tool calls instead. */
-const TRACKED = new Set(["audit", "crawl", "aeo", "rules"]);
+const TRACKED = new Set(["audit", "crawl", "aeo", "compare", "rules"]);
 
 /** This run, while telemetry is on and the command is one of TRACKED. */
 let run: CliRun | null = null;
@@ -355,7 +372,7 @@ interface CliOptions {
 }
 
 /** The text report's options: the terminal's, or plain text for a file. */
-const textOptions = (opts: CliOptions): TextOptions =>
+const textOptions = (opts: Pick<CliOptions, "out">): TextOptions =>
   opts.out ? { nextSteps: true } : textOptionsFor(process.stdout);
 
 /** Rule ids from `--rule a b` and `--rule a,b`. */
@@ -402,7 +419,7 @@ const parseHeaders = (values: string[] = []) => {
 };
 
 /** Whether progress shows: on a terminal's stderr, unless `--quiet`. */
-const showsProgress = (opts: CliOptions): boolean =>
+const showsProgress = (opts: Pick<CliOptions, "quiet">): boolean =>
   !opts.quiet && process.stderr.isTTY;
 
 /**
@@ -410,7 +427,7 @@ const showsProgress = (opts: CliOptions): boolean =>
  * message says what it does, so only the crawl's pages get a word and a count before it.
  */
 const progressPrinter =
-  (opts: CliOptions) =>
+  (opts: Pick<CliOptions, "quiet">) =>
   (e: ProgressEvent): void => {
     if (!showsProgress(opts)) {
       return;
@@ -620,6 +637,140 @@ addAuditOptions(
 ).action(async (target: string, opts: CliOptions) => {
   await runAudit(target, opts, "aeo");
 });
+
+/** The options of `compare`: what to check, what to print, and how to send requests. */
+interface CompareCliOptions {
+  keyword?: string;
+  fieldData?: boolean;
+  format?: OutputFormat;
+  out?: string;
+  compact?: boolean;
+  quiet?: boolean;
+  timeout: number;
+  userAgent?: string;
+  header?: string[];
+}
+
+/** A URL `compare` reads, as `audit` takes one: `example.com/page` or `localhost:3000` too. */
+const pageUrl = async (target: string): Promise<string> => {
+  const resolved = await resolveTarget(target).catch(() => null);
+
+  if (resolved?.kind !== "url") {
+    throw new ExpectedError(
+      `"${target}" is not a URL: compare reads live pages.`
+    );
+  }
+
+  return resolved.url;
+};
+
+const runCompare = async (
+  target: string,
+  others: string[],
+  opts: CompareCliOptions
+): Promise<void> => {
+  if (run) {
+    run.target = await targetKind(target);
+  }
+
+  const url = await pageUrl(target);
+  const competitors = await Promise.all(others.map(pageUrl));
+  const headers = parseHeaders(opts.header);
+
+  if (showsProgress(opts)) {
+    status.show(`Comparing ${url}`);
+  }
+
+  let comparison = await comparePages(url, competitors, {
+    keyword: opts.keyword,
+    fieldData: opts.fieldData,
+    fetch: {
+      timeoutMs: opts.timeout,
+      userAgent: opts.userAgent,
+      headers: Object.keys(headers).length ? headers : undefined,
+    },
+    onProgress: progressPrinter(opts),
+  });
+
+  if (opts.compact) {
+    comparison = compactComparison(comparison);
+  }
+
+  const format = formatFor(opts.format, opts.out, process.stdout.isTTY);
+
+  const render = {
+    text: () => renderComparisonText(comparison, textOptions(opts)).trimEnd(),
+    md: () => renderComparisonMarkdown(comparison),
+    json: () => JSON.stringify(comparison, null, 2),
+  };
+
+  const output = render[format]();
+  status.clear();
+
+  if (run) {
+    run.format = format;
+    run.report = comparisonReport(comparison);
+  }
+
+  if (!opts.out) {
+    process.stdout.write(`${output}\n`);
+
+    return;
+  }
+
+  await writeReport(opts.out, output);
+
+  if (!opts.quiet) {
+    process.stderr.write(
+      `${paint(stderrColor, "green", "✓")} Report written to ${terminalSafe(opts.out)}${paint(stderrColor, "dim", " · ")}${renderComparisonVerdict(comparison, { color: stderrColor })}\n`
+    );
+  }
+};
+
+withExamples(
+  program
+    .command("compare")
+    .argument("<url>", "The page to compare")
+    .argument(
+      "<competitors...>",
+      `1 to ${MAX_COMPETITORS} competitors' pages to compare it with`
+    )
+    .summary("Compare a page with competitors' pages, and what it lacks")
+    .description(
+      `Compare a page with 1 to ${MAX_COMPETITORS} competitors' pages: both audits' scores, what sets the pages apart (text, headings, tables, structured data, author, dates, AI crawler access, llms.txt, speed), what most competitors have that the page lacks with the fix that closes it, and where the page is ahead. You bring the competitors: from a search for the query, from the user, or from the pages an AI answer cited`
+    )
+    .optionsGroup("Checks")
+    .option(
+      "-k, --keyword <keyword>",
+      "Whether each page has this phrase in its title, <h1>, meta description and text"
+    )
+    .option(
+      "--field-data",
+      "Each page's real-user Core Web Vitals from the Chrome UX Report (needs a free API key in CRUX_API_KEY)"
+    )
+    .optionsGroup("Output")
+    .addOption(
+      new Option(
+        "-f, --format <format>",
+        "Output format: text for people, md, or json for scripts and agents (default: text on a terminal, json when piped; with -o, by the file's extension)"
+      ).choices(["text", "md", "json"])
+    )
+    .option("-o, --out <file>", "Write the report to a file instead of stdout")
+    .option("--compact", "Trim long lists (smaller output for LLM consumption)")
+    .option("-q, --quiet", "Suppress progress output on stderr")
+    .optionsGroup("Requests")
+    .option("--timeout <ms>", "Per-request timeout", intArg, 15_000)
+    .option("--user-agent <ua>", "Custom User-Agent header")
+    .option(
+      "-H, --header <header...>",
+      'Extra request header "Name: value" (repeatable), sent to the page\'s own origin only, never to a competitor'
+    ),
+  runs(COMPARE_EXAMPLES)
+).action(
+  async (url: string, competitors: string[], opts: CompareCliOptions) => {
+    await runCompare(url, competitors, opts);
+  }
+);
 
 program.commandsGroup("Other commands");
 
