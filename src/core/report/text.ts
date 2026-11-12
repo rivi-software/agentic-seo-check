@@ -329,11 +329,16 @@ interface Cell {
   draw?: (line: string) => string;
 }
 
+/** `text` in lines of at most `width` columns: broken at spaces, and inside a word too long. */
+const cellLines = (text: string, width: number): string[] =>
+  wrap(text, width).flatMap((line) => chop(line, width));
+
 /**
  * Rows under a header, in a rounded frame drawn dim. Every column but the last is as wide as its
  * widest cell; the last takes the room they leave, up to the width, and wraps, breaking a path
  * too long for it. When they leave it less than `MIN_LAST` columns, each of its cells goes on
- * the lines under its row instead, across the table.
+ * the lines under its row instead, across the table; when they do not fit the width even then,
+ * the widest of them narrows and wraps too, so the frame never draws past the width.
  */
 const table = (
   heads: readonly Column[],
@@ -358,12 +363,29 @@ const table = (
     Math.max(...cells.map((row) => columns(row[i]?.text ?? "")))
   );
 
-  // The columns before the last, each with the two spaces after it.
-  const fixed = widths.slice(0, n).reduce((sum, width) => sum + width + 2, 0);
+  const lead = widths.slice(0, n);
   const natural = widths[n] ?? 0;
   // The indent and the frame's sides, with a space inside each.
   const room = w.width - 6;
-  const beside = fixed + Math.min(natural, MIN_LAST) <= room;
+  // The columns before the last, each with the two spaces after it.
+  const fixedWidth = () => lead.reduce((sum, width) => sum + width + 2, 0);
+  const beside = fixedWidth() + Math.min(natural, MIN_LAST) <= room;
+
+  // On their own line, the columns before the last still fit the room: the widest gives way.
+  let excess = beside ? 0 : fixedWidth() - 2 - room;
+
+  while (excess > 0) {
+    const widest = lead.indexOf(Math.max(...lead));
+
+    if ((lead[widest] ?? 1) <= 1) {
+      break;
+    }
+
+    lead[widest] = (lead[widest] ?? 1) - 1;
+    excess -= 1;
+  }
+
+  const fixed = fixedWidth();
 
   const inner = beside
     ? fixed + Math.min(natural, room - fixed)
@@ -373,31 +395,41 @@ const table = (
 
   const pad = (cell: Cell, line: string, width: number, right = false) => {
     const fill = " ".repeat(Math.max(0, width - columns(line)));
-    const drawn = cell.draw ? cell.draw(line) : line;
+    const drawn = cell.draw && line !== "" ? cell.draw(line) : line;
 
     return right ? `${fill}${drawn}` : `${drawn}${fill}`;
   };
 
   const rowLines = (row: readonly Cell[]): string[] => {
-    const lead = row
-      .slice(0, n)
-      .map((cell, i) => pad(cell, cell.text, widths[i] ?? 0, heads[i]?.right));
-
+    const before = row.slice(0, n);
+    const blocks = before.map((cell, i) => cellLines(cell.text, lead[i] ?? 0));
     const last = row[n] ?? { text: "" };
+    const lines = cellLines(last.text, lastWidth);
 
-    const lines = wrap(last.text, lastWidth).flatMap((line) =>
-      chop(line, lastWidth)
-    );
+    // Line `j` of the columns before the last, each padded to its column.
+    const leadLine = (j: number): string[] =>
+      before.map((cell, i) =>
+        pad(cell, blocks[i]?.[j] ?? "", lead[i] ?? 0, heads[i]?.right)
+      );
+
+    const height = Math.max(1, ...blocks.map((block) => block.length));
 
     if (beside) {
-      return lines.map(
-        (line, i) =>
-          `${i === 0 ? lead.map((text) => `${text}  `).join("") : " ".repeat(fixed)}${pad(last, line, lastWidth, heads[n]?.right)}`
+      return Array.from(
+        { length: Math.max(height, lines.length) },
+        (_, j) =>
+          `${leadLine(j)
+            .map((text) => `${text}  `)
+            .join("")}${pad(last, lines[j] ?? "", lastWidth, heads[n]?.right)}`
       );
     }
 
     return [
-      `${lead.join("  ")}${" ".repeat(Math.max(0, inner - fixed + 2))}`,
+      ...Array.from(
+        { length: height },
+        (_, j) =>
+          `${leadLine(j).join("  ")}${" ".repeat(Math.max(0, inner - fixed + 2))}`
+      ),
       ...lines
         .filter((line) => line !== "")
         .map((line) => `  ${pad(last, line, lastWidth)}`),

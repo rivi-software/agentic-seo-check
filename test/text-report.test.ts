@@ -339,6 +339,36 @@ describe("the text report of a site", () => {
     }
   });
 
+  it("keeps every frame within 40 columns, the narrowest width, by wrapping a long rule id", () => {
+    const [first] = site.issues;
+
+    if (!first) {
+      throw new Error("The crawl found no page finding.");
+    }
+
+    const long: SiteAudit = {
+      ...site,
+      issues: [{ ...first, rule: "structured-data.missing-recommended" }],
+    };
+
+    const tables = [
+      ...tablesOf(renderText(long, { width: 40 })),
+      ...tablesOf(renderRulesText(ALL_RULES, { width: 40 })),
+    ];
+
+    // Each frame as the set of its lines' widths: one width each, none past 40.
+    const widths = tables.map(
+      (lines) => new Set(lines.map((line) => columns(line)))
+    );
+
+    expect(widths.filter((set) => set.size !== 1)).toStrictEqual([]);
+    expect(Math.max(...widths.flatMap((set) => [...set]))).toBe(40);
+    expect(tables[0]?.slice(4, 6)).toStrictEqual([
+      `  │ ${first.severity === "error" ? "✖" : "▲"}      ${first.pages}  structured-data.missing- │`,
+      "  │           recommended              │",
+    ]);
+  });
+
   it("keeps a frame in line around wide characters, and breaks a path too long for it", () => {
     const [first, second] = site.issues;
     const [page] = site.pages;
