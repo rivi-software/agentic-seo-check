@@ -60,7 +60,7 @@ const audit = (html: string, path: string) => {
       headers: {
         "content-type": "text/html; charset=utf-8",
         "content-encoding": "br",
-        "cache-control": "public, max-age=3600",
+        "cache-control": "no-cache",
       },
     },
   });

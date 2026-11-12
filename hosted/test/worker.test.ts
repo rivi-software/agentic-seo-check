@@ -292,6 +292,15 @@ const fetchRead = async (
   return { res, text: await res.text() };
 };
 
+/** A GET of `path` with `headers` on the website's hostname or the MCP server's. */
+const ask = (
+  [host, path]: readonly ["site" | "mcp", string],
+  headers: Record<string, string> = {}
+) =>
+  host === "site"
+    ? website.fetch(`${SITE}${path}`, { headers })
+    : fetch(new URL(path, base), { headers });
+
 /**
  * Where the MCP server's Worker and the website's find each other, as `wrangler dev` sessions do:
  * the website's Durable Object binding names the MCP server's Worker. Only one Worker of a name may
@@ -1072,6 +1081,43 @@ describe("the hosted Worker in workerd", () => {
         ])
       );
       expect(mcp.status).toBe(405);
+    });
+
+    it("has browsers ask for its pages and scripts on every visit, on both hostnames, and answers 304 while they are unchanged (issue #160)", async () => {
+      const files = [
+        ["site", "/"],
+        ["site", "/rules"],
+        ["site", "/site.js"],
+        ["site", "/ph.js"],
+        ["mcp", "/"],
+        ["mcp", "/crawler"],
+        ["mcp", "/site.js"],
+        ["mcp", "/ph.js"],
+      ] as const;
+
+      const answers = await Promise.all(
+        files.map(async (at) => {
+          const first = await ask(at);
+          await first.arrayBuffer();
+          const etag = first.headers.get("etag") ?? "";
+
+          const again = await ask(at, { "if-none-match": etag });
+          const body = await again.arrayBuffer();
+
+          return [
+            first.headers.get("cache-control"),
+            again.status,
+            body.byteLength,
+            etag,
+          ] as const;
+        })
+      );
+
+      expect(
+        answers.map(([cache, status, bytes]) => [cache, status, bytes])
+      ).toStrictEqual(files.map(() => ["no-cache", 304, 0]));
+      // One script for both hostnames' pages.
+      expect(answers[2]?.[3]).toBe(answers[6]?.[3]);
     });
 
     it("audits a page for the form and answers with both reports", async () => {

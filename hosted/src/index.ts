@@ -24,6 +24,7 @@ import {
   openAiRangesReader,
   refreshOpenAiRanges,
 } from "./callers.js";
+import { freshResponse } from "./fresh.js";
 import { FORMER_HOST, hostedProfile, ORIGIN } from "./limits.js";
 import {
   crawlerPage,
@@ -141,20 +142,19 @@ const handleMcp = async (
   }
 };
 
+/** A page or a file at an address it keeps from deploy to deploy, which browsers ask for again. */
 const page = (
   request: Request,
   body: string,
   contentType: string,
   status = 200
-): Response =>
-  new Response(request.method === "HEAD" ? null : body, {
-    status,
-    headers: {
-      "content-type": contentType,
-      "cache-control": "public, max-age=3600",
-      "x-content-type-options": "nosniff",
-    },
-  });
+): Promise<Response> =>
+  freshResponse(
+    request,
+    body,
+    { "content-type": contentType, "x-content-type-options": "nosniff" },
+    status
+  );
 
 const HTML = "text/html; charset=utf-8";
 

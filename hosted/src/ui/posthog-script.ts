@@ -7,6 +7,7 @@ import { POSTHOG_TOKEN } from "../../../src/telemetry/posthog.js";
  * as text. Only the routes import this module: Node runs the pages' tests and cannot import it.
  */
 import SOURCE from "../../.generated/posthog-js.txt";
+import { freshResponse } from "../fresh.js";
 
 /** The bundle's last line names a source map the Worker does not serve. */
 const SOURCE_MAP = /\/\/# sourceMappingURL=\S*\s*$/u;
@@ -28,17 +29,17 @@ const posthogModule = (host: string): string => {
   return text;
 };
 
-/** /ph.js, or null while the analytics are off (`POSTHOG_HOST` empty): the pages then load nothing. */
+/**
+ * /ph.js, or null while the analytics are off (`POSTHOG_HOST` empty): the pages then load nothing.
+ * Its address stays when a deploy brings another posthog-js, so browsers ask for it again.
+ */
 export const posthogResponse = (
   request: Request,
   host: string
-): Response | null =>
+): Promise<Response> | null =>
   host
-    ? new Response(request.method === "HEAD" ? null : posthogModule(host), {
-        headers: {
-          "content-type": "text/javascript; charset=utf-8",
-          "cache-control": "public, max-age=3600",
-          "x-content-type-options": "nosniff",
-        },
+    ? freshResponse(request, posthogModule(host), {
+        "content-type": "text/javascript; charset=utf-8",
+        "x-content-type-options": "nosniff",
       })
     : null;
