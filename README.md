@@ -20,6 +20,7 @@
   <a href="https://www.npmjs.com/package/@rivi-software/agentic-seo-check"><img src="https://img.shields.io/npm/dm/@rivi-software/agentic-seo-check?color=0b6b3a" alt="Monthly npm downloads"></a>
   <a href="https://github.com/rivi-software/agentic-seo-check/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b6b3a" alt="MIT License"></a>
   <a href="https://claude.ai/directory/agentic-seo-check"><img src="https://img.shields.io/badge/Claude_Directory-listed-0b6b3a" alt="Listed in the Claude Directory"></a>
+  <a href="https://m8ven.ai/mcp/rivi-software-agentic-seo-check-1thaj2?s=readme"><img src="https://m8ven.ai/badge/mcp/rivi-software-agentic-seo-check-1thaj2?v=f32022844d8f8c8f91a6d0bf59dbd4b7" alt="M8ven Score"></a>
 </p>
 
 <p align="center">
