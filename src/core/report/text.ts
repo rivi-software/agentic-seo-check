@@ -137,6 +137,7 @@ const REQUIREMENT: Record<Requirement, string> = {
 const REQUIRED_FLAG: Record<Requirement, string> = {
   render: " --render",
   lighthouse: " --lighthouse",
+  "field-data": " --field-data",
   crawl: " --crawl",
   keyword: " --keyword <keyword>",
   "ai-bots": " --ai-bots",

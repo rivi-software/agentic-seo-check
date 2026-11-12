@@ -260,14 +260,14 @@ const addAuditOptions = (cmd: Command, mode: Mode): Command => {
         "--lighthouse",
         "Run Lighthouse for Core Web Vitals and Lighthouse SEO audits (slow)"
       )
-      .option(
-        "--field-data",
-        "Real-user Core Web Vitals from the Chrome UX Report, for a URL and the first pages of a crawl (needs a free API key in CRUX_API_KEY)"
-      )
       .addOption(
         new Option("--form-factor <type>", "Lighthouse device emulation")
           .choices(["mobile", "desktop"])
           .default("mobile")
+      )
+      .option(
+        "--field-data",
+        "Real-user Core Web Vitals from the Chrome UX Report, for a URL and the first pages of a crawl (needs a free API key in CRUX_API_KEY)"
       );
   }
 
