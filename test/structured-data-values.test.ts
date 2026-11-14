@@ -663,7 +663,7 @@ describe("structured-data.self-serving-review", () => {
     const fixed = applied(html, found?.fix);
 
     const script =
-      /<script[^>]*>(?<json>[^<]*)<\/script>/u.exec(fixed)?.groups?.["json"] ??
+      /<script[^>]*>(?<json>[^<]*)<\/script>/iu.exec(fixed)?.groups?.["json"] ??
       "";
 
     expect(found?.fix?.map((e) => e.action)).toStrictEqual([

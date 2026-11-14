@@ -99,6 +99,17 @@ describe(extractPage, () => {
     expect(page.structuredData[0]?.context).toBe("https://schema.org");
   });
 
+  it("reads JSON-LD wrapped in an HTML comment, whichever way the comment ends", () => {
+    for (const end of ["-->", "--!>"]) {
+      const html = `<html><head><script type="application/ld+json"><!--{"@context":"https://schema.org","@type":"Organization","name":"A"}${end}</script></head><body></body></html>`;
+      const page = extractPage(html, { url: "https://a.test/" });
+      expect(page.structuredDataErrors).toStrictEqual([]);
+      expect(page.structuredData.map((i) => i.types)).toStrictEqual([
+        ["Organization"],
+      ]);
+    }
+  });
+
   it("extracts microdata", () => {
     const html = `<html><body><div itemscope itemtype="https://schema.org/Person"><span itemprop="name">Ada</span><a itemprop="url" href="/ada">x</a><div itemprop="address" itemscope itemtype="https://schema.org/PostalAddress"><span itemprop="addressLocality">London</span></div></div></body></html>`;
     const page = extractPage(html, { url: "https://a.test/" });

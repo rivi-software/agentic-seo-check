@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { auditHtml } from "../src/core/audit.js";
 import { ALL_RULES } from "../src/core/rules/index.js";
+import { parseRobotsHeader } from "../src/core/rules/indexing.js";
+import { isSchemaOrgContext } from "../src/core/rules/structured-data.js";
 
 const good = readFileSync(
   new URL("fixtures/good-page.html", import.meta.url),
@@ -192,6 +194,48 @@ describe("page rules", () => {
     const f = audit.findings.find((x) => x.rule === "robots.noindex");
     expect(f?.evidence).toMatchObject({ sources: ["header"] });
     expect(audit.summary.indexable).toBeFalsy();
+  });
+
+  it("structured-data.missing-context reads the context's host, not a substring of it", async () => {
+    const contexts = [
+      "https://schema.org",
+      "http://schema.org/",
+      "https://www.schema.org/",
+      "//schema.org",
+      "schema.org",
+      " HTTPS://Schema.org ",
+      "https://example.com/schema.org",
+      "https://schema.org.example.com/",
+      "https://notschema.org/",
+    ];
+
+    expect(contexts.filter((c) => !isSchemaOrgContext(c))).toStrictEqual([
+      "https://example.com/schema.org",
+      "https://schema.org.example.com/",
+      "https://notschema.org/",
+    ]);
+
+    const audit = await auditHtml(
+      '<!DOCTYPE html><html lang="en"><head><title>Some descriptive title here</title><script type="application/ld+json">{"@context":"https://example.com/schema.org","@type":"Organization","name":"A"}</script></head><body></body></html>',
+      { url: "https://a.test/" }
+    );
+
+    expect(rulesOf(audit.findings)).toContain(
+      "structured-data.missing-context"
+    );
+  });
+
+  it("splits an X-Robots-Tag on user agents, with or without spaces after the colon", () => {
+    expect(
+      parseRobotsHeader("googlebot:  nosnippet, noarchive, bingbot:noindex")
+    ).toStrictEqual([
+      { agent: "googlebot", directive: "nosnippet" },
+      { agent: "googlebot", directive: "noarchive" },
+      { agent: "bingbot", directive: "noindex" },
+    ]);
+    expect(parseRobotsHeader("max-snippet: 20")).toStrictEqual([
+      { agent: null, directive: "max-snippet:20" },
+    ]);
   });
 
   it("keyword rules run only with a keyword", async () => {
