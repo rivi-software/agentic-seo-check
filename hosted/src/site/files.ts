@@ -84,21 +84,26 @@ export const SITE_JS = `(() => {
   const COPY = ${JSON.stringify(`${icon("copy")}<span class="sr-only">Copy</span>`)};
   const COPIED = ${JSON.stringify(`${icon("check")}<span class="sr-only">Copied</span>`)};
 
-  // The analytics: PostHog, once /ph.js has loaded. Events from before then wait in \`queue\`.
+  // The analytics: PostHog, once /ph.js has loaded. What the page sends before then, an event or an
+  // error, waits in \`queue\`.
   let analytics = null;
   const queue = [];
 
-  const track = (event, properties, options) => {
+  const send = (call) => {
     if (!analytics) {
-      queue.push([event, properties, options]);
+      queue.push(call);
       return;
     }
 
     try {
-      analytics.capture(event, properties, options);
+      call(analytics);
     } catch {
       // Analytics never break the page.
     }
+  };
+
+  const track = (event, properties, options) => {
+    send((posthog) => posthog.capture(event, properties, options));
   };
 
   // \`event\` for \`key\` once per page: a tab opened twice is one look at it.
@@ -114,13 +119,7 @@ export const SITE_JS = `(() => {
   // An error the page caught and worked around, for error tracking: its message is cleaned before
   // it leaves (cleanEvent).
   const reportError = (error, where) => {
-    try {
-      if (analytics) {
-        analytics.captureException(error, { where });
-      }
-    } catch {
-      // As above.
-    }
+    send((posthog) => posthog.captureException(error, { where }));
   };
 
   // A rule's id as the tool writes them, such as \`meta-description.missing\`: nothing else is sent.
@@ -408,8 +407,17 @@ export const SITE_JS = `(() => {
     const holder = panels[0].parentElement;
     let current = 0;
 
+    // Every way a section opens comes here: the first one as the report shows, a tab, a link to a
+    // part of a section, find in page. Each section counts once per page (trackOnce), so the one
+    // shown again after printing counts no more.
     const show = (index) => {
       current = index;
+
+      const section = panels[index].id;
+
+      if (PANEL_ID.test(section)) {
+        trackOnce("tab:" + section, "tab_viewed", { tab: section });
+      }
       tabs.forEach((tab, i) => {
         tab.setAttribute("aria-selected", String(i === index));
         tab.tabIndex = i === index ? 0 : -1;
@@ -458,12 +466,6 @@ export const SITE_JS = `(() => {
     // open is scrolled out of view above it, and the new one is shown from its start.
     const open = (index) => {
       show(index);
-
-      const tab = panels[index].id;
-
-      if (PANEL_ID.test(tab)) {
-        trackOnce("tab:" + tab, "tab_viewed", { tab });
-      }
 
       if (holder.getBoundingClientRect().top < tabStrip.getBoundingClientRect().bottom) {
         holder.scrollIntoView({ behavior: "instant" });
@@ -836,8 +838,8 @@ ${ANALYTICS_HELPERS_JS}
 
     analytics = posthog;
 
-    for (const [event, properties, options] of queue.splice(0)) {
-      track(event, properties, options);
+    for (const call of queue.splice(0)) {
+      send(call);
     }
 
     if (!banner || !settings || declined) {

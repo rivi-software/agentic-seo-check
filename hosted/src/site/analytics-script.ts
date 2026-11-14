@@ -94,14 +94,19 @@ export const ANALYTICS_HELPERS_JS = String.raw`
     return text.length > ${MAX_MESSAGE} ? text.slice(0, ${MAX_MESSAGE - 1}) + "…" : text;
   };
 
-  // Every string of an event's properties, however deep, through clean.
+  // Every string of an event's properties through clean. An object or array nested deeper than
+  // any event posthog-js builds is dropped, not sent unread.
   const scrub = (value, depth) => {
     if (typeof value === "string") {
       return clean(value);
     }
 
-    if (depth > 6 || value === null || typeof value !== "object") {
+    if (value === null || typeof value !== "object") {
       return value;
+    }
+
+    if (depth > 6) {
+      return null;
     }
 
     if (Array.isArray(value)) {

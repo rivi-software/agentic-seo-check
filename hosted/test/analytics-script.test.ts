@@ -144,6 +144,18 @@ describe("the pages' event cleaning", () => {
     });
   });
 
+  it("drops an object nested deeper than any event posthog-js builds, rather than send it unread", () => {
+    let deep: Json = { $current_url: "https://agentic-seo.org/share/abc123" };
+
+    for (let level = 0; level < 10; level += 1) {
+      deep = { nested: deep };
+    }
+
+    const event = cleaned({ event: "custom", properties: { deep } });
+
+    expect(JSON.stringify(event)).not.toContain("abc123");
+  });
+
   it("sends an error of the site's scripts with its message cleaned, and none from elsewhere", () => {
     const ours = cleaned(exception("https://agentic-seo.org/site.js"));
 
