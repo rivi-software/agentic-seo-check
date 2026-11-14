@@ -1,8 +1,8 @@
 /**
- * The files both hostnames serve beside their pages: the fonts rivi.software sets its pages in, as
+ * The files served beside the pages: the fonts rivi.software sets its pages in, as
  * Latin subsets under the SIL OFL 1.1 (Bricolage Grotesque for the headings,
  * assets/bricolage-grotesque-OFL.txt; Geist and Geist Mono for the rest, assets/geist-OFL.txt),
- * and each hostname's share image (ui/og.ts). Wrangler bundles their bytes (the Data rule in each
+ * and the website's and the server's share images (ui/og.ts). Wrangler bundles their bytes (the Data rule in each
  * Worker's configuration). Only the routes import this module: Node runs the pages' tests and cannot
  * import a font or an image.
  */

@@ -12,7 +12,7 @@ import { answerAudit, ON_OUR_SIDE } from "../src/site/audit.ts";
 import type { SiteEnv } from "../src/site/audit.ts";
 
 const POSTHOG = "https://posthog.test";
-const SITE = "https://agentic-seo.rivi.software";
+const SITE = "https://agentic-seo.org";
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 const Batch = z.object({

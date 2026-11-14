@@ -5,7 +5,12 @@
 import { describe, expect, it } from "vitest";
 
 import { readConfig, SERVER_CONFIG, SITE_CONFIG } from "../scripts/defines.ts";
-import { SITE_ORIGIN } from "../src/limits.ts";
+import {
+  FORMER_SERVER_HOSTS,
+  FORMER_SITE_HOST,
+  ORIGIN,
+  SERVER_PATHS,
+} from "../src/limits.ts";
 
 const server = readConfig(SERVER_CONFIG);
 const site = readConfig(SITE_CONFIG);
@@ -54,13 +59,23 @@ describe("the two Workers' configurations", () => {
     expect(server.vars["STATE_JURISDICTION"]).toBe("eu");
   });
 
-  it("route the website's hostname to the website alone", () => {
-    const host = new URL(SITE_ORIGIN).hostname;
+  it("route the hostname to the website, and the MCP server's own paths on it to the server (issue #168)", () => {
+    const host = new URL(ORIGIN).hostname;
 
-    const patterns = (config: typeof server) =>
-      (config.routes ?? []).map((route: { pattern: string }) => route.pattern);
+    expect(site.routes).toStrictEqual([
+      { pattern: host, custom_domain: true },
+      { pattern: FORMER_SITE_HOST, custom_domain: true },
+    ]);
 
-    expect(patterns(site)).toStrictEqual([host]);
-    expect(patterns(server)).not.toContain(host);
+    expect(server.routes).toStrictEqual([
+      ...SERVER_PATHS.map((path) => ({
+        pattern: `${host}${path}`,
+        zone_name: host,
+      })),
+      ...[...FORMER_SERVER_HOSTS].map((former) => ({
+        pattern: former,
+        custom_domain: true,
+      })),
+    ]);
   });
 });

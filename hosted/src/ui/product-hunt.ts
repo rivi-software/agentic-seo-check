@@ -9,7 +9,7 @@
  * upvote instead, which the location keeps five minutes, so it asks Product Hunt again at most that
  * often.
  */
-import { PRODUCT_NAME } from "../../../src/brand.js";
+import { PRODUCT_NAME, WEBSITE_URL } from "../../../src/brand.js";
 import { esc } from "../site/html.js";
 import { icon } from "./icons.js";
 
@@ -37,7 +37,7 @@ const MAX_BYTES = 65_536;
 const TIMEOUT_MS = 1500;
 
 /** Names the Worker to Product Hunt, so the request does not pass for a person's or an audit's. */
-const USER_AGENT = `${PRODUCT_NAME} badge (+https://agentic-seo.rivi.software)`;
+const USER_AGENT = `${PRODUCT_NAME} badge (+${WEBSITE_URL})`;
 
 /** A count as Product Hunt writes one: digits, perhaps grouped or shortened ("1,204", "1.2K"). */
 const COUNT = /^\d[\d,.]{0,8}K?$/u;

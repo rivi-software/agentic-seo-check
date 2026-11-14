@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { auditAeoHtml } from "../../src/core/aeo/audit.ts";
 import { auditHtml } from "../../src/core/audit.ts";
-import { ORIGIN } from "../src/limits.ts";
+import { BOT_ORIGIN, ORIGIN } from "../src/limits.ts";
 import { crawlerPage, landingPage } from "../src/pages.ts";
 
 /** The daily limits as wrangler.jsonc sets them. */
@@ -41,7 +41,7 @@ const problems = (findings: { rule: string; severity: string }[]) =>
 
 describe("the hosted server's pages", () => {
   it("pass the server's own SEO audit", async () => {
-    const landing = await audit(landingPage(DAILY), "/");
+    const landing = await audit(landingPage(DAILY), "/mcp");
     const crawler = await audit(crawlerPage(), "/crawler");
 
     expect(problems(landing.findings)).toStrictEqual([]);
@@ -50,7 +50,7 @@ describe("the hosted server's pages", () => {
 
   it("pass the server's own AEO audit", async () => {
     const landing = await auditAeoHtml(landingPage(DAILY), {
-      url: `${ORIGIN}/`,
+      url: `${ORIGIN}/mcp`,
     });
 
     expect(problems(landing.findings)).toStrictEqual([]);
@@ -78,14 +78,20 @@ describe("the hosted server's pages", () => {
 
     expect(html).toContain("https://help.rivi.software/contact");
     expect(html).toContain("User-agent: agentic-seo-check\nDisallow: /");
-    expect(html).toContain('cf.worker.upstream_zone eq "rivi.software"');
+    // The zone of the route that ran the server: agentic-seo.org's, or rivi.software's for a
+    // client still set up with a former hostname (issue #168).
+    expect(html).toContain(
+      'cf.worker.upstream_zone in {"agentic-seo.org" "rivi.software"}'
+    );
+    expect(html).toContain("<code>CF-Worker: agentic-seo.org</code>");
     expect(html).toContain("User-agent: agentic-seo-check-local");
   });
 
   it("say how to recognise a request by its signature, and what robots.txt does", () => {
     const html = crawlerPage();
 
-    expect(html).toContain(`Signature-Agent: "${ORIGIN}"`);
+    // The origin Cloudflare's verified-bot registration names, until it names the new one.
+    expect(html).toContain(`Signature-Agent: "${BOT_ORIGIN}"`);
     expect(html).toContain(
       'href="/.well-known/http-message-signatures-directory"'
     );

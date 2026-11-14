@@ -1,9 +1,9 @@
 /**
- * The website at agentic-seo.rivi.software (issue #39) as a Worker of its own,
- * agentic-seo-check-site (wrangler.site.jsonc), beside the MCP server's: both deploy with each
- * change to main that reaches them, the MCP server first (deploy-hosted.yml). The two share their
- * limits: the same rate limiting namespaces, and the MCP Worker's HostedState object for the day's
- * counts.
+ * The website at agentic-seo.org (issue #39) as a Worker of its own, agentic-seo-check-site
+ * (wrangler.site.jsonc), beside the MCP server's, which takes its own paths on the same hostname
+ * (issue #168): both deploy with each change to main that reaches them, the MCP server first
+ * (deploy-hosted.yml). The two share their limits: the same rate limiting namespaces, and the MCP
+ * Worker's HostedState object for the day's counts.
  */
 import { onCaughtError } from "../../../src/core/errors.js";
 import { hearCaughtError, inRequest, reportError } from "../analytics.js";

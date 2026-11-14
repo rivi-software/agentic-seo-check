@@ -3,13 +3,15 @@ import { POSTHOG_HOST } from "../../../src/telemetry/posthog.js";
 import { VERSION } from "../../../src/version.js";
 import { reportError } from "../analytics.js";
 import { freshResponse } from "../fresh.js";
+import { FORMER_SITE_HOST, movedToOrigin } from "../limits.js";
 /**
- * The routes of the website at agentic-seo.rivi.software (issue #39), which its own Worker serves
+ * The routes of the website at agentic-seo.org (issues #39 and #168), which its own Worker serves
  * (worker.ts): the homepage with the audit form, the rules, the form's answer at /audit, the
- * files a crawler asks for, and pdfmake and the fonts a report's PDF is drawn with.
+ * files a crawler asks for, the files the MCP server's pages load, and pdfmake and the fonts a
+ * report's PDF is drawn with. The MCP server's own paths on the hostname go to its Worker.
  */
 import { fontResponse, shareImageResponse } from "../ui/assets.js";
-import { OG_IMAGE } from "../ui/og.js";
+import { SERVER_CARD, SITE_CARD } from "../ui/og.js";
 import { posthogResponse } from "../ui/posthog-script.js";
 import { productHuntUpvotes } from "../ui/product-hunt.js";
 import { shareImage } from "../ui/share-image.js";
@@ -195,8 +197,20 @@ const share = async (
     : image;
 };
 
-/** A font of the pages or of a report's PDF, pdfmake, or the 404 page. */
+/** The share image of a card at `path`: the website's, or the MCP server's, whose pages it serves. */
+const cardResponse = (request: Request, path: string): Response | null => {
+  if (path === SITE_CARD.path) {
+    return shareImageResponse(request, "site");
+  }
+
+  return path === SERVER_CARD.path
+    ? shareImageResponse(request, "server")
+    : null;
+};
+
+/** A share image, a font of the pages or of a report's PDF, pdfmake, or the 404 page. */
 const asset = (request: Request, path: string): Response | Promise<Response> =>
+  cardResponse(request, path) ??
   fontResponse(request, path) ??
   pdfAssetResponse(request, path) ??
   file(request, notFoundPage(), HTML, 404);
@@ -208,6 +222,11 @@ export const siteRoute = (
 ): Response | Promise<Response> => {
   const url = new URL(request.url);
   const read = request.method === "GET" || request.method === "HEAD";
+
+  // The hostname before issue #168: links, share links and search results keep working.
+  if (url.hostname === FORMER_SITE_HOST) {
+    return movedToOrigin(request);
+  }
 
   if (url.pathname === "/audit") {
     if (request.method === "POST") {
@@ -282,10 +301,6 @@ export const siteRoute = (
 
     case "/favicon.svg": {
       return file(request, MARK_SVG, "image/svg+xml");
-    }
-
-    case OG_IMAGE.path: {
-      return shareImageResponse(request, "site");
     }
 
     default: {

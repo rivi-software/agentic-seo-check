@@ -30,13 +30,24 @@ import {
   SERVER_CONFIG,
   SITE_CONFIG,
 } from "../scripts/defines.ts";
+import { SERVER_PATHS } from "../src/limits.ts";
 import { PDFMAKE_PATH } from "../src/site/files.ts";
 import { PDF_FONT_DIR, PDF_FONTS } from "../src/site/pdf.ts";
 import { FONT_PATHS } from "../src/ui/style.ts";
 
-const ORIGIN = "https://mcp.agentic-seo.rivi.software";
-const SITE = "https://agentic-seo.rivi.software";
+/** The one hostname of both Workers (issue #168): the MCP server's Worker has its own paths there. */
+const ORIGIN = "https://agentic-seo.org";
+const SITE = ORIGIN;
+
+/** The MCP server's hostname in 0.7.0; mcp.agentic-seo.rivi.software, until issue #168, is the same to it. */
 const FORMER = "https://mcp.agentic-seo-check.rivi.software";
+
+/** The website's hostname before issue #168. */
+const FORMER_SITE = "https://agentic-seo.rivi.software";
+
+/** The origin the bot names in its User-Agent and Signature-Agent, until the registration moves. */
+const BOT = "https://mcp.agentic-seo.rivi.software";
+
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 /** Where the Worker sends its analytics in the tests (issue #57): never PostHog itself. */
@@ -294,14 +305,17 @@ const fetchRead = async (
   return { res, text: await res.text() };
 };
 
-/** A GET of `path` with `headers` on the website's hostname or the MCP server's. */
+/** A browser's GET of `path` with `headers`, from the website's Worker or the MCP server's. */
 const ask = (
   [host, path]: readonly ["site" | "mcp", string],
-  headers: Record<string, string> = {}
-) =>
-  host === "site"
+  extra: Record<string, string> = {}
+) => {
+  const headers = { accept: "text/html", ...extra };
+
+  return host === "site"
     ? website.fetch(`${SITE}${path}`, { headers })
     : fetch(new URL(path, base), { headers });
+};
 
 /**
  * Where the MCP server's Worker and the website's find each other, as `wrangler dev` sessions do:
@@ -405,9 +419,15 @@ const start = (
           )
         );
 
-        // The hosted server auditing its own pages: answer from the Worker itself.
+        // The hosted server auditing its own hostname: answer from the Worker its routes name.
         if (request.url.startsWith(`${ORIGIN}/`)) {
-          return worker.fetch(request.url);
+          const to = SERVER_PATHS.includes(new URL(request.url).pathname)
+            ? worker
+            : website;
+
+          return to.fetch(request.url, {
+            headers: { accept: request.headers.get("accept") ?? "" },
+          });
         }
 
         const route = site.get(request.url);
@@ -432,11 +452,15 @@ const start = (
  */
 const startWebsite = async (
   server: StartedWorker,
-  { registry: joins, vars }: { registry: string; vars?: StartOptions["vars"] }
+  {
+    registry: joins,
+    vars,
+    origin = SITE,
+  }: { registry: string; vars?: StartOptions["vars"]; origin?: string }
 ) => {
-  await fetchRead(server, `${ORIGIN}/robots.txt`);
+  await fetchRead(server, `${ORIGIN}/crawler`);
 
-  return start(SITE, { config: SITE_CONFIG, registry: joins, vars });
+  return start(origin, { config: SITE_CONFIG, registry: joins, vars });
 };
 
 describe("the hosted Worker in workerd", () => {
@@ -681,7 +705,7 @@ describe("the hosted Worker in workerd", () => {
       });
 
       expect(requests.find((r) => r.url.endsWith("/large"))?.userAgent).toBe(
-        `Mozilla/5.0 (compatible; agentic-seo-check/${readVersion()}; +${ORIGIN}/crawler)`
+        `Mozilla/5.0 (compatible; agentic-seo-check/${readVersion()}; +${BOT}/crawler)`
       );
       expect(page?.findings?.map((f) => f.rule)).toContain(
         "response.truncated"
@@ -714,7 +738,7 @@ describe("the hosted Worker in workerd", () => {
         "https://shop.example.com/about",
       ]) {
         expect(signatures.get(url)).toStrictEqual({
-          "signature-agent": `"${ORIGIN}"`,
+          "signature-agent": `"${BOT}"`,
           "signature-input": expect.stringMatching(
             new RegExp(
               `^sig1=\\("@authority" "signature-agent"\\);created=\\d+;expires=\\d+;keyid="${TEST_KEYID}";alg="ed25519";nonce="[^"]+";tag="web-bot-auth"$`,
@@ -781,9 +805,9 @@ describe("the hosted Worker in workerd", () => {
       });
     });
 
-    it("passes its own audit, landing page included", async () => {
+    it("passes its own audit, its page at its address included", async () => {
       const { result, audit: page } = await audit("seo_audit_page", {
-        url: `${ORIGIN}/`,
+        url: `${ORIGIN}/mcp`,
       });
 
       // In a Worker the compression check stays quiet: the site's Content-Encoding never shows.
@@ -795,46 +819,73 @@ describe("the hosted Worker in workerd", () => {
   });
 
   describe("the hosted Worker's other addresses", () => {
-    it("serve the landing page, the page for site owners, robots.txt, the icon, and the website's script and fonts", async () => {
+    it("serve its page at its address, the page for site owners, and for `hosted:dev` the icon and the website's script and fonts", async () => {
       const answers = await Promise.all(
         [
-          "/",
+          "/mcp",
           "/crawler",
-          "/robots.txt",
           "/favicon.svg",
           "/site.js",
           "/ph.js",
-          "/og.png",
+          "/og-mcp.png",
           "/fonts/bricolage-grotesque-latin.woff2",
           "/fonts/geist-latin.woff2",
           "/fonts/geist-mono-latin.woff2",
           "/nope",
         ].map(async (path) => {
-          const res = await fetch(new URL(path, base));
+          const res = await fetch(new URL(path, base), {
+            headers: { accept: "text/html" },
+          });
+
           await res.arrayBuffer();
 
           return [path, res.status, res.headers.get("content-type")];
         })
       );
 
+      const home = await fetch(new URL("/", base), { redirect: "manual" });
+      await home.arrayBuffer();
+
       expect(answers).toStrictEqual([
-        ["/", 200, "text/html; charset=utf-8"],
+        ["/mcp", 200, "text/html; charset=utf-8"],
         ["/crawler", 200, "text/html; charset=utf-8"],
-        ["/robots.txt", 200, "text/plain; charset=utf-8"],
         ["/favicon.svg", 200, "image/svg+xml"],
         ["/site.js", 200, "text/javascript; charset=utf-8"],
         ["/ph.js", 200, "text/javascript; charset=utf-8"],
-        ["/og.png", 200, "image/png"],
+        ["/og-mcp.png", 200, "image/png"],
         ["/fonts/bricolage-grotesque-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-mono-latin.woff2", 200, "font/woff2"],
         ["/nope", 404, "text/html; charset=utf-8"],
       ]);
+      // On the one hostname, / is the website's: the server's page is at its address.
+      expect([home.status, home.headers.get("location")]).toStrictEqual([
+        301,
+        "/mcp",
+      ]);
     });
 
-    it("write Product Hunt's upvotes into the badge on both hostnames, as the Worker read them", async () => {
+    it("answer a browser at /mcp with the page, varied by Accept, and an MCP client with MCP", async () => {
+      const page = await fetchRead(worker, `${ORIGIN}/mcp`, {
+        headers: { accept: "text/html,application/xhtml+xml" },
+      });
+
+      expect([
+        page.res.status,
+        page.res.headers.get("vary"),
+        page.text.includes(`<link rel="canonical" href="${ORIGIN}/mcp">`),
+      ]).toStrictEqual([200, "accept", true]);
+
+      const { tools } = await client.listTools();
+
+      expect(tools.map((t) => t.name)).toContain("seo_audit_page");
+    });
+
+    it("write Product Hunt's upvotes into the badge on both Workers' pages, as each read them", async () => {
       const pages = await Promise.all([
-        fetchRead(worker, `${ORIGIN}/`),
+        fetchRead(worker, `${ORIGIN}/mcp`, {
+          headers: { accept: "text/html" },
+        }),
         fetchRead(website, `${SITE}/`),
       ]);
 
@@ -932,7 +983,7 @@ describe("the hosted Worker in workerd", () => {
     });
   });
 
-  describe("the MCP server's hostname in 0.7.0", () => {
+  describe("the MCP server's former hostnames", () => {
     it("still serves the tools at /mcp", async () => {
       const old = new Client({ name: "worker-test", version: "0.0.0" });
       await old.connect(
@@ -948,11 +999,17 @@ describe("the hosted Worker in workerd", () => {
       }
     });
 
-    it("sends its pages to the current hostname", async () => {
+    it("send their pages to agentic-seo.org (issue #168), and a browser's /mcp to the page there", async () => {
       const answers = await Promise.all(
-        ["/", "/crawler?from=ua"].map(async (path) => {
+        [
+          ["/", "*/*"],
+          ["/mcp", "text/html"],
+          ["/crawler?from=ua", "text/html"],
+          ["/robots.txt", "*/*"],
+        ].map(async ([path, accept]) => {
           const { res } = await fetchRead(former, `${FORMER}${path}`, {
             redirect: "manual",
+            headers: { accept: accept ?? "" },
           });
 
           return [res.status, res.headers.get("location")];
@@ -960,9 +1017,71 @@ describe("the hosted Worker in workerd", () => {
       );
 
       expect(answers).toStrictEqual([
-        [301, `${ORIGIN}/`],
+        [301, `${ORIGIN}/mcp`],
+        [301, `${ORIGIN}/mcp`],
         [301, `${ORIGIN}/crawler?from=ua`],
+        [301, `${ORIGIN}/robots.txt`],
       ]);
+    });
+
+    it("keep serving the key directory that Signature-Agent names", async () => {
+      const res = await former.fetch(
+        `${FORMER}/.well-known/http-message-signatures-directory`,
+        { redirect: "manual" }
+      );
+
+      await res.arrayBuffer();
+
+      expect([res.status, res.headers.get("content-type")]).toStrictEqual([
+        200,
+        "application/http-message-signatures-directory+json",
+      ]);
+    });
+  });
+
+  describe("the website's former hostname", () => {
+    it("sends every request to the same address on agentic-seo.org, a form's POST as a POST (issue #168)", async () => {
+      // A registry of their own: one takes a single Worker of a name.
+      const own = newRegistry();
+      const server = await start(ORIGIN, { registry: own });
+
+      const formerSite = await startWebsite(server, {
+        registry: own,
+        origin: FORMER_SITE,
+      });
+
+      try {
+        await Promise.all([server.ready, formerSite.ready]);
+
+        const answers = await Promise.all(
+          [
+            ["GET", "/"],
+            ["GET", "/rules?q=title"],
+            ["GET", "/share/abc.defghijklmnopqrstuvwxyz"],
+            ["HEAD", "/robots.txt"],
+            ["POST", "/audit"],
+          ].map(async ([method, path]) => {
+            const { res } = await fetchRead(
+              formerSite,
+              `${FORMER_SITE}${path}`,
+              { method, redirect: "manual" }
+            );
+
+            return [res.status, res.headers.get("location")];
+          })
+        );
+
+        expect(answers).toStrictEqual([
+          [301, `${ORIGIN}/`],
+          [301, `${ORIGIN}/rules?q=title`],
+          [301, `${ORIGIN}/share/abc.defghijklmnopqrstuvwxyz`],
+          [301, `${ORIGIN}/robots.txt`],
+          [308, `${ORIGIN}/audit`],
+        ]);
+      } finally {
+        await Promise.all([formerSite.dispose(), server.dispose()]);
+        rmSync(own, { recursive: true, force: true });
+      }
     });
   });
 
@@ -1031,10 +1150,10 @@ describe("the hosted Worker in workerd", () => {
       );
     });
 
-    it("serves its own share image, not the hosted server's", async () => {
+    it("serves its own share image and the hosted server's, each at its own path", async () => {
       const [siteCard, serverCard] = await Promise.all([
         website.fetch(`${SITE}/og.png`).then((res) => res.arrayBuffer()),
-        fetch(new URL("/og.png", base)).then((res) => res.arrayBuffer()),
+        website.fetch(`${SITE}/og-mcp.png`).then((res) => res.arrayBuffer()),
       ]);
 
       expect([signatureOf(siteCard), signatureOf(serverCard)]).toStrictEqual([
@@ -1081,7 +1200,7 @@ describe("the hosted Worker in workerd", () => {
         ["site", "/rules"],
         ["site", "/site.js"],
         ["site", "/ph.js"],
-        ["mcp", "/"],
+        ["mcp", "/mcp"],
         ["mcp", "/crawler"],
         ["mcp", "/site.js"],
         ["mcp", "/ph.js"],
@@ -1172,7 +1291,7 @@ describe("the hosted Worker in workerd", () => {
       expect(page).toContain("AEO: AI answer engines");
       expect(requests.slice(before)).toContainEqual({
         url: "https://shop.example.com/about",
-        userAgent: `Mozilla/5.0 (compatible; agentic-seo-check/${readVersion()}; +${ORIGIN}/crawler)`,
+        userAgent: `Mozilla/5.0 (compatible; agentic-seo-check/${readVersion()}; +${BOT}/crawler)`,
       });
     });
 

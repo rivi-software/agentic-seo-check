@@ -1,3 +1,4 @@
+import { WEBSITE_URL } from "../../src/brand.js";
 /**
  * The hosted server's limits (issue #35, part 4), in the shape `createMcpServer`'s hosted profile
  * asks for them: per caller or platform before a tool call, per site before each request, per day
@@ -17,7 +18,7 @@ import type { ReportTask } from "./analytics.js";
 import type { Caller } from "./callers.js";
 import { cruxOptions } from "./crux.js";
 import type { CruxEnv } from "./crux.js";
-import { requestSigner } from "./signing.js";
+import { DIRECTORY_PATH, requestSigner } from "./signing.js";
 import { globalState } from "./state.js";
 import type { StateEnv } from "./state.js";
 
@@ -27,22 +28,67 @@ declare const HOSTED_RATE_LIMITS: Record<
   { limit: number; period: number }
 >;
 
-export const ORIGIN = "https://mcp.agentic-seo.rivi.software";
+/**
+ * The one hostname of the website and the MCP server (issue #168). The website's Worker has it as
+ * its custom domain (src/site/worker.ts); the MCP server's Worker takes routes on it for its own
+ * paths (wrangler.jsonc), which Cloudflare puts before the custom domain.
+ */
+export {
+  MCP_URL,
+  WEBSITE_URL as ORIGIN,
+  WEBSITE_URL as SITE_ORIGIN,
+} from "../../src/brand.js";
 
 /**
- * The MCP server's hostname in 0.7.0, which clients may still be set up with: it keeps answering
- * at /mcp, and sends its pages to ORIGIN.
+ * The MCP server's own paths on ORIGIN, which its Worker's routes take (wrangler.jsonc); the
+ * website's Worker has the rest. configs.test.ts holds the routes to this list.
  */
-export const FORMER_HOST = "mcp.agentic-seo-check.rivi.software";
+export const SERVER_PATHS: readonly string[] = [
+  "/mcp",
+  "/crawler",
+  DIRECTORY_PATH,
+  "/.well-known/openai-apps-challenge",
+];
 
-/** The project's website, a Worker of its own on a hostname of its own (issue #39, src/site/worker.ts). */
-export { WEBSITE_URL as SITE_ORIGIN } from "../../src/brand.js";
+/**
+ * The MCP server's hostnames before issue #168: mcp.agentic-seo.rivi.software, and
+ * mcp.agentic-seo-check.rivi.software from 0.7.0. Clients may still be set up with either, so
+ * both keep answering at /mcp and send everything else to ORIGIN (index.ts).
+ */
+export const FORMER_SERVER_HOSTS: ReadonlySet<string> = new Set([
+  "mcp.agentic-seo.rivi.software",
+  "mcp.agentic-seo-check.rivi.software",
+]);
+
+/** The website's hostname before issue #168, which sends every request to ORIGIN (site/routes.ts). */
+export const FORMER_SITE_HOST = "agentic-seo.rivi.software";
+
+/**
+ * The origin the bot names in its User-Agent and its Signature-Agent, whose key directory
+ * Cloudflare's verified-bot registration names (issue #41). It stays on the former hostname, which
+ * keeps serving the directory, until the registration names ORIGIN's.
+ */
+export const BOT_ORIGIN = "https://mcp.agentic-seo.rivi.software";
 
 /**
  * The User-Agent of every request: the product token that robots.txt groups match, and the page
  * that says what the requests are and how to stop them.
  */
-export const USER_AGENT = `Mozilla/5.0 (compatible; agentic-seo-check/${VERSION}; +${ORIGIN}/crawler)`;
+export const USER_AGENT = `Mozilla/5.0 (compatible; agentic-seo-check/${VERSION}; +${BOT_ORIGIN}/crawler)`;
+
+/**
+ * `request` sent on to the same path and query on ORIGIN, or to `path` there: 301 for a GET or a
+ * HEAD, which search engines read as a move, and 308 for anything else, which keeps a POST a POST.
+ */
+export const movedToOrigin = (request: Request, path?: string): Response => {
+  const { pathname, search } = new URL(request.url);
+  const read = request.method === "GET" || request.method === "HEAD";
+
+  return new Response(null, {
+    status: read ? 301 : 308,
+    headers: { location: `${WEBSITE_URL}${path ?? pathname}${search}` },
+  });
+};
 
 export type LimitName =
   | "SITE_REQUESTS"
@@ -492,10 +538,10 @@ export const hostedProfile = (
     userAgent: USER_AGENT,
     sign: requestSigner(
       env.WEB_BOT_AUTH_KEYS,
-      ORIGIN,
+      BOT_ORIGIN,
       report && ((error) => report(error, "signing_keys"))
     ),
-    fieldData: cruxOptions(env, ORIGIN),
+    fieldData: cruxOptions(env, WEBSITE_URL),
     startCall: async (call) => {
       const started = Date.now();
 

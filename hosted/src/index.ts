@@ -2,7 +2,9 @@
  * The hosted MCP server of Agentic SEO Check (issue #35): a stateless Worker that answers MCP over
  * Streamable HTTP at /mcp with the hosted tools of `createMcpServer`, and serves the pages that say
  * how to use it and what its requests are. The project's website is a Worker of its own
- * (src/site/worker.ts), so it deploys apart from the server.
+ * (src/site/worker.ts), so it deploys apart from the server. Both answer on one hostname (issue
+ * #168): this Worker's routes there are its own paths only (wrangler.jsonc), and the files its
+ * pages load come from the website.
  */
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
@@ -25,18 +27,17 @@ import {
   refreshOpenAiRanges,
 } from "./callers.js";
 import { freshResponse } from "./fresh.js";
-import { FORMER_HOST, hostedProfile, ORIGIN } from "./limits.js";
+import { FORMER_SERVER_HOSTS, hostedProfile, movedToOrigin } from "./limits.js";
 import {
   crawlerPage,
   FAVICON_SVG,
   landingPage,
   notFoundPage,
-  ROBOTS_TXT,
 } from "./pages.js";
 import { DIRECTORY_PATH, directoryResponse, signingKeys } from "./signing.js";
 import { SITE_JS } from "./site/files.js";
 import { fontResponse, shareImageResponse } from "./ui/assets.js";
-import { OG_IMAGE } from "./ui/og.js";
+import { SERVER_CARD } from "./ui/og.js";
 import { posthogResponse } from "./ui/posthog-script.js";
 import { productHuntUpvotes } from "./ui/product-hunt.js";
 
@@ -172,52 +173,41 @@ const keyDirectory = async (
     : page(request, notFoundPage(), HTML, 404);
 };
 
-const route = (request: Request, env: Env, ctx: ExecutionContext) => {
-  const { hostname, pathname, search } = new URL(request.url);
+/**
+ * A browser's visit, rather than an MCP client's: a GET or a HEAD that takes HTML. A client's GET
+ * asks for an event stream, and keeps getting 405.
+ */
+const visit = (request: Request): boolean =>
+  (request.method === "GET" || request.method === "HEAD") &&
+  (request.headers.get("accept") ?? "").includes("text/html");
 
-  if (request.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: PREFLIGHT });
-  }
+/** The server's page, at the server's address: one URL for an assistant and for a person. */
+const serverPage = async (
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> => {
+  const upvotes = await productHuntUpvotes(request, ctx);
+  const response = await page(request, landingPage(env, upvotes), HTML);
+  response.headers.set("vary", "accept");
 
-  if (pathname === "/mcp") {
-    return handleMcp(request, env, ctx);
-  }
+  return response;
+};
 
-  // The pages, the User-Agent's link included, live on the current hostname only.
-  if (hostname === FORMER_HOST) {
-    return new Response(null, {
-      status: 301,
-      headers: { location: `${ORIGIN}${pathname}${search}` },
-    });
-  }
-
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    return new Response("Method not allowed.\n", {
-      status: 405,
-      headers: { allow: "GET, HEAD" },
-    });
-  }
-
+/**
+ * The files the pages load, which the website serves on the one hostname: here for `hosted:dev`,
+ * which runs this Worker alone. The 404 page for any other path.
+ */
+const devFile = (
+  request: Request,
+  env: Env,
+  pathname: string
+): Response | Promise<Response> => {
   switch (pathname) {
-    case "/": {
-      return productHuntUpvotes(request, ctx).then((upvotes) =>
-        page(request, landingPage(env, upvotes), HTML)
-      );
-    }
-
-    case "/crawler": {
-      return page(request, crawlerPage(), HTML);
-    }
-
-    case "/robots.txt": {
-      return page(request, ROBOTS_TXT, "text/plain; charset=utf-8");
-    }
-
     case "/favicon.svg": {
       return page(request, FAVICON_SVG, "image/svg+xml");
     }
 
-    // The pages share the website's script and fonts.
     case "/site.js": {
       return page(request, SITE_JS, "text/javascript; charset=utf-8");
     }
@@ -229,8 +219,56 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
       );
     }
 
-    case OG_IMAGE.path: {
+    case SERVER_CARD.path: {
       return shareImageResponse(request, "server");
+    }
+
+    default: {
+      return (
+        fontResponse(request, pathname) ??
+        page(request, notFoundPage(), HTML, 404)
+      );
+    }
+  }
+};
+
+const route = (request: Request, env: Env, ctx: ExecutionContext) => {
+  const { hostname, pathname } = new URL(request.url);
+  const former = FORMER_SERVER_HOSTS.has(hostname);
+
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: PREFLIGHT });
+  }
+
+  if (pathname === "/mcp" && !visit(request)) {
+    return handleMcp(request, env, ctx);
+  }
+
+  // A former hostname keeps answering MCP, and the key directory that Signature-Agent names
+  // (BOT_ORIGIN); its pages, the User-Agent's link included, are on the current one.
+  if (former && pathname !== DIRECTORY_PATH) {
+    return movedToOrigin(request, pathname === "/" ? "/mcp" : undefined);
+  }
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("Method not allowed.\n", {
+      status: 405,
+      headers: { allow: "GET, HEAD" },
+    });
+  }
+
+  switch (pathname) {
+    case "/mcp": {
+      return serverPage(request, env, ctx);
+    }
+
+    // The page moved to the server's address; on the one hostname, / is the website's.
+    case "/": {
+      return new Response(null, { status: 301, headers: { location: "/mcp" } });
+    }
+
+    case "/crawler": {
+      return page(request, crawlerPage(), HTML);
     }
 
     case DIRECTORY_PATH: {
@@ -244,10 +282,7 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
     }
 
     default: {
-      return (
-        fontResponse(request, pathname) ??
-        page(request, notFoundPage(), HTML, 404)
-      );
+      return devFile(request, env, pathname);
     }
   }
 };
@@ -257,7 +292,6 @@ const KNOWN_PATHS = new Set([
   "/",
   "/mcp",
   "/crawler",
-  "/robots.txt",
   "/site.js",
   "/ph.js",
   "/favicon.svg",

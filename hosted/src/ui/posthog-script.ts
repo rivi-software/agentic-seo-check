@@ -1,6 +1,6 @@
 import { POSTHOG_TOKEN } from "../../../src/telemetry/posthog.js";
 /**
- * posthog-js for the website's analytics (issue #57), served at /ph.js on both hostnames so that
+ * posthog-js for the website's analytics (issue #57), served at /ph.js so that
  * the Content-Security-Policy keeps `script-src 'self'`. It is the ES module build that loads no
  * other script ("slim", "no-external"), at the version the lockfile pins, copied to
  * .generated/posthog-js.txt before each build (scripts/posthog-js.ts) so that Wrangler bundles it

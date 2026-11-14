@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/rivi-software/agentic-seo-check/security/policy
     about: Privately, as the security policy says; never in a public issue.
   - name: Requests to your site from the hosted server
-    url: https://mcp.agentic-seo.rivi.software/crawler
+    url: https://agentic-seo.org/crawler
     about: How to recognise and block them, and where to report too many, with the hostname and the time in UTC.
