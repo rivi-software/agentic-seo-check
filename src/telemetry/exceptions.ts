@@ -39,15 +39,49 @@ export interface ExceptionEntry {
 }
 
 /** How much of a message is read, and how much of what is left is sent. */
-const MAX_READ = 2000;
-const MAX_MESSAGE = 300;
+export const MAX_READ = 2000;
+export const MAX_MESSAGE = 300;
 
 /** The most errors of a `cause` chain an event lists, and the most frames of each. */
 const MAX_ERRORS = 5;
 const MAX_FRAMES = 50;
 
 /** A name in code, such as the property in "Cannot read properties of undefined (reading 'href')". */
-const IDENTIFIER = /^[A-Za-z_$][\w$]{0,63}$/u;
+export const IDENTIFIER = /^[A-Za-z_$][\w$]{0,63}$/u;
+
+/** Single-quoted text, which `cleanMessage` keeps when it is a name in code (`IDENTIFIER`). */
+export const SINGLE_QUOTED = /'[^']*'/gu;
+
+/**
+ * What `cleanMessage` replaces, in this order, and with what. The website's page script runs the
+ * same list on an error in the browser (`hosted/src/site/analytics-script.ts`), so the two never
+ * drift apart.
+ */
+export const MESSAGE_PATTERNS: readonly (readonly [RegExp, string])[] = [
+  // A URL, whose host and path are the audited site's, up to a space or a quote.
+  [/\b[a-z][\d+.a-z-]{0,31}:\/\/[^\s"'`<>]*/giu, "<url>"],
+  // A file's path, absolute or relative, on any system.
+  [/(?<![^\s(=,:[])(?:~|\.{1,2}|[a-z]:)?[/\\][^\s"'`]+/giu, "<path>"],
+  // Quoted text, up to its closing quote or the end. A single-quoted name is code, and stays.
+  [/"[^"]*"?|`[^`]*`?|“[^”]*”?/gu, "<text>"],
+  [SINGLE_QUOTED, "<text>"],
+  [/[\p{L}\p{M}\p{N}_.%+-]{1,64}@[^\s@]{1,255}/gu, "<email>"],
+  [/\b\d{1,3}(?:\.\d{1,3}){3}\b/gu, "<ip>"],
+  // An IPv6 address: in full, or with `::` for its zeros.
+  [
+    /(?<![\w:])(?:(?:[\da-f]{1,4}:){3,7}[\da-f]{1,4}|(?:[\da-f]{1,4}(?::[\da-f]{1,4}){0,6})?::(?:[\da-f]{1,4}(?::[\da-f]{1,4}){0,6})?)(?![\w:])/giu,
+    "<ip>",
+  ],
+  // Anything that reads as a hostname, in any script: text an agent writes names a site as a
+  // person does, `bäckerei-müller.de`, where a URL's hostname is punycode. Many scripts write
+  // combining marks inside a word (Devanagari's vowel signs, Thai's tone marks, Latin in NFD), so
+  // a label or a top-level domain takes them after its first character. It takes `a.map` in
+  // "a.map is not a function" too: the frame says where that was.
+  [
+    /(?<![\p{L}\p{M}\p{N}_-])(?:[\p{L}\p{N}](?:[\p{L}\p{M}\p{N}-]{0,61}[\p{L}\p{M}\p{N}])?\.)+\p{L}[\p{L}\p{M}]{1,62}(?![\p{L}\p{M}\p{N}_-])/gu,
+    "<host>",
+  ],
+];
 
 /**
  * A message without what could be a user's or a page's: our own messages name the audited target,
@@ -59,36 +93,15 @@ export const cleanMessage = (
   message: string,
   maxLength = MAX_MESSAGE
 ): string => {
-  const text = message
-    .slice(0, MAX_READ)
-    // A URL, whose host and path are the audited site's, up to a space or a quote.
-    .replaceAll(/\b[a-z][\d+.a-z-]{0,31}:\/\/[^\s"'`<>]*/giu, "<url>")
-    // A file's path, absolute or relative, on any system.
-    .replaceAll(
-      /(?<![^\s(=,:[])(?:~|\.{1,2}|[a-z]:)?[/\\][^\s"'`]+/giu,
-      "<path>"
-    )
-    // Quoted text, up to its closing quote or the end. A single-quoted name is code, and stays.
-    .replaceAll(/"[^"]*"?|`[^`]*`?|“[^”]*”?/gu, "<text>")
-    .replaceAll(/'(?<inner>[^']*)'/gu, (quoted, inner: string) =>
-      IDENTIFIER.test(inner) ? quoted : "<text>"
-    )
-    .replaceAll(/[\p{L}\p{M}\p{N}_.%+-]{1,64}@[^\s@]{1,255}/gu, "<email>")
-    .replaceAll(/\b\d{1,3}(?:\.\d{1,3}){3}\b/gu, "<ip>")
-    // An IPv6 address: in full, or with `::` for its zeros.
-    .replaceAll(
-      /(?<![\w:])(?:(?:[\da-f]{1,4}:){3,7}[\da-f]{1,4}|(?:[\da-f]{1,4}(?::[\da-f]{1,4}){0,6})?::(?:[\da-f]{1,4}(?::[\da-f]{1,4}){0,6})?)(?![\w:])/giu,
-      "<ip>"
-    )
-    // Anything that reads as a hostname, in any script: text an agent writes names a site as a
-    // person does, `bäckerei-müller.de`, where a URL's hostname is punycode. Many scripts write
-    // combining marks inside a word (Devanagari's vowel signs, Thai's tone marks, Latin in NFD), so
-    // a label or a top-level domain takes them after its first character. It takes `a.map` in
-    // "a.map is not a function" too: the frame says where that was.
-    .replaceAll(
-      /(?<![\p{L}\p{M}\p{N}_-])(?:[\p{L}\p{N}](?:[\p{L}\p{M}\p{N}-]{0,61}[\p{L}\p{M}\p{N}])?\.)+\p{L}[\p{L}\p{M}]{1,62}(?![\p{L}\p{M}\p{N}_-])/gu,
-      "<host>"
+  let text = message.slice(0, MAX_READ);
+
+  for (const [pattern, replacement] of MESSAGE_PATTERNS) {
+    text = text.replaceAll(pattern, (match) =>
+      pattern === SINGLE_QUOTED && IDENTIFIER.test(match.slice(1, -1))
+        ? match
+        : replacement
     );
+  }
 
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 };

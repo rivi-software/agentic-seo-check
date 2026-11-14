@@ -193,7 +193,7 @@ const findingHtml = (finding: Finding, id: string): string => {
   ].join("");
 
   // Errors start open: they are what to fix first.
-  return `<details class="finding sev-${finding.severity}" id="${id}"${finding.severity === "error" ? " open" : ""}>
+  return `<details class="finding sev-${finding.severity}" id="${id}" data-rule="${esc(finding.rule)}" data-severity="${finding.severity}"${finding.severity === "error" ? " open" : ""}>
 ${findingSummary(finding)}
 <div class="finding-body">${body}</div>
 </details>`;
@@ -214,7 +214,7 @@ const issueHtml = (issue: IssueRollup, id: string): string => {
       ? `, the first ${issue.examples.length}`
       : "";
 
-  return `<details class="finding sev-${issue.severity}" id="${id}">
+  return `<details class="finding sev-${issue.severity}" id="${id}" data-rule="${esc(issue.rule)}" data-severity="${issue.severity}">
 ${findingSummary(issue, chip(plural(issue.pages, "page")))}
 <div class="finding-body"><div class="todo"><p class="label">What to change</p><p>${esc(issue.recommendation)}</p></div><div class="examples"><p class="label">Pages${shown}</p><ul>${issue.examples.map((url) => `<li>${pageLink(url)}</li>`).join("")}</ul></div>${findingLinks(issue.rule, null)}</div>
 </details>`;

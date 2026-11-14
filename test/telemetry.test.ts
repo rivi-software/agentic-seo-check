@@ -28,6 +28,7 @@ import {
   clientToken,
   instrumentTransport,
   intentOf,
+  toolCallEvent,
 } from "../src/telemetry/mcp.js";
 import type {
   McpAnalytics,
@@ -99,6 +100,22 @@ const EVENT = { event: "x", properties: { distinct_id: "d" } };
 /** os.homedir() without HOME, in a container that runs under an arbitrary UID. */
 const noHome = (): string => {
   throw new Error("ENOENT: no such file or directory, uv_os_homedir");
+};
+
+/** The client name and its source a hosted tool call's event gives `caller`. */
+const clientNameIn = (caller: McpCaller) => {
+  const { properties } = toolCallEvent(
+    {
+      ...caller,
+      tool: "seo_audit_page",
+      startedAt: new Date(),
+      durationMs: 1,
+      isError: false,
+    },
+    { sessionId: `ses_${uuidv7()}`, surface: "hosted" }
+  );
+
+  return [properties.$mcp_client_name, properties.$mcp_client_name_source];
 };
 
 describe("telemetry", () => {
@@ -512,6 +529,20 @@ describe("telemetry", () => {
         "claude-code",
         undefined,
         undefined,
+      ]);
+    });
+
+    it("names a client that names itself nowhere by the product token of its headers", () => {
+      expect([
+        clientNameIn({ clientName: "claude-code", userAgent: "claude-code" }),
+        clientNameIn({ vendorClient: "claude-ai", userAgent: "Claude-User" }),
+        clientNameIn({ userAgent: "Claude-User" }),
+        clientNameIn({}),
+      ]).toStrictEqual([
+        ["claude-code", "client_info"],
+        ["claude-ai", "vendor_client"],
+        ["Claude-User", "user_agent"],
+        [undefined, undefined],
       ]);
     });
 
