@@ -992,11 +992,10 @@ describe("the audit tool's controls", () => {
     expect(counts.length).toBeGreaterThan(1);
 
     for (const { groups } of counts) {
+      // Counted by splitting on the tag: no pattern is built from the report's text.
       expect(
-        seo.match(
-          new RegExp(`<details class="finding sev-${groups?.severity}"`, "gu")
-        )
-      ).toHaveLength(Number(groups?.count));
+        seo.split(`<details class="finding sev-${groups?.severity}"`)
+      ).toHaveLength(Number(groups?.count) + 1);
     }
   });
 
