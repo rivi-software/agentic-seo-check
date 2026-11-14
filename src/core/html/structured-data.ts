@@ -48,7 +48,7 @@ export interface StructuredDataExtraction {
 const stripCdata = (source: string): string =>
   source
     .replace(/^\s*<!--/u, "")
-    .replace(/-->\s*$/u, "")
+    .replace(/--!?>\s*$/u, "")
     .replace(/^\s*\/\*\s*<!\[CDATA\[\s*\*\//u, "")
     .replace(/\/\*\s*\]\]>\s*\*\/\s*$/u, "")
     .replace(/^\s*<!\[CDATA\[/u, "")

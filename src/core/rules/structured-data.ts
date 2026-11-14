@@ -525,6 +525,35 @@ const starterBlock = (page: ExtractedPage, source: PageSource): FixEdit => {
   );
 };
 
+/**
+ * Whether a JSON-LD @context names schema.org: `https://schema.org`, `http://schema.org/`,
+ * `//schema.org` or a bare `schema.org`. The host decides, so `https://example.com/schema.org`
+ * is no schema.org context (CodeQL js/incomplete-url-substring-sanitization).
+ */
+export const isSchemaOrgContext = (context: string | null): boolean => {
+  const value = (context ?? "").trim();
+
+  if (!value) {
+    return false;
+  }
+
+  let absolute = value;
+
+  if (value.startsWith("//")) {
+    absolute = `https:${value}`;
+  } else if (!value.includes("://")) {
+    absolute = `https://${value}`;
+  }
+
+  try {
+    const host = new URL(absolute).hostname.toLowerCase();
+
+    return host === "schema.org" || host === "www.schema.org";
+  } catch {
+    return false;
+  }
+};
+
 /** The edit that gives a JSON-LD object a schema.org @context. */
 const contextEdit = (item: StructuredDataItem): FixEdit => {
   const at = jsonLdAt(item.types[0] ?? "object");
@@ -661,9 +690,7 @@ export const structuredDataRules = [
     },
     ({ page }, make) => {
       const bad = page.structuredData.filter(
-        (i) =>
-          i.source === "json-ld" &&
-          !(i.context ?? "").toLowerCase().includes("schema.org")
+        (i) => i.source === "json-ld" && !isSchemaOrgContext(i.context)
       );
 
       return bad.length

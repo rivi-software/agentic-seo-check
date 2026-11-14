@@ -29,7 +29,8 @@ export const parseRobotsHeader = (value: string): ScopedDirective[] => {
 
   for (const piece of value.toLowerCase().split(",")) {
     let directive = piece.trim();
-    const match = /^(?<name>[a-z0-9_-]+)\s*:\s*(?<rest>.*)$/u.exec(directive);
+    // The rest is trimmed below, so no \s* after the colon to backtrack against `.*` (CodeQL js/polynomial-redos).
+    const match = /^(?<name>[a-z0-9_-]+)\s*:(?<rest>.*)$/u.exec(directive);
     const name = match?.groups?.name;
 
     if (name && !VALUE_DIRECTIVES.has(name)) {
