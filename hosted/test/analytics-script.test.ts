@@ -353,6 +353,53 @@ describe("what a session recording shows (issue #181)", () => {
     ]);
   });
 
+  it("cleans each address a recording's events name", () => {
+    const event = cleaned({
+      event: "$snapshot",
+      properties: {
+        $snapshot_data: [
+          {
+            type: 4,
+            data: { href: "https://agentic-seo.org/share/abc123", width: 800 },
+          },
+          {
+            type: 5,
+            data: {
+              tag: "$pageview",
+              payload: {
+                href: "https://agentic-seo.org/?url=https%3A%2F%2Fshop.example.com%2F",
+              },
+            },
+          },
+          {
+            type: 5,
+            data: {
+              tag: "$url_changed",
+              payload: { href: "/rules?url=shop.example" },
+            },
+          },
+          { type: 2, data: "compressed" },
+        ],
+      },
+    });
+
+    expect(event?.properties.$snapshot_data).toStrictEqual([
+      {
+        type: 4,
+        data: { href: "https://agentic-seo.org/share/:result", width: 800 },
+      },
+      {
+        type: 5,
+        data: {
+          tag: "$pageview",
+          payload: { href: "https://agentic-seo.org/" },
+        },
+      },
+      { type: 5, data: { tag: "$url_changed", payload: { href: "/rules" } } },
+      { type: 2, data: "compressed" },
+    ]);
+  });
+
   it("sends a recording's data as the recorder masked it, and cleans the rest of its event", () => {
     const deep = {
       a: { b: { c: { d: { e: { f: { g: { href: "/x" } } } } } } },

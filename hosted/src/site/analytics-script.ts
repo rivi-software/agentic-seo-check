@@ -194,6 +194,27 @@ export const ANALYTICS_HELPERS_JS = String.raw`
       );
     });
 
+  // The addresses a recording names, in the meta event (data.href) and the custom events
+  // $pageview and $url_changed (data.payload.href). posthog-js puts each through
+  // maskCapturedNetworkRequestFn, which cleans it (files.ts); this holds should an upgrade stop.
+  const cleanSnapshots = (list) => {
+    if (!Array.isArray(list)) {
+      return list;
+    }
+
+    for (const item of list) {
+      const data = item && typeof item === "object" ? item.data : undefined;
+
+      for (const holder of [data, data?.payload]) {
+        if (holder && typeof holder === "object" && typeof holder.href === "string") {
+          holder.href = clean(holder.href);
+        }
+      }
+    }
+
+    return list;
+  };
+
   const cleanEvent = (event) => {
     if (!event) {
       return event;
@@ -229,10 +250,9 @@ export const ANALYTICS_HELPERS_JS = String.raw`
 
         for (const key of Object.keys(part)) {
           // A recording's data, masked as the recorder took it (PRIVATE, maskAttribute) and partly
-          // compressed, nests deeper than scrub reads: the rest of its event goes through scrub.
-          if (key !== "$snapshot_data") {
-            part[key] = scrub(part[key], 1);
-          }
+          // compressed, nests deeper than scrub reads: its addresses are cleaned where they are.
+          part[key] =
+            key === "$snapshot_data" ? cleanSnapshots(part[key]) : scrub(part[key], 1);
         }
       }
     }
