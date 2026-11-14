@@ -1,7 +1,8 @@
 /**
  * The website's homepage: what Agentic SEO Check is, the page audit to run in the browser, what it
  * checks and how to give it to a coding agent. An answer of the audit form is this page again,
- * with the report, or the reason there is none, in place of the example report.
+ * with the report, or the reason there is none, in place of the example report, under a hero that
+ * has shrunk to the form.
  */
 import { MAKER, PRODUCT_NAME, REPOSITORY_URL } from "../../../src/brand.js";
 import { AI_BOTS } from "../../../src/core/aeo/bots.js";
@@ -83,6 +84,36 @@ const formFacts = (crawls: boolean): string[] => {
 const submitButton = (crawling: boolean): string =>
   `<button class="btn btn-primary btn-lg${crawling ? " is-busy" : ""}" type="submit"${crawling ? " disabled" : ""}><span class="btn-label" data-idle="Run the audit">${crawling ? "Crawling the site…" : "Run the audit"}</span>${icon("arrow", "arrow")}</button>`;
 
+/**
+ * What the form will run on the address in the field, at the field's end: a page audit, or a crawl
+ * of the site when the address is a homepage. The page's script fills it in as the visitor types,
+ * from the same reading of the address as the server's; without the script it stays hidden, and
+ * the facts under the form say the same.
+ */
+const MODE_CHIP = `<span class="audit-mode" id="audit-mode" hidden data-page="Page audit" data-site="Site crawl" data-page-title="One page: its SEO and AEO audit" data-site-title="A homepage: a crawl of its site, up to ${HOSTED_LIMITS.maxPages} pages"><span class="mode-icon mode-page">${icon("file")}</span><span class="mode-icon mode-site">${icon("layers")}</span><span class="mode-label"></span></span>`;
+
+/** A line of the waiting panel: a grey bar as wide as `width`, where a finding will be. */
+const skeletonRow = (width: number): string =>
+  `<div class="skeleton-row"><span class="skeleton skeleton-chip"></span><span class="skeleton" style="--w:${width}%"></span></div>`;
+
+const SKELETON_SCORE = `<div class="skeleton-score"><span class="skeleton skeleton-ring"></span><div><span class="skeleton" style="--w:55%"></span><span class="skeleton" style="--w:80%"></span></div></div>`;
+
+/**
+ * What the page shows from the form's send until its answer: the address, and the outline of a
+ * report where the report will be. The script shows it, in place of the example or of the report
+ * of the run before; an audit takes a few seconds and a crawl's first page as long, with nothing
+ * else on the page to say that it runs. It names no steps, since the page cannot see them.
+ */
+const PENDING = `<div class="wrap pending" id="pending" hidden>
+<div class="window report-window" role="status">
+<div class="report-bar"><div class="report-title"><p class="pending-title"><span data-pending="page">Auditing the page</span><span data-pending="site">Starting the crawl</span></p><p class="report-url">${icon("globe")}<span class="pending-url"></span></p></div></div>
+<div class="report-body pending-body" aria-hidden="true">
+<div class="skeleton-scores">${SKELETON_SCORE}${SKELETON_SCORE}</div>
+<div class="skeleton-rows">${[72, 58, 84, 46].map(skeletonRow).join("")}</div>
+</div>
+</div>
+</div>`;
+
 const auditForm = (state: HomeState): string => {
   if (!state.open) {
     return `<div class="audit audit-off rise" style="--d:180ms" id="audit">
@@ -97,7 +128,7 @@ const auditForm = (state: HomeState): string => {
 <div class="audit-box">
 <label class="sr-only" for="url">${state.crawls ? "The address of the page to audit, or a homepage to audit its site" : "The address of the page to audit"}</label>
 <div class="audit-row">
-<div class="audit-field">${icon("globe")}<input id="url" name="url" type="text" inputmode="url" autocomplete="url" autocapitalize="none" spellcheck="false" required maxlength="2048" placeholder="https://example.com/pricing" value="${esc(state.url ?? "")}"></div>
+<div class="audit-field">${icon("globe")}<input id="url" name="url" type="text" inputmode="url" autocomplete="url" autocapitalize="none" spellcheck="false" required maxlength="2048" placeholder="https://example.com/pricing" value="${esc(state.url ?? "")}"${state.crawls ? ' aria-describedby="audit-mode"' : ""}>${state.crawls ? MODE_CHIP : ""}</div>
 ${submitButton(state.crawling ?? false)}
 </div>
 </div>
@@ -369,6 +400,14 @@ const KEEPS: [iconName: IconName, title: string, text: string][] = [
 
 const DESCRIPTION = `Audit a page or a whole site for search engines and AI answer engines, free. ${PRODUCT_NAME} gives each finding the exact fix, for you or your coding agent.`;
 
+/**
+ * The page is the form's answer with a report, or a crawl whose report streams in: the hero then
+ * shrinks to the form, so the report starts near the top of the window and the next address is
+ * one glance away.
+ */
+const answered = (state: HomeState): boolean =>
+  Boolean(state.report) || Boolean(state.crawling);
+
 /** The homepage, with the audit form and what `state` puts under it. */
 export const homePage = (state: HomeState): string =>
   layout({
@@ -387,15 +426,16 @@ export const homePage = (state: HomeState): string =>
       offers: { "@type": "Offer", price: "0", priceCurrency: "EUR" },
       publisher,
     },
-    body: `<section class="hero hero-glow" aria-labelledby="hero-title">
+    body: `<section class="hero hero-glow${answered(state) ? " hero-tool" : ""}" aria-labelledby="hero-title">
 <div class="wrap">
 <div class="hero-copy">
-<p class="pill rise"><span class="dot" aria-hidden="true"></span>Free and open source, by ${MAKER}</p>
+${answered(state) ? "" : `<p class="pill rise"><span class="dot" aria-hidden="true"></span>Free and open source, by ${MAKER}</p>`}
 <h1 class="hero-title rise" id="hero-title" style="--d:60ms">SEO and AEO audits <span class="hero-accent">with the fix for every finding.</span></h1>
-<p class="lede rise" style="--d:120ms">Check a page or a whole site for search engines and AI answer engines such as ChatGPT, Claude and Perplexity. Every finding comes with the exact edit that fixes it.</p>
+${answered(state) ? "" : `<p class="lede rise" style="--d:120ms">Check a page or a whole site for search engines and AI answer engines such as ChatGPT, Claude and Perplexity. Every finding comes with the exact edit that fixes it.</p>`}
 </div>
 ${auditForm(state)}
 </div>
+${state.open ? PENDING : ""}
 ${state.report ? "" : PREVIEW}
 </section>
 ${state.report ?? ""}
