@@ -689,13 +689,44 @@ export interface McpEventContext {
   properties?: Record<string, PropertyValue | undefined>;
 }
 
-const callerProperties = (caller: McpCaller) => ({
-  $mcp_client_name: caller.clientName,
-  $mcp_client_version: caller.clientVersion,
-  $mcp_protocol_version: caller.protocolVersion,
-  $mcp_client_user_agent: caller.userAgent,
-  $mcp_vendor_client: caller.vendorClient,
-});
+/** Where a call's client name came from: the client itself, or a header's product token. */
+interface ClientName {
+  name?: string;
+  source?: "client_info" | "vendor_client" | "user_agent";
+}
+
+const clientNameOf = (caller: McpCaller): ClientName => {
+  if (caller.clientName !== undefined) {
+    return { name: caller.clientName, source: "client_info" };
+  }
+
+  if (caller.vendorClient !== undefined) {
+    return { name: caller.vendorClient, source: "vendor_client" };
+  }
+
+  return caller.userAgent === undefined
+    ? {}
+    : { name: caller.userAgent, source: "user_agent" };
+};
+
+/**
+ * A caller's properties. A client that names itself neither in `initialize` nor in the call, such
+ * as claude.ai's, which sends no session back to the stateless hosted server, is named by the
+ * product token of its headers (`Claude-User`, `curl`), so MCP Analytics counts it under a
+ * harness all the same; `$mcp_client_name_source` says which.
+ */
+const callerProperties = (caller: McpCaller) => {
+  const client = clientNameOf(caller);
+
+  return {
+    $mcp_client_name: client.name,
+    $mcp_client_name_source: client.source,
+    $mcp_client_version: caller.clientVersion,
+    $mcp_protocol_version: caller.protocolVersion,
+    $mcp_client_user_agent: caller.userAgent,
+    $mcp_vendor_client: caller.vendorClient,
+  };
+};
 
 /** The properties of every event. No person profile: the session is the only id. */
 const common = (context: McpEventContext) => ({

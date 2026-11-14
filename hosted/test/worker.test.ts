@@ -1154,6 +1154,18 @@ describe("the hosted Worker in workerd", () => {
       );
     });
 
+    it("bundles the two extensions the pages turn on into /ph.js, so nothing loads from PostHog's CDN", async () => {
+      const { text: source } = await fetchRead(website, `${SITE}/ph.js`);
+
+      expect(
+        [
+          /export\{[^}]*\bas EXTENSIONS\b/u,
+          /postHogWebVitalsCallbacks/u,
+          /errorWrappingFunctions/u,
+        ].filter((pattern) => !pattern.test(source))
+      ).toStrictEqual([]);
+    });
+
     it("serves its own share image and the hosted server's, each at its own path", async () => {
       const [siteCard, serverCard] = await Promise.all([
         website.fetch(`${SITE}/og.png`).then((res) => res.arrayBuffer()),

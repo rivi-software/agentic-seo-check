@@ -125,8 +125,18 @@ const INSTALL_BROWSER_EXAMPLES = [
 
 const TELEMETRY_EXAMPLES = ["telemetry", "telemetry disable"];
 
-/** The commands that send a `cli_command` event (issue #57); `mcp` reports its tool calls instead. */
-const TRACKED = new Set(["audit", "crawl", "aeo", "compare", "rules"]);
+/**
+ * The commands that send a `cli_command` event (issue #57); `mcp` reports its tool calls instead.
+ * `install-browser`'s says whether the download for `--render` and `--lighthouse` worked.
+ */
+const TRACKED = new Set([
+  "audit",
+  "crawl",
+  "aeo",
+  "compare",
+  "rules",
+  "install-browser",
+]);
 
 /** This run, while telemetry is on and the command is one of TRACKED. */
 let run: CliRun | null = null;

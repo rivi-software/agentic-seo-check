@@ -1,10 +1,10 @@
 import { POSTHOG_TOKEN } from "../../../src/telemetry/posthog.js";
 /**
  * posthog-js for the website's analytics (issue #57), served at /ph.js so that
- * the Content-Security-Policy keeps `script-src 'self'`. It is the ES module build that loads no
- * other script ("slim", "no-external"), at the version the lockfile pins, copied to
- * .generated/posthog-js.txt before each build (scripts/posthog-js.ts) so that Wrangler bundles it
- * as text. Only the routes import this module: Node runs the pages' tests and cannot import it.
+ * the Content-Security-Policy keeps `script-src 'self'`. It is the slim ES module build, which loads
+ * no other script, with the Web Vitals and error tracking extensions bundled in and exported as
+ * `EXTENSIONS`, at the version the lockfile pins, built into .generated/posthog-js.txt before each
+ * build (scripts/posthog-js.ts) so that Wrangler bundles it as text. Only the routes import this module: Node runs the pages' tests and cannot import it.
  */
 import SOURCE from "../../.generated/posthog-js.txt";
 import { freshResponse } from "../fresh.js";

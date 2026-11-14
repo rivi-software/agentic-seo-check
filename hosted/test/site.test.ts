@@ -397,6 +397,13 @@ const deadFixLinks = (report: string) =>
       )
   );
 
+/** The findings of a report, and those of them that name their rule for the page's analytics. */
+const findingRules = (report: string) => [
+  report.match(/<details class="finding /gu)?.length ?? 0,
+  report.match(/<details class="finding [^>]*data-rule="[a-z0-9.-]+"/gu)
+    ?.length ?? 0,
+];
+
 describe("the report of a page audit", () => {
   it("shows both audits' scores and findings with their fixes", async () => {
     const url = "https://shop.example.com/";
@@ -414,6 +421,24 @@ describe("the report of a page audit", () => {
     expect(report).toContain("<code>title.generic</code>");
     expect(report).toContain('class="edits"');
     expect(report).toContain('id="report-data"');
+  });
+
+  it("names the rule on each finding, for the page's finding_opened event", async () => {
+    const url = "https://shop.example.com/";
+
+    const html =
+      "<html><head><title>React App</title></head><body></body></html>";
+
+    const report = renderReport(
+      await auditHtml(html, { url, source: "url", target: url }),
+      await auditAeoHtml(html, { url })
+    );
+
+    const [findings, named] = findingRules(report);
+
+    expect(report).toContain('data-rule="title.generic"');
+    expect(findings).toBeGreaterThan(0);
+    expect(named).toBe(findings);
   });
 
   it("links a finding to its rule's page, and a rule the site has no page for to none (issue #171)", async () => {
@@ -620,6 +645,11 @@ describe("the report of a site audit", () => {
     ];
 
     expect(parts.filter((part) => !report.includes(part))).toStrictEqual([]);
+
+    // Each finding and each rule across the pages names its rule, for the page's analytics.
+    const [findings, named] = findingRules(report);
+    expect(findings).toBeGreaterThan(0);
+    expect(named).toBe(findings);
   });
 
   it("is in sections, with the findings on the pages by category under those across the site", () => {

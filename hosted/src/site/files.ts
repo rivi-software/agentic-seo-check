@@ -9,6 +9,7 @@ import { ALL_RULES } from "../../../src/core/rules/index.js";
 import { MCP_URL } from "../limits.js";
 import { CLAUDE_DIRECTORY_URL } from "../ui/frame.js";
 import { icon } from "../ui/icons.js";
+import { ANALYTICS_HELPERS_JS } from "./analytics-script.js";
 import { SITE_ORIGIN } from "./layout.js";
 import { rulePath } from "./rule-info.js";
 
@@ -73,31 +74,64 @@ export const PDFMAKE_PATH = "/pdfmake.js";
  * every section and finding while the page prints, adds the system's share sheet to the report's
  * Share menu, and
  * filters the rules page. In production it also loads PostHog from /ph.js for the
- * usage analytics (issue #57), with the cookie banner, and sends the closed list of events below:
- * never an address the visitor audited, nothing they typed and nothing from a report but its
- * scores. Without it every page still reads and works, but the form. It runs once the page is read
- * to its end, so after a crawl's streamed answer.
+ * usage analytics (issue #57), with the cookie banner, and sends the closed list of events below,
+ * the site's own Web Vitals and its scripts' errors: never an address the visitor audited, nothing
+ * they typed and nothing from a report but its scores and the ids of the rules opened. Without it
+ * every page still reads and works, but the form. It runs once the page is read to its end, so
+ * after a crawl's streamed answer.
  */
 export const SITE_JS = `(() => {
   const COPY = ${JSON.stringify(`${icon("copy")}<span class="sr-only">Copy</span>`)};
   const COPIED = ${JSON.stringify(`${icon("check")}<span class="sr-only">Copied</span>`)};
 
-  // The analytics: PostHog, once /ph.js has loaded. Events from before then wait in \`queue\`.
+  // The analytics: PostHog, once /ph.js has loaded. What the page sends before then, an event or an
+  // error, waits in \`queue\`.
   let analytics = null;
   const queue = [];
 
-  const track = (event, properties, options) => {
+  const send = (call) => {
     if (!analytics) {
-      queue.push([event, properties, options]);
+      queue.push(call);
       return;
     }
 
     try {
-      analytics.capture(event, properties, options);
+      call(analytics);
     } catch {
       // Analytics never break the page.
     }
   };
+
+  const track = (event, properties, options) => {
+    send((posthog) => posthog.capture(event, properties, options));
+  };
+
+  // \`event\` for \`key\` once per page: a tab opened twice is one look at it.
+  const sent = new Set();
+
+  const trackOnce = (key, event, properties) => {
+    if (!sent.has(key)) {
+      sent.add(key);
+      track(event, properties);
+    }
+  };
+
+  // An error the page caught and worked around, for error tracking: its message is cleaned before
+  // it leaves (cleanEvent).
+  const reportError = (error, where) => {
+    send((posthog) => posthog.captureException(error, { where }));
+  };
+
+  // A rule's id as the tool writes them, such as \`meta-description.missing\`: nothing else is sent.
+  const RULE_ID = /^[a-z0-9][a-z0-9.-]{0,79}$/;
+
+  const ruleOf = (element) => {
+    const rule = element && element.dataset.rule;
+    return rule && RULE_ID.test(rule) ? rule : undefined;
+  };
+
+  // A report's section, such as \`seo\`: an id the report gives its panel, one short word.
+  const PANEL_ID = /^[a-z]{1,20}$/;
 
   // Shows \`text\` on a button for two seconds, then what it said before.
   const say = (button, text) => {
@@ -240,6 +274,9 @@ export const SITE_JS = `(() => {
     // The value each facet is narrowed to; "" is all of them.
     const chosen = { audit: "", severity: "" };
 
+    // The timer of the filter's event.
+    let filtered;
+
     filter.hidden = false;
 
     const apply = () => {
@@ -275,6 +312,20 @@ export const SITE_JS = `(() => {
       if (empty) {
         empty.hidden = shown > 0;
       }
+
+      // Once the visitor stops typing or clicking: the facets, whether there was text and how many
+      // rules were left. Never the text itself.
+      clearTimeout(filtered);
+      filtered = setTimeout(() => {
+        if (narrowed) {
+          track("rules_filtered", {
+            audit: chosen.audit || "all",
+            severity: chosen.severity || "all",
+            text: words.length > 0,
+            shown,
+          });
+        }
+      }, 1500);
     };
 
     input.addEventListener("input", apply);
@@ -356,8 +407,17 @@ export const SITE_JS = `(() => {
     const holder = panels[0].parentElement;
     let current = 0;
 
+    // Every way a section opens comes here: the first one as the report shows, a tab, a link to a
+    // part of a section, find in page. Each section counts once per page (trackOnce), so the one
+    // shown again after printing counts no more.
     const show = (index) => {
       current = index;
+
+      const section = panels[index].id;
+
+      if (PANEL_ID.test(section)) {
+        trackOnce("tab:" + section, "tab_viewed", { tab: section });
+      }
       tabs.forEach((tab, i) => {
         tab.setAttribute("aria-selected", String(i === index));
         tab.tabIndex = i === index ? 0 : -1;
@@ -469,6 +529,37 @@ export const SITE_JS = `(() => {
     });
   }
 
+  // A finding of a report, or a rule on the rules page, that the visitor opens: its rule, its
+  // severity and, in a report, its section. One that starts open (an error) or opens for a link or
+  // for printing is no click on it, and counts not.
+  document.addEventListener("click", (event) => {
+    const summary = event.target.closest && event.target.closest("summary");
+    const details = summary && summary.parentElement;
+
+    if (!details || details.tagName !== "DETAILS" || details.open) {
+      return;
+    }
+
+    if (details.classList.contains("finding")) {
+      const rule = ruleOf(details);
+      const panel = details.closest(".report-panel");
+      const section = panel && PANEL_ID.test(panel.id) ? panel.id : undefined;
+
+      if (rule) {
+        trackOnce("finding:" + details.id, "finding_opened", {
+          rule,
+          severity: details.dataset.severity,
+          section,
+        });
+      }
+    } else if (details.classList.contains("rule") && RULE_ID.test(details.id)) {
+      trackOnce("rule:" + details.id, "rule_opened", {
+        rule: details.id,
+        severity: details.dataset.severity,
+      });
+    }
+  });
+
   // The report's Share menu: the system's share sheet where the browser has one, and the menu
   // closes on a click outside it or on Escape.
   const menus = document.querySelectorAll(".share-menu");
@@ -527,8 +618,10 @@ export const SITE_JS = `(() => {
       const script = document.createElement("script");
       script.src = ${JSON.stringify(PDFMAKE_PATH)};
       script.onload = () =>
-        window.drawReportPdf ? resolve(window.drawReportPdf) : reject(new Error("pdfmake"));
-      script.onerror = reject;
+        window.drawReportPdf
+          ? resolve(window.drawReportPdf)
+          : reject(new Error("pdfmake loaded without drawReportPdf"));
+      script.onerror = () => reject(new Error("pdfmake did not load"));
       document.head.append(script);
     }).catch((error) => {
       drawing = null;
@@ -572,7 +665,8 @@ export const SITE_JS = `(() => {
             const draw = await loadPdf();
             const file = await draw(data.pdf).getBlob();
             save(file, "agentic-seo-check-" + data.name + ".pdf");
-          } catch {
+          } catch (error) {
+            reportError(error, "pdf");
             window.print();
           } finally {
             button.disabled = false;
@@ -677,52 +771,7 @@ export const SITE_JS = `(() => {
     }
   });
 
-  // An address of this site as an event records it, less what belongs to the audited site: a
-  // share link's result (its address and scores) and the address a link put in the form. The
-  // hostnames before issue #168 too, which a referrer may still name.
-  const OWN = /^(agentic-seo\\.org|(mcp\\.)?agentic-seo(-check)?\\.rivi\\.software)$/;
-
-  const clean = (value) => {
-    if (typeof value !== "string" || !/^(\\/|https?:\\/\\/)/.test(value)) {
-      return value;
-    }
-
-    let url;
-
-    try {
-      url = new URL(value, location.href);
-    } catch {
-      return value;
-    }
-
-    if (!OWN.test(url.hostname) && url.hostname !== location.hostname) {
-      return value;
-    }
-
-    if (url.pathname.startsWith("/share/")) {
-      url.pathname = "/share/:result";
-    }
-
-    url.searchParams.delete("url");
-    url.hash = "";
-
-    return value.startsWith("/") ? url.pathname + url.search : url.href;
-  };
-
-  const cleanAll = (properties) => {
-    if (!properties) {
-      return;
-    }
-
-    // A share page's title names the address and its scores.
-    delete properties.title;
-    delete properties.$title;
-
-    for (const key of Object.keys(properties)) {
-      properties[key] = clean(properties[key]);
-    }
-  };
-
+${ANALYTICS_HELPERS_JS}
   const banner = document.querySelector("#consent");
   const settings = document.querySelector("[data-consent-settings]");
 
@@ -752,8 +801,22 @@ export const SITE_JS = `(() => {
       rageclick: false,
       capture_dead_clicks: false,
       capture_heatmaps: false,
-      capture_exceptions: false,
-      capture_performance: false,
+      // The errors of this site's scripts, their messages cleaned (cleanEvent), never the console.
+      capture_exceptions: {
+        capture_unhandled_errors: true,
+        capture_unhandled_rejections: true,
+        capture_console_errors: false,
+      },
+      // The site's own Core Web Vitals, as the audit judges other sites by them: no network timing,
+      // and no attribution, which would name the page's elements and files (and need the larger
+      // build of web-vitals, which /ph.js leaves out).
+      capture_performance: {
+        web_vitals: true,
+        web_vitals_attribution: false,
+        network_timing: false,
+      },
+      // The two extensions /ph.js bundles beside posthog-js's slim build (scripts/posthog-js.ts).
+      __extensionClasses: module.EXTENSIONS,
       disable_session_recording: true,
       disable_surveys: true,
       disable_product_tours: true,
@@ -761,21 +824,22 @@ export const SITE_JS = `(() => {
       disable_conversations: true,
       // No flags and no remote config: the project's settings turn nothing on here.
       advanced_disable_flags: true,
-      before_send: (event) => {
-        if (event) {
-          cleanAll(event.properties);
-          cleanAll(event.$set);
-          cleanAll(event.$set_once);
-        }
-
-        return event;
-      },
+      before_send: cleanEvent,
     });
+
+    // Web Vitals start on PostHog's remote config, which the pages never load: start them here.
+    try {
+      if (posthog.webVitalsAutocapture) {
+        posthog.webVitalsAutocapture.startIfEnabled();
+      }
+    } catch {
+      // As above.
+    }
 
     analytics = posthog;
 
-    for (const [event, properties, options] of queue.splice(0)) {
-      track(event, properties, options);
+    for (const call of queue.splice(0)) {
+      send(call);
     }
 
     if (!banner || !settings || declined) {

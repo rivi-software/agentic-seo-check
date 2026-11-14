@@ -358,7 +358,7 @@ const KEEPS: [iconName: IconName, title: string, text: string][] = [
   [
     "chart",
     "Visits, counted",
-    "PostHog (EU) counts visits, actions and our own errors, never the address you audited. A cookie only if you accept one.",
+    "PostHog (EU) counts visits, actions, how fast these pages load and our own errors, never the address you audited. A cookie only if you accept one.",
   ],
   [
     "globe",
