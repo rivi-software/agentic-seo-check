@@ -120,11 +120,25 @@ const FOOTER: [heading: string, links: [href: string, label: string][]][] = [
 export const linkFrom = (origin: string, href: string): string =>
   href.startsWith(`${origin}/`) ? href.slice(origin.length) : href;
 
+/**
+ * How a link in the header is current: the page itself, or the section a page is in, such as
+ * Rules on a rule's own page (issue #171). The homepage is no section of the others.
+ */
+const currentOf = (href: string, url: string): string => {
+  if (href === url) {
+    return ' aria-current="page"';
+  }
+
+  return href.endsWith("/") || !url.startsWith(`${href}/`)
+    ? ""
+    : ' aria-current="true"';
+};
+
 const links = (host: Host, url: string, items: [string, string][]): string =>
   items
     .map(
       ([href, label]) =>
-        `<a href="${linkFrom(host.origin, href)}"${href === url ? ' aria-current="page"' : ""}>${label}</a>`
+        `<a href="${linkFrom(host.origin, href)}"${currentOf(href, url)}>${label}</a>`
     )
     .join("");
 

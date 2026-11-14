@@ -64,6 +64,7 @@ import type {
   ReportParts,
   Tone,
 } from "./report-data.js";
+import { rulePathOf } from "./rule-info.js";
 
 const SEVERITY_LABEL: Record<Severity, string> = {
   error: "Error",
@@ -155,6 +156,25 @@ export const findingSummary = (
 ): string =>
   `<summary>${severityChip(item.severity)}<span class="finding-text"><span class="msg">${esc(item.message)}</span><span class="finding-meta">${code(item.rule)}${chips}</span></span>${icon("chevron", "chev")}</summary>`;
 
+/**
+ * The links under a finding: the rule's own page on this site (issue #171), when the rule has one,
+ * and the search engine's documentation.
+ */
+const findingLinks = (rule: string, docs: string | null): string => {
+  const page = rulePathOf(rule);
+
+  const links = [
+    page
+      ? `<a class="link-arrow" href="${page}">About the rule${icon("arrow", "arrow")}</a>`
+      : "",
+    docs
+      ? `<a class="link-arrow" href="${docs}" rel="noopener">Documentation${icon("arrow", "arrow")}</a>`
+      : "",
+  ].join("");
+
+  return links ? `<p class="finding-links">${links}</p>` : "";
+};
+
 const findingHtml = (finding: Finding, id: string): string => {
   const docs = finding.docs ? safeHref(finding.docs) : null;
 
@@ -169,9 +189,7 @@ const findingHtml = (finding: Finding, id: string): string => {
     finding.evidence && Object.keys(finding.evidence).length > 0
       ? evidenceHtml(finding.evidence)
       : "",
-    docs
-      ? `<p><a class="link-arrow" href="${docs}" rel="noopener">Documentation${icon("arrow", "arrow")}</a></p>`
-      : "",
+    findingLinks(finding.rule, docs),
   ].join("");
 
   // Errors start open: they are what to fix first.
@@ -198,7 +216,7 @@ const issueHtml = (issue: IssueRollup, id: string): string => {
 
   return `<details class="finding sev-${issue.severity}" id="${id}">
 ${findingSummary(issue, chip(plural(issue.pages, "page")))}
-<div class="finding-body"><div class="todo"><p class="label">What to change</p><p>${esc(issue.recommendation)}</p></div><div class="examples"><p class="label">Pages${shown}</p><ul>${issue.examples.map((url) => `<li>${pageLink(url)}</li>`).join("")}</ul></div></div>
+<div class="finding-body"><div class="todo"><p class="label">What to change</p><p>${esc(issue.recommendation)}</p></div><div class="examples"><p class="label">Pages${shown}</p><ul>${issue.examples.map((url) => `<li>${pageLink(url)}</li>`).join("")}</ul></div>${findingLinks(issue.rule, null)}</div>
 </details>`;
 };
 

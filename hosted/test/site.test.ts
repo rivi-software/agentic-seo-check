@@ -6,7 +6,8 @@ import { auditAeoHtml, auditSiteBoth } from "../../src/core/aeo/audit.ts";
 import type { SiteAudits } from "../../src/core/aeo/audit.ts";
 import { crawlerAccess } from "../../src/core/aeo/bots.ts";
 import { auditHtml } from "../../src/core/audit.ts";
-import { ALL_RULES } from "../../src/core/rules/index.ts";
+import { ALL_RULES, findRule } from "../../src/core/rules/index.ts";
+import type { RuleMeta } from "../../src/core/types.ts";
 import { startFixtureServer } from "../../test/helpers/fixture-server.ts";
 import type { FixtureServer } from "../../test/helpers/fixture-server.ts";
 import { MCP_URL } from "../src/limits.ts";
@@ -16,6 +17,8 @@ import { LLMS_TXT, SITE_ROBOTS_TXT, SITEMAP_XML } from "../src/site/files.ts";
 import { homePage, notFoundPage } from "../src/site/home.ts";
 import { SITE_ORIGIN } from "../src/site/layout.ts";
 import { renderReport } from "../src/site/report.ts";
+import { ruleUsage } from "../src/site/rule-info.ts";
+import { rulePage } from "../src/site/rule-page.ts";
 import { rulesPage } from "../src/site/rules-page.ts";
 import {
   progressClose,
@@ -64,6 +67,20 @@ const audit = (html: string, path: string) => {
   });
 };
 
+/** The rule with `id`, which the test names because it exists. */
+const ruleById = (id: string): RuleMeta => {
+  const rule = findRule(id);
+
+  if (!rule) {
+    throw new Error(`No rule ${id}`);
+  }
+
+  return rule;
+};
+
+/** How a rule's page says to run the rule. */
+const usage = (id: string) => ruleUsage(ruleById(id));
+
 /** Findings above info: what the pages must not have. */
 const problems = (findings: { rule: string; severity: string }[]) =>
   findings.flatMap((f) => (f.severity === "info" ? [] : [f.rule]));
@@ -94,17 +111,83 @@ describe("the website's pages", () => {
     expect(problems(rules.findings)).toStrictEqual([]);
   });
 
-  it("list every rule the audits report, each under its id, closed on what to change", () => {
+  it("list every rule the audits report, each under its id, closed on what to change, with a link to its page", () => {
     const html = rulesPage();
 
     for (const rule of ALL_RULES) {
+      const kind = rule.category === "aeo" ? "aeo" : "seo";
+
       expect(html).toContain(
-        `<details class="rule sev-${rule.severity}" id="${rule.id}">`
+        `<details class="rule sev-${rule.severity}" id="${rule.id}" data-audit="${kind}" data-severity="${rule.severity}">`
       );
+      expect(html).toContain(`href="/rules/${rule.id}"`);
     }
 
-    // The filter needs the script, which shows it.
+    // The filters need the script, which shows them.
     expect(html).toContain('<div class="rules-filter" hidden>');
+    expect(html).toContain(
+      '<button type="button" data-facet="audit" data-value="aeo" aria-pressed="false">AEO</button>'
+    );
+  });
+
+  it("give every rule a page that passes the tool's own audits (issue #171)", async () => {
+    const audits = await Promise.all(
+      ALL_RULES.map(async (rule) => {
+        const html = rulePage(rule);
+        const path = `/rules/${rule.id}`;
+
+        const [seo, aeo] = await Promise.all([
+          audit(html, path),
+          auditAeoHtml(html, { url: `${SITE_ORIGIN}${path}` }),
+        ]);
+
+        return [
+          rule.id,
+          [...problems(seo.findings), ...problems(aeo.findings)],
+        ] as const;
+      })
+    );
+
+    expect(audits.filter(([, found]) => found.length > 0)).toStrictEqual([]);
+  });
+
+  it("say on a rule's page what it finds, what to change, and how to run or skip it", () => {
+    const html = rulePage(ruleById("title.missing"));
+
+    const parts = [
+      `<link rel="canonical" href="${SITE_ORIGIN}/rules/title.missing">`,
+      '<h1 class="rule-id rise" id="rule-title"',
+      "npx @rivi-software/agentic-seo-check audit https://example.com --rule title.missing",
+      "<code>--disable title.missing</code>",
+      'href="/rules/title.multiple" rel="next"',
+      "issues/new?template=wrong_finding.yml&amp;rule=title.missing",
+      // The header marks Rules as the section the page is in.
+      '<a href="/rules" aria-current="true">Rules</a>',
+    ];
+
+    expect(parts.filter((part) => !html.includes(part))).toStrictEqual([]);
+    expect(html).not.toContain('<a href="/" aria-current');
+  });
+
+  it("run a rule the way its requirement needs, on the command and over MCP", () => {
+    const crawl = ALL_RULES.find((rule) => rule.requires === "crawl");
+    const render = ALL_RULES.find((rule) => rule.requires === "render");
+    const bots = ALL_RULES.find((rule) => rule.requires === "ai-bots");
+
+    expect(usage(crawl?.id ?? "")).toMatchObject({
+      command: `npx @rivi-software/agentic-seo-check crawl https://example.com --rule ${crawl?.id}`,
+      tool: "seo_crawl_site",
+    });
+    expect(usage(render?.id ?? "")).toMatchObject({
+      command: `npx @rivi-software/agentic-seo-check audit https://example.com --render --rule ${render?.id}`,
+      tool: "seo_audit_page",
+      args: { url: "https://example.com", render: true, rules: [render?.id] },
+    });
+    expect(usage(bots?.id ?? "")).toMatchObject({
+      command: `npx @rivi-software/agentic-seo-check aeo https://example.com --ai-bots --rule ${bots?.id}`,
+      tool: "seo_aeo_audit",
+      args: { aiBots: true },
+    });
   });
 
   it("show the form only when the audit is on", () => {
@@ -223,6 +306,16 @@ describe("the website's pages", () => {
     expect(notFoundPage()).toContain("Not found");
   });
 
+  it("list each rule's page in the sitemap, and their address in llms.txt (issue #171)", () => {
+    const missing = ALL_RULES.filter(
+      (rule) =>
+        !SITEMAP_XML.includes(`<loc>${SITE_ORIGIN}/rules/${rule.id}</loc>`)
+    );
+
+    expect(missing).toStrictEqual([]);
+    expect(LLMS_TXT).toContain(`${SITE_ORIGIN}/rules/<id>`);
+  });
+
   it("list the server's pages in the website's sitemap, since they share its hostname (issue #168)", () => {
     expect(SITEMAP_XML).toContain(`<loc>${MCP_URL}</loc>`);
     expect(SITEMAP_XML).toContain(`<loc>${SITE_ORIGIN}/crawler</loc>`);
@@ -321,6 +414,30 @@ describe("the report of a page audit", () => {
     expect(report).toContain("<code>title.generic</code>");
     expect(report).toContain('class="edits"');
     expect(report).toContain('id="report-data"');
+  });
+
+  it("links a finding to its rule's page, and a rule the site has no page for to none (issue #171)", async () => {
+    const url = "https://shop.example.com/";
+
+    const html =
+      "<html><head><title>React App</title></head><body></body></html>";
+
+    const seo = await auditHtml(html, { url, source: "url", target: url });
+    const aeo = await auditAeoHtml(html, { url });
+
+    // A finding about the audit itself, whose rule is in no list.
+    const own = {
+      ...seo,
+      findings: seo.findings.map((finding) => ({
+        ...finding,
+        rule: "tool.page-error",
+      })),
+    };
+
+    expect(renderReport(seo, aeo)).toContain(
+      '<a class="link-arrow" href="/rules/title.generic">About the rule'
+    );
+    expect(renderReport(own, aeo)).not.toContain('href="/rules/tool.');
   });
 
   it("shows real visits from the Chrome UX Report only when the audit has field data (issue #130)", async () => {

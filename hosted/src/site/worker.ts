@@ -10,6 +10,7 @@ import { hearCaughtError, inRequest, reportError } from "../analytics.js";
 import type { ErrorRoute } from "../analytics.js";
 import type { SiteEnv } from "./audit.js";
 import { siteRoute } from "./routes.js";
+import { RULES_PREFIX } from "./rule-info.js";
 
 // The errors the core catches in the form's audits reach error tracking, with their run (issue #96).
 onCaughtError(hearCaughtError);
@@ -33,6 +34,10 @@ const errorRoute = (request: Request): ErrorRoute => {
 
   if (pathname.startsWith("/share/")) {
     return "website:/share/:result";
+  }
+
+  if (pathname.startsWith(RULES_PREFIX)) {
+    return "website:/rules/:rule";
   }
 
   return `website:${KNOWN_PATHS.has(pathname) ? pathname : "other"}`;
