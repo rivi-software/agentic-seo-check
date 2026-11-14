@@ -1,4 +1,5 @@
 import { MARK_SVG } from "../../../src/brand.js";
+import { findRule } from "../../../src/core/rules/index.js";
 import { POSTHOG_HOST } from "../../../src/telemetry/posthog.js";
 import { VERSION } from "../../../src/version.js";
 import { reportError } from "../analytics.js";
@@ -20,6 +21,8 @@ import type { SiteEnv } from "./audit.js";
 import { LLMS_TXT, SITE_JS, SITE_ROBOTS_TXT, SITEMAP_XML } from "./files.js";
 import { homePage, notFoundPage } from "./home.js";
 import { pdfAssetResponse } from "./pdf-assets.js";
+import { RULES_PREFIX } from "./rule-info.js";
+import { rulePage } from "./rule-page.js";
 import { rulesPage } from "./rules-page.js";
 import { sharePage } from "./share-page.js";
 import { openShare, shareImageCacheKey } from "./share.js";
@@ -141,6 +144,18 @@ const audit = async (
   return new Response(readable, { status, headers });
 };
 
+/** A rule's page (issue #171), at a path that names a rule, or null for any other path. */
+const ruleResponse = (
+  request: Request,
+  path: string
+): Promise<Response> | null => {
+  const rule = path.startsWith(RULES_PREFIX)
+    ? findRule(path.slice(RULES_PREFIX.length))
+    : undefined;
+
+  return rule ? file(request, rulePage(rule), HTML) : null;
+};
+
 /** A share link's page, and its image with `.png` after it (issue #54). */
 const SHARE_ROUTE = /^\/share\/(?<token>[\w-]+\.[\w-]{22})(?<png>\.png)?$/u;
 
@@ -208,8 +223,12 @@ const cardResponse = (request: Request, path: string): Response | null => {
     : null;
 };
 
-/** A share image, a font of the pages or of a report's PDF, pdfmake, or the 404 page. */
+/**
+ * A rule's page, a share image, a font of the pages or of a report's PDF, pdfmake, or the 404
+ * page.
+ */
 const asset = (request: Request, path: string): Response | Promise<Response> =>
+  ruleResponse(request, path) ??
   cardResponse(request, path) ??
   fontResponse(request, path) ??
   pdfAssetResponse(request, path) ??

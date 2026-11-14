@@ -1091,6 +1091,8 @@ describe("the hosted Worker in workerd", () => {
         [
           "/",
           "/rules",
+          "/rules/title.missing",
+          "/rules/no.such-rule",
           "/robots.txt",
           "/sitemap.xml",
           "/llms.txt",
@@ -1112,6 +1114,8 @@ describe("the hosted Worker in workerd", () => {
       expect(answers).toStrictEqual([
         ["/", 200, "text/html; charset=utf-8"],
         ["/rules", 200, "text/html; charset=utf-8"],
+        ["/rules/title.missing", 200, "text/html; charset=utf-8"],
+        ["/rules/no.such-rule", 404, "text/html; charset=utf-8"],
         ["/robots.txt", 200, "text/plain; charset=utf-8"],
         ["/sitemap.xml", 200, "application/xml; charset=utf-8"],
         ["/llms.txt", 200, "text/markdown; charset=utf-8"],

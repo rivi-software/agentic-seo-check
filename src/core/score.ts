@@ -1,6 +1,7 @@
 import type { Finding, SeverityCounts } from "./types.js";
 
-const PAGE_WEIGHTS = { error: 15, warning: 5, info: 1 } as const;
+/** What a finding of each severity takes off a page's score, out of 100. */
+export const PAGE_WEIGHTS = { error: 15, warning: 5, info: 1 } as const;
 const SITE_WEIGHTS = { error: 10, warning: 3, info: 0.5 } as const;
 
 const clamp = (n: number): number => Math.max(0, Math.min(100, n));

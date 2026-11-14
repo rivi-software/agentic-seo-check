@@ -1,13 +1,16 @@
 /**
- * The website's files besides its pages: robots.txt, the sitemap, llms.txt and the pages' script,
- * which the hosted server's pages, on the same hostname (issue #168), load too.
+ * The website's files besides its pages: robots.txt, the sitemap (with each rule's page, issue
+ * #171), llms.txt and the pages' script, which the hosted server's pages, on the same hostname
+ * (issue #168), load too.
  */
 import { PRODUCT_NAME } from "../../../src/brand.js";
 import { HOSTED_LIMITS, LOCAL_SERVER } from "../../../src/core/hosted.js";
+import { ALL_RULES } from "../../../src/core/rules/index.js";
 import { MCP_URL } from "../limits.js";
 import { CLAUDE_DIRECTORY_URL } from "../ui/frame.js";
 import { icon } from "../ui/icons.js";
 import { SITE_ORIGIN } from "./layout.js";
+import { rulePath } from "./rule-info.js";
 
 /**
  * /audit answers a form, and its answer is a report nobody else should find. /share/ stays open:
@@ -30,6 +33,7 @@ export const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <url><loc>${SITE_ORIGIN}/rules</loc></url>
 <url><loc>${MCP_URL}</loc></url>
 <url><loc>${SITE_ORIGIN}/crawler</loc></url>
+${ALL_RULES.map((rule) => `<url><loc>${SITE_ORIGIN}${rulePath(rule.id)}</loc></url>`).join("\n")}
 </urlset>
 `;
 
@@ -49,6 +53,7 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
 ## Reference
 
 - [The rules](${SITE_ORIGIN}/rules): every rule, its severity and what it recommends
+- A rule's own page, at \`${SITE_ORIGIN}/rules/<id>\` (such as [title.missing](${SITE_ORIGIN}/rules/title.missing)): what it finds, what to change, when it runs, and how to run or skip it
 - [The README](https://github.com/rivi-software/agentic-seo-check#readme): the commands, the MCP tools and their options
 - [For site owners](${SITE_ORIGIN}/crawler): what the audit's requests are and how to block them
 `;
@@ -204,16 +209,19 @@ export const SITE_JS = `(() => {
     });
   }
 
-  // The rules page: a filter over the rules, a link to a rule opens it, and the list of categories
-  // marks the one in view. Without the script every rule is still there, closed.
+  // The rules page: a filter over the rules by text, audit and severity, a link to a rule opens it,
+  // and the list of categories marks the one in view. Without the script every rule is still there,
+  // closed.
   const filter = document.querySelector(".rules-filter");
 
   if (filter) {
     const input = filter.querySelector("input");
     const count = filter.querySelector(".rules-count");
+    const empty = document.querySelector(".rules-empty");
     const strip = document.querySelector(".rules-toc ul");
     const groups = [...document.querySelectorAll(".rule-group")];
     const rules = [...document.querySelectorAll(".rule")];
+    const buttons = [...filter.querySelectorAll("[data-facet]")];
 
     // What a filter matches: a rule's id and all of its text, what to change included.
     const text = new Map(
@@ -227,14 +235,23 @@ export const SITE_JS = `(() => {
       ])
     );
 
+    const rulesCount = (n) => (n === 1 ? "1 rule" : n + " rules");
+
+    // The value each facet is narrowed to; "" is all of them.
+    const chosen = { audit: "", severity: "" };
+
     filter.hidden = false;
 
-    input.addEventListener("input", () => {
+    const apply = () => {
       const words = input.value.toLowerCase().split(/\\s+/).filter(Boolean);
+      const narrowed = words.length > 0 || chosen.audit !== "" || chosen.severity !== "";
       let shown = 0;
 
       for (const rule of rules) {
-        const match = words.every((word) => text.get(rule).includes(word));
+        const match =
+          words.every((word) => text.get(rule).includes(word)) &&
+          (chosen.audit === "" || rule.dataset.audit === chosen.audit) &&
+          (chosen.severity === "" || rule.dataset.severity === chosen.severity);
         rule.hidden = !match;
         shown += match ? 1 : 0;
       }
@@ -244,19 +261,37 @@ export const SITE_JS = `(() => {
         const chip = group.querySelector(".rule-group-head .chip");
         group.hidden = left === 0;
 
-        // The category's count says how many of its rules the filter left.
+        // The category's count says how many of its rules the filters left.
         chip.dataset.all ||= chip.textContent;
-        chip.textContent =
-          words.length === 0 ? chip.dataset.all : left === 1 ? "1 rule" : left + " rules";
+        chip.textContent = narrowed ? rulesCount(left) : chip.dataset.all;
 
         if (links.has(group.id)) {
           links.get(group.id).parentElement.hidden = left === 0;
         }
       }
 
-      count.textContent =
-        words.length === 0 ? "" : shown === 1 ? "1 rule" : shown + " rules";
-    });
+      count.textContent = narrowed ? rulesCount(shown) : "";
+
+      if (empty) {
+        empty.hidden = shown > 0;
+      }
+    };
+
+    input.addEventListener("input", apply);
+
+    for (const button of buttons) {
+      button.addEventListener("click", () => {
+        chosen[button.dataset.facet] = button.dataset.value;
+
+        for (const other of buttons) {
+          if (other.dataset.facet === button.dataset.facet) {
+            other.setAttribute("aria-pressed", String(other === button));
+          }
+        }
+
+        apply();
+      });
+    }
 
     const open = () => {
       const target = document.getElementById(
