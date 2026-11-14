@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { POSTHOG_HOST } from "../../src/telemetry/posthog.ts";
 import { readConfig, SERVER_CONFIG, SITE_CONFIG } from "../scripts/defines.ts";
 import {
   FORMER_SERVER_HOSTS,
@@ -53,6 +54,10 @@ describe("the two Workers' configurations", () => {
         script_name: server.name,
       },
     ]);
+  });
+
+  it("send the analytics to the host the website's CSP allows", () => {
+    expect(server.vars["POSTHOG_HOST"]).toBe(POSTHOG_HOST);
   });
 
   it("keep the Durable Object in the EU (issue #78)", () => {

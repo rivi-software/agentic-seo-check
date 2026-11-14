@@ -1150,7 +1150,7 @@ describe("the hosted Worker in workerd", () => {
         /data-consent-settings hidden[\s\S]*<section class="consent" id="consent"[^>]*hidden>/u
       );
       expect(home.res.headers.get("content-security-policy")).toContain(
-        "connect-src 'self' https://eu.i.posthog.com"
+        "connect-src 'self' https://g.rivi.software"
       );
     });
 

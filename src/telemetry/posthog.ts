@@ -12,8 +12,11 @@ import type { ExceptionEntry } from "./exceptions.js";
  */
 export const POSTHOG_TOKEN = "phc_qodC2xP7RSMQH2zDUh5VhNHvXebc52o4mg5RKoGxFASK";
 
-/** Where events go: PostHog's EU ingestion host. */
-export const POSTHOG_HOST = "https://eu.i.posthog.com";
+/**
+ * Where events go: RIVI Software's managed reverse proxy, which PostHog runs and forwards to its EU
+ * ingestion host. A host of our own is one that blockers of PostHog's domains leave alone.
+ */
+export const POSTHOG_HOST = "https://g.rivi.software";
 
 /**
  * A property's value: what these events carry is flat, as PostHog's MCP Analytics wants it, but for
