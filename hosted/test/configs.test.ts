@@ -58,6 +58,7 @@ describe("the two Workers' configurations", () => {
 
   it("send the analytics to the host the website's CSP allows", () => {
     expect(server.vars["POSTHOG_HOST"]).toBe(POSTHOG_HOST);
+    expect(site.vars["POSTHOG_HOST"]).toBe(POSTHOG_HOST);
   });
 
   it("keep the Durable Object in the EU (issue #78)", () => {
