@@ -68,8 +68,10 @@ export const PDFMAKE_PATH = "/pdfmake.js";
 /**
  * The pages' script, served at /site.js so that the Content-Security-Policy
  * needs no inline script. It gives every command and snippet marked data-copy a button that copies
- * it, waits for Turnstile's token before the audit form is sent, shows that an audit or a crawl is
- * running, shows the report one section at a time behind its tabs, gives the report as a JSON
+ * it, waits for Turnstile's token before the audit form is sent, says at the field's end whether
+ * the address gets a page audit or a crawl, shows that an audit or a crawl is running with the
+ * outline of a report where the report will be, shows the report one section at a time behind its
+ * tabs, filters a section's findings by severity and opens or closes them all, gives the report as a JSON
  * file, as Markdown on the clipboard or as a PDF that pdfmake draws in the page (issue #157), opens
  * every section and finding while the page prints, adds the system's share sheet to the report's
  * Share menu, and
@@ -190,15 +192,68 @@ export const SITE_JS = `(() => {
     const text = label.dataset.idle || label.textContent;
     let waiting = false;
 
-    // A homepage gets a crawl of its site when the form crawls: the address as the server reads it.
-    const crawls = () => {
-      const typed = form.querySelector('[name="url"]').value.trim();
+    // How long the form waits for Turnstile's token before it gives the page back.
+    const CHECK_WAIT_MS = 30000;
+
+    const input = form.querySelector('[name="url"]');
+
+    // The address in the field as the server reads it (readForm, isHomepage in audit.ts), or null
+    // for what is no address.
+    const address = () => {
+      const typed = input.value.trim();
 
       try {
-        const url = new URL(typed.includes("://") ? typed : "https://" + typed);
-        return form.dataset.crawls === "on" && url.pathname === "/" && !url.search;
+        return new URL(typed.includes("://") ? typed : "https://" + typed);
       } catch {
-        return false;
+        return null;
+      }
+    };
+
+    // A homepage gets a crawl of its site when the form crawls.
+    const crawls = () => {
+      const url = address();
+      return Boolean(url) && form.dataset.crawls === "on" && url.pathname === "/" && !url.search;
+    };
+
+    // What the form will run on the address in the field, at the field's end: a crawl of the site
+    // for a homepage, a page audit for anything else, and nothing while the field holds no hostname
+    // yet, which a word without a dot would otherwise pass for.
+    const mode = form.querySelector(".audit-mode");
+    const readable = () => Boolean(address()) && /\\.|localhost/.test(input.value);
+
+    const showMode = () => {
+      if (!mode) {
+        return;
+      }
+
+      const site = crawls();
+      mode.hidden = !readable();
+      mode.classList.toggle("is-site", site);
+      mode.querySelector(".mode-label").textContent = site
+        ? mode.dataset.site
+        : mode.dataset.page;
+      mode.title = site ? mode.dataset.siteTitle : mode.dataset.pageTitle;
+    };
+
+    input.addEventListener("input", showMode);
+    showMode();
+
+    // From the send until the answer, the outline of a report stands where the report will be, in
+    // place of the example or of the last run's report.
+    const pending = document.querySelector("#pending");
+    const replaced = [...document.querySelectorAll(".hero .stage, #report, #progress")];
+
+    const wait = (on) => {
+      if (!pending) {
+        return;
+      }
+
+      pending.hidden = !on;
+      pending.classList.toggle("is-site", on && crawls());
+      pending.querySelector(".pending-url").textContent = on ? input.value.trim() : "";
+
+      for (const part of replaced) {
+        part.style.display = on ? "none" : "";
       }
     };
 
@@ -207,13 +262,52 @@ export const SITE_JS = `(() => {
       return field ? field.value : "";
     };
 
+    // The form as it was before the send: the button, and what the waiting panel stood in for.
+    let stalled;
+
+    const reset = () => {
+      waiting = false;
+      clearTimeout(stalled);
+      button.disabled = false;
+      button.classList.remove("is-busy");
+      label.textContent = text;
+      wait(false);
+      showMode();
+    };
+
     // Turnstile calls this by name once it has a token.
     window.onAuditToken = () => {
       if (waiting) {
         waiting = false;
+        clearTimeout(stalled);
         form.submit();
       }
     };
+
+    // The check gave no token, so the form was never sent and no answer will come: the page goes
+    // back to what it showed, says so, and asks Turnstile for a new check for the next try.
+    const stall = form.querySelector(".audit-stalled");
+
+    const giveUp = () => {
+      if (!waiting) {
+        return;
+      }
+
+      reset();
+
+      if (stall) {
+        stall.hidden = false;
+      }
+
+      try {
+        window.turnstile.reset();
+      } catch {
+        // Turnstile's script did not load: the next send waits for it again.
+      }
+    };
+
+    // Turnstile calls this by name when its check fails.
+    window.onAuditCheckFailed = giveUp;
 
     form.addEventListener("submit", (event) => {
       // Sent at once: the form's answer is the next page.
@@ -223,24 +317,28 @@ export const SITE_JS = `(() => {
         { send_instantly: true, transport: "sendBeacon" }
       );
 
+      if (stall) {
+        stall.hidden = true;
+      }
+
+      // A check that fails without a word, or whose script was blocked, would leave the page
+      // waiting for good.
       if (!token()) {
         event.preventDefault();
         waiting = true;
+        clearTimeout(stalled);
+        stalled = setTimeout(giveUp, CHECK_WAIT_MS);
       }
 
       button.disabled = true;
       button.classList.add("is-busy");
       label.textContent = crawls() ? "Crawling the site…" : "Auditing…";
+      wait(true);
     });
 
     // A page restored from the back/forward cache still has the button as it was left, and a
     // crawl's answer has it busy until the report is in.
-    window.addEventListener("pageshow", () => {
-      waiting = false;
-      button.disabled = false;
-      button.classList.remove("is-busy");
-      label.textContent = text;
-    });
+    window.addEventListener("pageshow", reset);
   }
 
   // The rules page: a filter over the rules by text, audit and severity, a link to a rule opens it,
@@ -396,6 +494,105 @@ export const SITE_JS = `(() => {
     }
   }
 
+  // The controls over a section's findings: one severity at a time, and all of them open or closed
+  // at once. A filter hides the findings of the other severities, and a group left without any.
+  // A hidden finding stays findable, as a report's hidden section does, where the browser can
+  // (hidden=until-found): find in page then shows it. Elsewhere it is plainly hidden.
+  const HIDDEN = "onbeforematch" in document.body ? "until-found" : true;
+  const showAll = new Map();
+
+  for (const tools of document.querySelectorAll(".findings-tools")) {
+    const groups = tools.nextElementSibling;
+    const findings = [...groups.querySelectorAll(".finding")];
+    const buttons = [...tools.querySelectorAll("[data-show]")];
+    const toggle = tools.querySelector("[data-findings]");
+    const toggleLabel = toggle.querySelector(".btn-label");
+
+    // The button offers what is left to do: to open while one shown finding is closed.
+    const sync = () => {
+      const open = !findings.some((finding) => !finding.hidden && !finding.open);
+      toggle.dataset.findings = open ? "close" : "open";
+      toggleLabel.textContent = open ? toggleLabel.dataset.close : toggleLabel.dataset.open;
+    };
+
+    // Opening them all opens each in turn: the button is brought up to date once for the lot.
+    let queued = false;
+
+    const syncSoon = () => {
+      if (!queued) {
+        queued = true;
+        queueMicrotask(() => {
+          queued = false;
+          sync();
+        });
+      }
+    };
+
+    const show = (severity) => {
+      for (const finding of findings) {
+        finding.hidden =
+          severity !== "" && finding.dataset.severity !== severity ? HIDDEN : false;
+      }
+
+      for (const group of groups.querySelectorAll(".finding-group, .finding-part")) {
+        group.hidden = group.querySelector(".finding:not([hidden])") ? false : HIDDEN;
+      }
+
+      for (const button of buttons) {
+        button.setAttribute("aria-pressed", String(button.dataset.show === severity));
+      }
+
+      sync();
+    };
+
+    for (const button of buttons) {
+      button.addEventListener("click", () => {
+        show(button.dataset.show);
+      });
+    }
+
+    toggle.addEventListener("click", () => {
+      const open = toggle.dataset.findings === "open";
+
+      for (const finding of findings) {
+        if (!finding.hidden) {
+          finding.open = open;
+        }
+      }
+
+      sync();
+    });
+
+    // A finding's "toggle" does not bubble: one listener hears them all on their way down.
+    groups.addEventListener("toggle", syncSoon, true);
+    showAll.set(groups, () => show(""));
+
+    // The browser's find in page found text in a finding the filter hides: every severity shows
+    // again, so the match is there to see.
+    groups.addEventListener("beforematch", () => {
+      show("");
+    });
+
+    tools.hidden = false;
+    sync();
+  }
+
+  // Paper gets every finding, whatever a filter hides.
+  window.addEventListener("beforeprint", () => {
+    for (const all of showAll.values()) {
+      all();
+    }
+  });
+
+  // A link to a finding its section's filter hides shows every severity again.
+  const reveal = (target) => {
+    const section = target.hidden && target.closest(".finding-groups");
+
+    if (section && showAll.has(section)) {
+      showAll.get(section)();
+    }
+  };
+
   // The report's sections as tabs: the strip above them shows one at a time. A hidden section
   // stays findable: the browser's find in page opens its tab, where it can (hidden=until-found).
   // Without the script every section is there, one under the other, and the strip links to each.
@@ -491,6 +688,7 @@ export const SITE_JS = `(() => {
         open(index);
       } else {
         show(index);
+        reveal(target);
 
         if (target.tagName === "DETAILS") {
           target.open = true;
@@ -729,8 +927,6 @@ export const SITE_JS = `(() => {
     if (data.summary) {
       track("audit_shown", data.summary);
     }
-
-    document.querySelector("#report").scrollIntoView();
   }
 
   const failed = document.querySelector("[data-failure]");

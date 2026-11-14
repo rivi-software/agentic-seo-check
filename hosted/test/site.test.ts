@@ -13,10 +13,15 @@ import type { FixtureServer } from "../../test/helpers/fixture-server.ts";
 import { MCP_URL } from "../src/limits.ts";
 import { crawlerPage, landingPage } from "../src/pages.ts";
 import { isHomepage, readForm } from "../src/site/audit.ts";
-import { LLMS_TXT, SITE_ROBOTS_TXT, SITEMAP_XML } from "../src/site/files.ts";
+import {
+  LLMS_TXT,
+  SITE_JS,
+  SITE_ROBOTS_TXT,
+  SITEMAP_XML,
+} from "../src/site/files.ts";
 import { homePage, notFoundPage } from "../src/site/home.ts";
 import { SITE_ORIGIN } from "../src/site/layout.ts";
-import { renderReport } from "../src/site/report.ts";
+import { partsHtml, renderReport } from "../src/site/report.ts";
 import { ruleUsage } from "../src/site/rule-info.ts";
 import { rulePage } from "../src/site/rule-page.ts";
 import { rulesPage } from "../src/site/rules-page.ts";
@@ -911,5 +916,166 @@ describe("the stylesheet on paper", () => {
     expect(rules.filter((rule) => !print.includes(rule))).toStrictEqual([]);
     expect(print).toMatch(/[,{]\.evidence[,{]/u);
     expect(print).toMatch(/[,{]\.report-tabs[,{]/u);
+  });
+});
+
+describe("the audit tool's controls", () => {
+  const url = "https://shop.example.com/";
+
+  const BAD =
+    '<html><head><title>React App</title></head><body><img src="a.png"></body></html>';
+
+  const pageReport = async (html: string) =>
+    renderReport(
+      await auditHtml(html, { url, source: "url", target: url }),
+      await auditAeoHtml(html, { url })
+    );
+
+  it("says at the field's end what the address gets, only where the form crawls", () => {
+    const crawling = homePage(OPEN);
+    const pages = homePage({ ...OPEN, crawls: false });
+
+    expect(crawling).toContain('class="audit-mode" id="audit-mode" hidden');
+    expect(crawling).toContain('aria-describedby="audit-mode"');
+    expect(crawling).toContain("up to 100 pages");
+    expect(pages).not.toContain('id="audit-mode"');
+  });
+
+  it("keeps the outline of a report hidden until the form is sent, and out of a closed form", () => {
+    expect(homePage(OPEN)).toContain(
+      'class="wrap pending" id="pending" hidden'
+    );
+    expect(homePage({ open: false, crawls: false, siteKey: "" })).not.toContain(
+      'id="pending"'
+    );
+  });
+
+  it("shrinks the hero to the form once there is a report or a crawl", () => {
+    const first = homePage(OPEN);
+    const answered = homePage({ ...OPEN, report: "<p>report</p>" });
+    const crawling = homePage({ ...OPEN, crawling: true });
+
+    expect(first).toContain('class="hero hero-glow"');
+    expect(first).toContain('class="lede rise"');
+
+    for (const html of [answered, crawling]) {
+      expect(html).toContain('class="hero hero-glow hero-tool"');
+      expect(html).toContain('id="hero-title"');
+      expect(html).not.toContain('class="lede rise"');
+    }
+
+    // A refusal has no report: the page stays as it was, with the reason under the form.
+    expect(homePage({ ...OPEN, error: "No." })).toContain(
+      'class="hero hero-glow"'
+    );
+  });
+
+  it("filters a section's findings by the severities it has, hidden without the script", async () => {
+    const report = await pageReport(BAD);
+
+    const tools = report.match(
+      /<div class="findings-tools" hidden>.*?<\/div><button/su
+    );
+
+    expect(tools).not.toBeNull();
+    expect(tools?.[0]).toContain('data-show="" aria-pressed="true">All');
+    expect(tools?.[0]).toContain('data-show="warning"');
+    expect(report).toContain('data-findings="open"');
+
+    // Each count is the number of findings of that severity under the controls.
+    const seo = report.slice(
+      report.indexOf('id="seo"'),
+      report.indexOf('id="aeo"')
+    );
+
+    const counts = [
+      ...seo.matchAll(
+        /data-show="(?<severity>error|warning|info)"[^>]*>\w+<span class="seg-count">(?<count>\d+)/gu
+      ),
+    ];
+
+    expect(counts.length).toBeGreaterThan(1);
+
+    for (const { groups } of counts) {
+      // Counted by splitting on the tag: no pattern is built from the report's text.
+      expect(
+        seo.split(`<details class="finding sev-${groups?.severity}"`)
+      ).toHaveLength(Number(groups?.count) + 1);
+    }
+  });
+
+  it("gives a section without findings no controls", async () => {
+    const good = readFileSync(
+      new URL("../../test/fixtures/good-page.html", import.meta.url),
+      "utf-8"
+    );
+
+    const report = await pageReport(good);
+    const controls = report.match(/class="findings-tools"/gu)?.length ?? 0;
+    const sections = report.match(/class="finding-groups"/gu)?.length ?? 0;
+
+    expect(controls).toBeLessThanOrEqual(sections);
+    expect(partsHtml([], "Nothing.")).not.toContain("findings-tools");
+  });
+
+  it("marks how far a crawl is on each page's line, and colours its status", () => {
+    const line = progressLine({
+      phase: "crawl",
+      message: "404 https://shop.example.com/gone",
+      crawled: 3,
+      discovered: 250,
+    });
+
+    // Of the pages found, at most as many as the crawl requests.
+    expect(line).toContain(
+      '<li class="is-page is-counted" style="--n:3;--of:100">'
+    );
+    expect(line).toContain('<span class="progress-status is-bad">404</span>');
+    expect(line).toContain("<code>https://shop.example.com/gone</code>");
+
+    expect(
+      progressLine({ phase: "crawl", message: "200 https://a.example/" })
+    ).not.toContain("style=");
+    expect(
+      progressLine({
+        phase: "crawl",
+        message: "ERR https://a.example/",
+        crawled: 5,
+        discovered: 2,
+      })
+    ).toContain('style="--n:5;--of:5"');
+  });
+
+  it("prints none of the controls, and shows every finding before a print", () => {
+    const print = STYLE.slice(STYLE.indexOf("@media print{"));
+    const filter = SITE_JS.slice(SITE_JS.indexOf("const showAll = new Map()"));
+
+    expect(print).toMatch(/[,{]\.findings-tools[,{]/u);
+    expect(filter).toMatch(
+      /addEventListener\("beforeprint", \(\) => \{\s+for \(const all of showAll\.values\(\)\)/u
+    );
+  });
+
+  it("keeps a finding its filter hides findable, and out of the layout", () => {
+    // Find in page reaches a hidden finding, and the filter then shows every severity again.
+    expect(SITE_JS).toContain(
+      '"onbeforematch" in document.body ? "until-found" : true'
+    );
+    expect(SITE_JS).toContain('groups.addEventListener("beforematch"');
+    expect(STYLE).toContain(
+      ".finding[hidden=until-found],.finding-group[hidden=until-found],.finding-part[hidden=until-found]{position:absolute;"
+    );
+  });
+
+  it("gives the page back when the check that keeps bots out yields no token", () => {
+    const home = homePage(OPEN);
+
+    expect(home).toContain('data-error-callback="onAuditCheckFailed"');
+    expect(home).toContain(
+      '<p class="notice audit-stalled" role="alert" hidden>'
+    );
+    expect(SITE_JS).toContain("window.onAuditCheckFailed = giveUp;");
+    expect(SITE_JS).toContain("stalled = setTimeout(giveUp, CHECK_WAIT_MS);");
+    expect(SITE_JS).toContain('window.addEventListener("pageshow", reset);');
   });
 });

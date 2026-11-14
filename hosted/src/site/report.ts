@@ -7,8 +7,9 @@
  * A report is a stack of cards: its address and buttons, the two scores, a strip of tabs, and
  * under each tab the cards of one section. The overview has what to fix first, an index of the
  * findings as a tile for each group, and the facts; each audit's section has a card for each
- * category of findings; the last is the AI crawlers. The page's script shows one section at a
- * time; without it they follow one another. Its "Download PDF" button draws the same data as a
+ * category of findings, under controls that filter them by severity and open them all; the last
+ * is the AI crawlers. The page's script shows one section at a time; without it they follow one
+ * another. Its "Download PDF" button draws the same data as a
  * document of its own (pdf.ts), and printed the report is every section in turn, on white, with
  * every finding open (ui/style.ts and files.ts). What both show is in report-data.ts.
  */
@@ -238,6 +239,48 @@ export const tally = (severities: Severity[]): string =>
 const groupHtml = (group: Group, level: 4 | 5): string =>
   `<div class="finding-group" id="${group.id}"><div class="finding-group-head"><h${level}>${group.label}</h${level}>${tally(severitiesOf([group]))}</div><div class="findings">${group.entries.map(entryHtml).join("\n")}</div></div>`;
 
+/** What the findings' filter calls each severity, beside its count. */
+const FILTER_LABEL: Record<Severity, string> = {
+  error: "Errors",
+  warning: "Warnings",
+  info: "Info",
+};
+
+/** One choice of the findings' filter: the severity `value`, or every one for "". */
+const filterButton = (value: string, label: string, count: number): string =>
+  `<button type="button" data-show="${value}" aria-pressed="${value === "" ? "true" : "false"}">${label}<span class="seg-count">${count}</span></button>`;
+
+/**
+ * The controls over a section's findings: one severity at a time, and all of them open or closed
+ * at once. A long section is read by severity, and an agent's reader wants every fix open. They
+ * are the script's, so they stay hidden without it; a filter offers only the severities the
+ * section has, and nothing at all over a single finding.
+ */
+const findingsTools = (severities: Severity[]): string => {
+  if (severities.length < 2) {
+    return "";
+  }
+
+  const present = SEVERITIES.filter((severity) =>
+    severities.includes(severity)
+  );
+
+  const filter =
+    present.length < 2
+      ? ""
+      : `<div class="seg" role="group" aria-label="Findings by severity">${filterButton("", "All", severities.length)}${present
+          .map((severity) =>
+            filterButton(
+              severity,
+              FILTER_LABEL[severity],
+              severities.filter((s) => s === severity).length
+            )
+          )
+          .join("")}</div>`;
+
+  return `<div class="findings-tools" hidden>${filter}<button class="btn btn-secondary btn-sm findings-toggle" type="button" data-findings="open">${icon("chevron")}<span class="btn-label" data-open="Open all" data-close="Close all">Open all</span></button></div>`;
+};
+
 /** Parts of findings with their headings, or `empty` when none of them has a finding. */
 export const partsHtml = (parts: Part[], empty: string): string => {
   const shown = parts.filter((part) => part.groups.length > 0);
@@ -246,7 +289,7 @@ export const partsHtml = (parts: Part[], empty: string): string => {
     return `<p class="empty">${icon("check")}${empty}</p>`;
   }
 
-  return `<div class="finding-groups">${shown
+  return `${findingsTools(shown.flatMap((part) => severitiesOf(part.groups)))}<div class="finding-groups">${shown
     .map((part) =>
       part.title
         ? `<div class="finding-part"><div class="finding-group-head finding-part-head"><h4>${part.title}</h4>${tally(severitiesOf(part.groups))}</div>${part.groups.map((group) => groupHtml(group, 5)).join("\n")}</div>`

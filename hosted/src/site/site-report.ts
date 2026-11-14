@@ -87,10 +87,11 @@ ${partsHtml([{ groups: categoryGroups("home", findings) }], "No findings on the 
   ];
 };
 
+/** A page's score with a bar to it, so a column of them reads at a glance. */
 const scoreNumber = (score: number | undefined): string =>
   score === undefined
     ? ""
-    : `<span class="score-num band-${band(score)}">${score}</span>`;
+    : `<span class="score-num band-${band(score)}">${score}</span><span class="score-meter band-${band(score)}" aria-hidden="true"><i style="--v:${(score / 100).toFixed(2)}"></i></span>`;
 
 const pagesSection = (seo: SiteAudit, aeo: AeoAudit): ReportSection => {
   const aeoScores = new Map((aeo.pages ?? []).map((p) => [p.url, p.score]));
@@ -192,18 +193,53 @@ export const progressOpen = (url: string): string =>
 <div class="report-bar"><div class="report-title"><h2 class="progress-title" id="progress-title">Crawling the site</h2><p class="report-url">${icon("globe")}<span>${esc(url)}</span></p></div></div>
 <div class="report-body progress-body">
 <p class="report-lede">Up to ${HOSTED_LIMITS.maxPages} pages, ${HOSTED_LIMITS.maxDepth} links deep. The report follows here, usually within a minute.</p>
-<ol class="progress-lines" role="log">
+<div class="progress-log"><ol class="progress-lines" role="log">
 `;
+
+/**
+ * A crawled page's line as the crawl words it (`crawl.ts`): the HTTP status, or ERR, then the
+ * address. A line worded otherwise is shown whole.
+ */
+const PAGE_LINE = /^(?<status>\d{3}|ERR) (?<address>.+)$/su;
+
+/**
+ * How far the crawl is, on a page's line: the pages it has requested, of those it has found so far
+ * or the most it requests. The stylesheet draws the last line's as a bar and a count over the log,
+ * so the answer needs no script while it streams.
+ */
+const progressOf = (event: ProgressEvent): string => {
+  if (event.crawled === undefined || event.discovered === undefined) {
+    return "";
+  }
+
+  const found = Math.max(
+    event.crawled,
+    Math.min(event.discovered, HOSTED_LIMITS.maxPages)
+  );
+
+  return ` is-counted" style="--n:${event.crawled};--of:${found}`;
+};
+
+const pageLine = (event: ProgressEvent): string => {
+  const { status, address } = PAGE_LINE.exec(event.message)?.groups ?? {};
+
+  const text =
+    status && address
+      ? `<span class="progress-status is-${statusTone(Number(status)) ?? "bad"}">${status}</span><code>${esc(address)}</code>`
+      : `<code>${esc(event.message)}</code>`;
+
+  return `<li class="is-page${progressOf(event)}"><span class="progress-count">${event.crawled ?? ""}</span><span class="progress-page">${text}</span></li>\n`;
+};
 
 /** One step of the crawl: a page it requested, with its HTTP status, or what it does next. */
 export const progressLine = (event: ProgressEvent): string =>
   event.phase === "crawl"
-    ? `<li class="is-page"><span class="progress-count">${event.crawled ?? ""}</span><code>${esc(event.message)}</code></li>\n`
+    ? pageLine(event)
     : `<li><span class="progress-count">${icon("chevron")}</span><span>${esc(event.message)}</span></li>\n`;
 
 /** Closes the progress lines, with why the crawl gave no report when it failed, and its kind. */
 export const progressClose = (error?: string, kind?: FailureKind): string =>
-  `</ol>${error ? `\n<p class="notice" role="alert"${kind ? ` data-failure="${kind}"` : ""}>${icon("error")}<span>${esc(error)}</span></p>` : ""}
+  `</ol></div>${error ? `\n<p class="notice" role="alert"${kind ? ` data-failure="${kind}"` : ""}>${icon("error")}<span>${esc(error)}</span></p>` : ""}
 </div>
 </div>
 </div>
