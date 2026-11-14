@@ -1,14 +1,21 @@
 /**
- * The pages the Worker serves besides /mcp: the landing page (how to add the server, its limits,
- * what it cannot do, privacy, abuse), the page the User-Agent links to (what the requests are and
- * how to stop them), robots.txt and the favicon. They share the website's frame (ui/frame.ts).
+ * The MCP server's pages: its own, at /mcp for a browser (how to add the server, its limits, what
+ * it cannot do, privacy, abuse), and the page the User-Agent links to (what the requests are and
+ * how to stop them). They share the website's frame (ui/frame.ts) and hostname (issue #168).
  * The pages state the limits from wrangler.jsonc, so they cannot drift from what the Worker
  * enforces, and they pass the server's own audit.
  */
 import { MAKER, PRODUCT_NAME, REPOSITORY_URL } from "../../src/brand.js";
 import { LOCAL_PRODUCT_TOKEN } from "../../src/core/fetch.js";
 import { HOSTED_LIMITS, LOCAL_SERVER } from "../../src/core/hosted.js";
-import { ORIGIN, rateLimit, SITE_ORIGIN, USER_AGENT } from "./limits.js";
+import {
+  BOT_ORIGIN,
+  MCP_URL,
+  ORIGIN,
+  rateLimit,
+  SITE_ORIGIN,
+  USER_AGENT,
+} from "./limits.js";
 import type { DailyLimits } from "./limits.js";
 import { DIRECTORY_PATH } from "./signing.js";
 import { esc } from "./site/html.js";
@@ -26,16 +33,19 @@ import { icon } from "./ui/icons.js";
 import type { IconName } from "./ui/icons.js";
 import { SERVER_CARD } from "./ui/og.js";
 
-const MCP_URL = `${ORIGIN}/mcp`;
-
 export { MARK_SVG as FAVICON_SVG } from "../../src/brand.js";
 
-export const ROBOTS_TXT = "User-agent: *\nDisallow: /mcp\n";
+/**
+ * The zones whose Worker routes run the server, which Cloudflare names in CF-Worker and
+ * `cf.worker.upstream_zone`: the current hostname's, and rivi.software's for the former ones.
+ */
+const ZONE = new URL(ORIGIN).hostname;
+const FORMER_ZONE = "rivi.software";
 
 /** How long Crawl-delay may hold up a hosted crawl, as the pages say it. */
 const CRAWL_DELAY_BUDGET = `${HOSTED_LIMITS.crawlDelayBudgetMs / 1000} seconds`;
 
-/** The server's own hostname, whose header offers the website's page audit. */
+/** The server's pages, whose header offers the website's page audit. */
 const SERVER = {
   origin: ORIGIN,
   action: { href: `${SITE_ORIGIN}/`, label: "Audit a page" },
@@ -191,14 +201,14 @@ const mark = (yes: boolean): string =>
  */
 export const landingPage = (daily: DailyLimits, upvotes?: string): string =>
   layout({
-    path: "/",
+    path: "/mcp",
     title: `${PRODUCT_NAME} hosted MCP server | ${MAKER}`,
     description:
       "A free hosted MCP server that audits pages and sites for search engines and AI answer engines. Add it to Claude, ChatGPT, Cursor or VS Code, no account needed.",
     data: {
       "@type": "WebApplication",
       name: `${PRODUCT_NAME} hosted MCP server`,
-      url: `${ORIGIN}/`,
+      url: MCP_URL,
       applicationCategory: "DeveloperApplication",
       operatingSystem: "Any",
       isAccessibleForFree: true,
@@ -344,8 +354,8 @@ export const crawlerPage = (): string =>
 <div class="row" id="recognise"><h2>How to recognise them</h2><div class="row-body">
 <p>The requests carry this User-Agent:</p>
 ${snippet(USER_AGENT, "user_agent")}
-<p>Each one over https is signed with <a href="https://datatracker.ietf.org/doc/html/rfc9421">HTTP Message Signatures</a>, as Web Bot Auth asks: it carries <code>Signature-Agent: "${ORIGIN}"</code> and the headers <code>Signature-Input</code> and <code>Signature</code>, made with an Ed25519 key that <a href="${DIRECTORY_PATH}">the key directory</a> lists. A request over https without a valid signature did not come from this server, whatever its User-Agent says. Requests over plain http go unsigned, since anyone on their path could copy a signature and send it again.</p>
-<p>They come from Cloudflare's network, with the header <code>CF-Worker: rivi.software</code>. A site on Cloudflare sees them with the address <code>2a06:98c0:3600::103</code>, which every Cloudflare Worker shares.</p>
+<p>Each one over https is signed with <a href="https://datatracker.ietf.org/doc/html/rfc9421">HTTP Message Signatures</a>, as Web Bot Auth asks: it carries <code>Signature-Agent: "${BOT_ORIGIN}"</code> and the headers <code>Signature-Input</code> and <code>Signature</code>, made with an Ed25519 key that <a href="${DIRECTORY_PATH}">the key directory</a> lists. A request over https without a valid signature did not come from this server, whatever its User-Agent says. Requests over plain http go unsigned, since anyone on their path could copy a signature and send it again.</p>
+<p>They come from Cloudflare's network, with the header <code>CF-Worker: ${ZONE}</code>, or <code>CF-Worker: ${FORMER_ZONE}</code> when the assistant is still set up with the server's former address. A site on Cloudflare sees them with the address <code>2a06:98c0:3600::103</code>, which every Cloudflare Worker shares.</p>
 <p>The User-Agent <code>${LOCAL_PRODUCT_TOKEN}</code> is the same tool run on someone's own machine, as a command or a local MCP server. Its requests come from that machine, unsigned, and its crawls obey a robots.txt group for <code>${LOCAL_PRODUCT_TOKEN}</code>, or <code>*</code>.</p>
 </div></div>
 <div class="row" id="block"><h2>How to block them</h2><div class="row-body">
@@ -353,12 +363,12 @@ ${snippet(USER_AGENT, "user_agent")}
 <li class="card"><h3>In robots.txt</h3><p>A group for the product token keeps the server out: every audit reads it before anything else.</p><pre data-copy="robots_txt"><code>User-agent: agentic-seo-check
 Disallow: /</code></pre><p>Add a <code>User-agent: ${LOCAL_PRODUCT_TOKEN}</code> line to the group to keep out crawls run from people's own machines too.</p></li>
 <li class="card"><h3>In a firewall</h3><p>Block requests whose User-Agent contains <code>agentic-seo-check</code>, which both product tokens do.</p></li>
-<li class="card"><h3>On Cloudflare</h3><p>A WAF custom rule on <code>cf.worker.upstream_zone eq "rivi.software"</code> blocks the server, and with it every other Worker on rivi.software.</p></li>
+<li class="card"><h3>On Cloudflare</h3><p>A WAF custom rule on <code>cf.worker.upstream_zone in {"${ZONE}" "${FORMER_ZONE}"}</code> blocks the server, and with it every other Worker on ${FORMER_ZONE}.</p></li>
 </ul>
 </div></div>
 <div class="row" id="abuse"><h2>Report abuse</h2><div class="row-body">
 <p>If the server sends your site more requests than it should, or requests you did not expect, tell us through <a href="${ABUSE_URL}">help.rivi.software/contact</a>, with the hostname and the time, in UTC. The server records the hostname of every audit for three months, so we can check what it sent.</p>
-<p>${PRODUCT_NAME} is open source: read <a href="${REPOSITORY_URL}">its code on GitHub</a>, or see <a href="/">the hosted server's page</a>.</p>
+<p>${PRODUCT_NAME} is open source: read <a href="${REPOSITORY_URL}">its code on GitHub</a>, or see <a href="/mcp">the hosted server's page</a>.</p>
 </div></div>
 </div>
 </div>
@@ -376,7 +386,7 @@ export const notFoundPage = (): string =>
 <div class="hero-copy">
 <p class="notfound-code">404</p>
 <h1 id="notfound-title">Not found.</h1>
-<p class="lede">This address is not part of the ${PRODUCT_NAME} hosted MCP server. The server itself is at <code>${MCP_URL}</code>; <a href="/">its page</a> says how to use it.</p>
+<p class="lede">This address is not part of the ${PRODUCT_NAME} hosted MCP server. The server itself is at <code>${MCP_URL}</code>, and <a href="/mcp">its page</a> says how to use it.</p>
 </div>
 </div>
 </section>`,

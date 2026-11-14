@@ -40,7 +40,7 @@ import type {
   Severity,
   SiteAudit,
 } from "../../../src/core/types.js";
-import { ORIGIN as MCP_ORIGIN } from "../limits.js";
+import { MCP_URL } from "../limits.js";
 import { icon } from "../ui/icons.js";
 import { esc, safeHref, scriptSafe } from "./html.js";
 import { pagePdf } from "./pdf.js";
@@ -518,7 +518,7 @@ const pageNote = (seo: PageAudit, homepage: boolean): string => {
   const { origin } = new URL(seo.url);
 
   return homepage
-    ? `This is the audit of the homepage alone: crawls of a whole site are switched off at the moment. A crawl adds site-wide checks, such as broken links, sitemap coverage and duplicate titles: run <code>npx @rivi-software/agentic-seo-check crawl ${esc(origin)}</code>, or give your assistant <a href="${MCP_ORIGIN}/">the hosted server</a>.`
+    ? `This is the audit of the homepage alone: crawls of a whole site are switched off at the moment. A crawl adds site-wide checks, such as broken links, sitemap coverage and duplicate titles: run <code>npx @rivi-software/agentic-seo-check crawl ${esc(origin)}</code>, or give your assistant <a href="${MCP_URL}">the hosted server</a>.`
     : `To audit the whole site, up to ${HOSTED_LIMITS.maxPages} pages with checks such as broken links and duplicate titles, enter its homepage: <code>${esc(origin)}/</code>.`;
 };
 

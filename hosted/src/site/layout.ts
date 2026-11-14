@@ -1,8 +1,8 @@
 /**
- * The frame of every page of the website (issue #39): the shared frame of both hostnames
- * (ui/frame.ts) on the website's own, whose header offers the hosted MCP server.
+ * The frame of every page of the website (issue #39): the frame it shares with the MCP server's
+ * pages (ui/frame.ts), whose header offers the hosted MCP server.
  */
-import { ORIGIN as MCP_ORIGIN, SITE_ORIGIN } from "../limits.js";
+import { MCP_URL, SITE_ORIGIN } from "../limits.js";
 import { frame } from "../ui/frame.js";
 import type { FramePage } from "../ui/frame.js";
 import { SITE_CARD } from "../ui/og.js";
@@ -12,7 +12,7 @@ export { SITE_ORIGIN } from "../limits.js";
 export { NPM_URL, publisher } from "../ui/frame.js";
 
 /** The hosted MCP server's own page, which says how to add it to an assistant. */
-export const HOSTED_PAGE = `${MCP_ORIGIN}/`;
+export const HOSTED_PAGE = MCP_URL;
 
 export type SitePage = FramePage;
 

@@ -1,8 +1,8 @@
 # Security
 
-This policy covers the code in this repository: the `@rivi-software/agentic-seo-check` package on npm, its `agentic-seo-check` command line tool and `agentic-seo-check-mcp` MCP server, the hosted MCP server that RIVI Software runs at `https://mcp.agentic-seo.rivi.software/mcp` from [`hosted/`](hosted/), the `seo-audit` agent skill, and the workflows that test, review, release and deploy them.
+This policy covers the code in this repository: the `@rivi-software/agentic-seo-check` package on npm, its `agentic-seo-check` command line tool and `agentic-seo-check-mcp` MCP server, the hosted MCP server that RIVI Software runs at `https://agentic-seo.org/mcp` from [`hosted/`](hosted/), the `seo-audit` agent skill, and the workflows that test, review, release and deploy them.
 
-Abuse of the hosted server, such as too many requests to one site or requests you did not expect, is not a vulnerability: report it through [help.rivi.software/contact](https://help.rivi.software/contact), with the hostname and the time in UTC. [The page for site owners](https://mcp.agentic-seo.rivi.software/crawler) says how to recognise and block its requests.
+Abuse of the hosted server, such as too many requests to one site or requests you did not expect, is not a vulnerability: report it through [help.rivi.software/contact](https://help.rivi.software/contact), with the hostname and the time in UTC. [The page for site owners](https://agentic-seo.org/crawler) says how to recognise and block its requests.
 
 ## Reporting a vulnerability
 

@@ -20,8 +20,14 @@ export const MAKER_URL = "https://rivi.software";
 export const REPOSITORY_URL =
   "https://github.com/rivi-software/agentic-seo-check";
 
-/** The project's website, with the page audit and the rules page (hosted/src/site/). */
-export const WEBSITE_URL = "https://agentic-seo.rivi.software";
+/**
+ * The project's website, with the page audit and the rules page (hosted/src/site/), and the hosted
+ * MCP server at /mcp on the same hostname (issue #168).
+ */
+export const WEBSITE_URL = "https://agentic-seo.org";
+
+/** The hosted MCP server's address, which is also its page for a browser. */
+export const MCP_URL = `${WEBSITE_URL}/mcp`;
 
 export const MARK_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" role="img" aria-label="RIVI Software"><rect width="40" height="40" rx="9" fill="#15171a"/><g fill="#f5f6f7"><rect x="8" y="16" width="3" height="8" rx="1.5"/><rect x="13.25" y="11" width="3" height="18" rx="1.5"/><rect x="18.5" y="7" width="3" height="26" rx="1.5" fill="#3be08a"/><rect x="23.75" y="12" width="3" height="16" rx="1.5"/><rect x="29" y="16" width="3" height="8" rx="1.5"/></g></svg>';

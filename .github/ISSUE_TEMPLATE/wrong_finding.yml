@@ -7,7 +7,7 @@ body:
     id: rule
     attributes:
       label: Rule id
-      description: The `rule` of the finding, from the SEO audit or the AEO audit (`aeo.*`), or the rule you expected to fire. `agentic-seo-check rules` and [the website's rules page](https://agentic-seo.rivi.software/rules) list them.
+      description: The `rule` of the finding, from the SEO audit or the AEO audit (`aeo.*`), or the rule you expected to fire. `agentic-seo-check rules` and [the website's rules page](https://agentic-seo.org/rules) list them.
       placeholder: canonical.multiple
     validations:
       required: true

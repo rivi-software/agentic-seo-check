@@ -9,7 +9,7 @@ import { auditHtml } from "../../src/core/audit.ts";
 import { ALL_RULES } from "../../src/core/rules/index.ts";
 import { startFixtureServer } from "../../test/helpers/fixture-server.ts";
 import type { FixtureServer } from "../../test/helpers/fixture-server.ts";
-import { ORIGIN as MCP_ORIGIN } from "../src/limits.ts";
+import { MCP_URL } from "../src/limits.ts";
 import { crawlerPage, landingPage } from "../src/pages.ts";
 import { isHomepage, readForm } from "../src/site/audit.ts";
 import { LLMS_TXT, SITE_ROBOTS_TXT, SITEMAP_XML } from "../src/site/files.ts";
@@ -24,6 +24,7 @@ import {
 } from "../src/site/site-report.ts";
 import { CLAUDE_DIRECTORY_URL } from "../src/ui/frame.ts";
 import { OG_IMAGE, SERVER_CARD, SITE_CARD } from "../src/ui/og.ts";
+import type { ShareCard } from "../src/ui/og.ts";
 import { PRODUCT_HUNT_URL } from "../src/ui/product-hunt.ts";
 import { FONT_PATHS, STYLE } from "../src/ui/style.ts";
 
@@ -128,7 +129,7 @@ describe("the website's pages", () => {
     expect(html).toContain("&lt;b&gt;no&lt;/b&gt;");
   });
 
-  it("share one frame with the hosted server's pages, served from each page's own hostname", () => {
+  it("share one frame and one hostname with the hosted server's pages (issue #168)", () => {
     const site = [homePage(OPEN), rulesPage(), notFoundPage()];
     const server = [landingPage(DAILY), crawlerPage()];
 
@@ -143,33 +144,32 @@ describe("the website's pages", () => {
       }
     }
 
-    // Each hostname links the other's pages in its header and footer.
-    for (const html of site) {
-      expect(html).toContain(`href="${MCP_ORIGIN}/crawler"`);
-    }
-
-    for (const html of server) {
-      expect(html).toContain(`href="${SITE_ORIGIN}/rules"`);
+    // Every page links the others in its header and footer, as paths on the one hostname.
+    for (const html of [...site, ...server]) {
+      expect(html).toContain('href="/mcp"');
+      expect(html).toContain('href="/crawler"');
+      expect(html).toContain('href="/rules"');
+      expect(html).not.toContain('href="https://mcp.');
     }
   });
 
-  it("give every page its hostname's share image, which the audit then finds complete", async () => {
-    const pages: [html: string, origin: string, path: string][] = [
-      [homePage(OPEN), SITE_ORIGIN, "/"],
-      [rulesPage(), SITE_ORIGIN, "/rules"],
-      [landingPage(DAILY), MCP_ORIGIN, "/"],
-      [crawlerPage(), MCP_ORIGIN, "/crawler"],
+  it("give every page its share image, the website's or the server's, which the audit then finds complete", async () => {
+    const pages: [html: string, path: string, card: ShareCard][] = [
+      [homePage(OPEN), "/", SITE_CARD],
+      [rulesPage(), "/rules", SITE_CARD],
+      [landingPage(DAILY), "/mcp", SERVER_CARD],
+      [crawlerPage(), "/crawler", SERVER_CARD],
     ];
 
     const audits = await Promise.all(
-      pages.map(([html, origin, path]) =>
-        auditHtml(html, { url: `${origin}${path}`, source: "url" })
+      pages.map(([html, path]) =>
+        auditHtml(html, { url: `${SITE_ORIGIN}${path}`, source: "url" })
       )
     );
 
-    for (const [index, [html, origin]] of pages.entries()) {
+    for (const [index, [html, , card]] of pages.entries()) {
       expect(html).toContain(
-        `<meta property="og:image" content="${origin}${OG_IMAGE.path}">`
+        `<meta property="og:image" content="${SITE_ORIGIN}${card.path}">`
       );
       expect(html).toContain(
         '<meta name="twitter:card" content="summary_large_image">'
@@ -181,7 +181,7 @@ describe("the website's pages", () => {
   });
 
   it("let Google-Extended in past the section Cloudflare puts before robots.txt, and only there", () => {
-    // What Bot Preference Sync prepends for the rivi.software zone, cut to two of its groups.
+    // What Bot Preference Sync prepends for a zone such as rivi.software, cut to two of its groups.
     const managed =
       "# BEGIN Cloudflare Managed content\n\nUser-agent: *\nContent-Signal: search=yes,ai-train=no,use=reference\nAllow: /\n\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: Google-Extended\nDisallow: /\n\n# END Cloudflare Managed Content\n\n";
 
@@ -221,6 +221,11 @@ describe("the website's pages", () => {
     expect(SITE_ROBOTS_TXT).toContain("Disallow: /audit");
     expect(LLMS_TXT.startsWith("# Agentic SEO Check\n\n> ")).toBeTruthy();
     expect(notFoundPage()).toContain("Not found");
+  });
+
+  it("list the server's pages in the website's sitemap, since they share its hostname (issue #168)", () => {
+    expect(SITEMAP_XML).toContain(`<loc>${MCP_URL}</loc>`);
+    expect(SITEMAP_XML).toContain(`<loc>${SITE_ORIGIN}/crawler</loc>`);
   });
 
   it("link the hosted server's listing in the Claude Directory, as a badge where it is offered", () => {
@@ -437,7 +442,7 @@ describe("the report of a page audit", () => {
 
     expect(report).toContain('data-report="pdf"');
     expect(report).toContain(
-      '<p class="report-print">Audited on 11 November 2026 at 14:05 UTC with Agentic SEO Check by RIVI Software, <a href="https://agentic-seo.rivi.software/">agentic-seo.rivi.software</a></p>'
+      '<p class="report-print">Audited on 11 November 2026 at 14:05 UTC with Agentic SEO Check by RIVI Software, <a href="https://agentic-seo.org/">agentic-seo.org</a></p>'
     );
   });
 
@@ -684,7 +689,7 @@ describe("the address the form is given", () => {
 
 /** The form as a POST with the Content-Length `length`, or without one. */
 const post = (length: string | null) =>
-  new Request("https://agentic-seo.rivi.software/audit", {
+  new Request("https://agentic-seo.org/audit", {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",

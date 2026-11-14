@@ -10,8 +10,13 @@
   "compatibility_date": "2026-11-01",
   // fetch() to a site on Cloudflare goes through its zone's front door, as the MCP server's does.
   "compatibility_flags": ["global_fetch_strictly_public"],
-  // Its hostname is also the one `site:dev` gives its requests.
-  "routes": [{ "pattern": "agentic-seo.rivi.software", "custom_domain": true }],
+  // Its hostname, which it shares with the MCP server: that Worker's routes there take the server's
+  // own paths (wrangler.jsonc, issue #168). It is also the one `site:dev` gives its requests. Then
+  // its hostname before, which sends every request to agentic-seo.org (FORMER_SITE_HOST).
+  "routes": [
+    { "pattern": "agentic-seo.org", "custom_domain": true },
+    { "pattern": "agentic-seo.rivi.software", "custom_domain": true }
+  ],
   // The pages' fonts and share images (src/ui/assets.ts), and the fonts of a shared result's image
   // (src/ui/share-image.ts), bundled as their bytes; resvg, which draws that image, as WebAssembly.
   "rules": [

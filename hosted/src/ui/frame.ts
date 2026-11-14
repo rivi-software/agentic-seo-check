@@ -1,8 +1,7 @@
 /**
- * The frame of every page on both hostnames: the head a search engine reads, RIVI Software's
- * header and footer, and the stylesheet. The website (site/layout.ts) and the hosted server's
- * pages (pages.ts) differ in their origin and the header's button; the navigation and the footer
- * link the two hostnames, so they read as one site.
+ * The frame of every page: the head a search engine reads, RIVI Software's header and footer, and
+ * the stylesheet. The website (site/layout.ts) and the hosted server's pages (pages.ts) share one
+ * hostname (issue #168) and differ in the header's button and their share image.
  */
 import {
   MAKER,
@@ -11,7 +10,7 @@ import {
   REPOSITORY_URL,
 } from "../../../src/brand.js";
 import type { JsonObject } from "../../../src/core/html/structured-data.js";
-import { ORIGIN as MCP_ORIGIN, SITE_ORIGIN } from "../limits.js";
+import { MCP_URL, SITE_ORIGIN } from "../limits.js";
 import { esc, scriptSafe } from "../site/html.js";
 import { GITHUB_MARK, icon, MARK } from "./icons.js";
 import { cardAlt, OG_IMAGE } from "./og.js";
@@ -55,11 +54,10 @@ const PUBLISHER_ID = `${MAKER_URL}/#organization`;
 
 export const publisher = { "@id": PUBLISHER_ID };
 
-/** The hostname a page is served on, and what the header's button offers there. */
+/** The hostname a page is served on, what the header's button offers there, and its share image. */
 export interface Host {
   origin: string;
   action: { href: string; label: string };
-  /** The hostname's share image, at OG_IMAGE.path. */
   card: ShareCard;
 }
 
@@ -72,20 +70,19 @@ export interface FramePage {
   body: string;
   /** Loads Cloudflare Turnstile, for the audit form. */
   turnstile?: boolean;
-  /** The page's own share image, in place of its hostname's card (a shared result's). */
+  /** The page's own share image, in place of its host's card (a shared result's). */
   image?: { url: string; alt: string };
   /** Keeps the page out of search: it says little of its own (a shared result). */
   noindex?: boolean;
 }
 
 /**
- * The pages of both hostnames, in the order the header lists them: three, for the people who use
- * the tool. The page for site owners, which the User-Agent links to directly, is in the footer.
+ * The pages, in the order the header lists them: three, for the people who use the tool. The page for site owners, which the User-Agent links to directly, is in the footer.
  */
 const NAV: [href: string, label: string][] = [
   [`${SITE_ORIGIN}/`, "Audit"],
   [`${SITE_ORIGIN}/rules`, "Rules"],
-  [`${MCP_ORIGIN}/`, "MCP server"],
+  [MCP_URL, "MCP server"],
 ];
 
 const FOOTER: [heading: string, links: [href: string, label: string][]][] = [
@@ -94,9 +91,9 @@ const FOOTER: [heading: string, links: [href: string, label: string][]][] = [
     [
       [`${SITE_ORIGIN}/`, "Audit a page or site"],
       [`${SITE_ORIGIN}/rules`, "The rules"],
-      [`${MCP_ORIGIN}/`, "Hosted MCP server"],
+      [MCP_URL, "Hosted MCP server"],
       [CLAUDE_DIRECTORY_URL, "In the Claude Directory"],
-      [`${MCP_ORIGIN}/crawler`, "For site owners"],
+      [`${SITE_ORIGIN}/crawler`, "For site owners"],
     ],
   ],
   [
@@ -176,7 +173,7 @@ export const frame = (host: Host, page: FramePage): string => {
   const url = `${host.origin}${page.path}`;
 
   const image = page.image ?? {
-    url: `${host.origin}${OG_IMAGE.path}`,
+    url: `${host.origin}${host.card.path}`,
     alt: cardAlt(host.card),
   };
 

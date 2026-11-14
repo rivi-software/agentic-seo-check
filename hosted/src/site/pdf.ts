@@ -48,7 +48,7 @@ import type {
   SeverityCounts,
   SiteAudit,
 } from "../../../src/core/types.js";
-import { ORIGIN as MCP_ORIGIN } from "../limits.js";
+import { MCP_URL } from "../limits.js";
 import { MISSING_GLYPHS } from "./pdf-glyphs.js";
 import {
   aeoFactRows,
@@ -1572,7 +1572,7 @@ const aboutNodes = (url: string, kind: "page" | "site"): PdfNode[] => {
     },
     para([
       "Or from an AI assistant, through the hosted MCP server at ",
-      { text: `${MCP_ORIGIN}/mcp`, style: "link", link: `${MCP_ORIGIN}/` },
+      { text: MCP_URL, style: "link", link: MCP_URL },
       ", which is free and needs no account.",
     ]),
     SIGNATURE,

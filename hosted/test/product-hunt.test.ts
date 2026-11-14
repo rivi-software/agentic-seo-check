@@ -9,7 +9,7 @@ import {
 } from "../src/ui/product-hunt.ts";
 import type { UpvoteCache } from "../src/ui/product-hunt.ts";
 
-const SITE = "https://agentic-seo.rivi.software";
+const SITE = "https://agentic-seo.org";
 
 /** Where a location keeps the count. */
 const KEPT = `${SITE}/product-hunt/upvotes`;

@@ -1,10 +1,10 @@
 /**
  * The website's files besides its pages: robots.txt, the sitemap, llms.txt and the pages' script,
- * which the hosted server's pages load too.
+ * which the hosted server's pages, on the same hostname (issue #168), load too.
  */
 import { PRODUCT_NAME } from "../../../src/brand.js";
 import { HOSTED_LIMITS, LOCAL_SERVER } from "../../../src/core/hosted.js";
-import { ORIGIN as MCP_ORIGIN } from "../limits.js";
+import { MCP_URL } from "../limits.js";
 import { CLAUDE_DIRECTORY_URL } from "../ui/frame.js";
 import { icon } from "../ui/icons.js";
 import { SITE_ORIGIN } from "./layout.js";
@@ -14,11 +14,12 @@ import { SITE_ORIGIN } from "./layout.js";
  * X, LinkedIn and Bluesky fetch a shared result's page and image to draw its card, and the page
  * keeps itself out of search with noindex.
  *
- * Cloudflare's Bot Preference Sync puts a section before this file that disallows Google-Extended,
- * with the other AI training crawlers, on every host of rivi.software. The group for Google-Extended
- * here lets Gemini's app answers cite the site (and Gemini train on it), on this host only: a
- * crawler's groups combine, and an Allow wins over a Disallow as long (RFC 9309, sections 2.2.1 and
- * 2.2.2), as Google reads them too. It repeats Disallow: /audit, since a crawler with a group of its
+ * Cloudflare's Bot Preference Sync, on for every host of rivi.software, where the site lived before
+ * issue #168, puts a section before this file that disallows Google-Extended with the other AI
+ * training crawlers. The group for Google-Extended here lets Gemini's app answers cite the site
+ * (and Gemini train on it) wherever a zone puts such a section before it: a crawler's groups
+ * combine, and an Allow wins over a Disallow as long (RFC 9309, sections 2.2.1 and 2.2.2), as
+ * Google reads them too. It repeats Disallow: /audit, since a crawler with a group of its
  * own ignores the `*` group.
  */
 export const SITE_ROBOTS_TXT = `User-agent: *\nDisallow: /audit\n\n# Gemini may cite this site: this group combines with the Disallow for Google-Extended above, and Allow wins (RFC 9309).\nUser-agent: Google-Extended\nAllow: /\nDisallow: /audit\n\nSitemap: ${SITE_ORIGIN}/sitemap.xml\n`;
@@ -27,6 +28,8 @@ export const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 <url><loc>${SITE_ORIGIN}/</loc></url>
 <url><loc>${SITE_ORIGIN}/rules</loc></url>
+<url><loc>${MCP_URL}</loc></url>
+<url><loc>${SITE_ORIGIN}/crawler</loc></url>
 </urlset>
 `;
 
@@ -39,7 +42,7 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
 ## Use it
 
 - [Audit a page or a site in the browser](${SITE_ORIGIN}/): one public page, or a site's homepage for a crawl of up to ${HOSTED_LIMITS.maxPages} pages, free
-- [The hosted MCP server](${MCP_ORIGIN}/): \`${MCP_ORIGIN}/mcp\`, free, with no account and no key
+- [The hosted MCP server](${MCP_URL}): \`${MCP_URL}\`, free, with no account and no key
 - [The hosted MCP server in the Claude Directory](${CLAUDE_DIRECTORY_URL}): its listing, from which claude.ai connects it
 - [The package on npm](https://www.npmjs.com/package/@rivi-software/agentic-seo-check): the command \`npx @rivi-software/agentic-seo-check audit <url>\` and the local MCP server \`${LOCAL_SERVER}\`
 
@@ -47,7 +50,7 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
 
 - [The rules](${SITE_ORIGIN}/rules): every rule, its severity and what it recommends
 - [The README](https://github.com/rivi-software/agentic-seo-check#readme): the commands, the MCP tools and their options
-- [For site owners](${MCP_ORIGIN}/crawler): what the audit's requests are and how to block them
+- [For site owners](${SITE_ORIGIN}/crawler): what the audit's requests are and how to block them
 `;
 
 /**
@@ -57,14 +60,14 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
 export const PDFMAKE_PATH = "/pdfmake.js";
 
 /**
- * The pages' script, served at /site.js on both hostnames so that the Content-Security-Policy
+ * The pages' script, served at /site.js so that the Content-Security-Policy
  * needs no inline script. It gives every command and snippet marked data-copy a button that copies
  * it, waits for Turnstile's token before the audit form is sent, shows that an audit or a crawl is
  * running, shows the report one section at a time behind its tabs, gives the report as a JSON
  * file, as Markdown on the clipboard or as a PDF that pdfmake draws in the page (issue #157), opens
  * every section and finding while the page prints, adds the system's share sheet to the report's
  * Share menu, and
- * filters the rules page. On the production hostnames it also loads PostHog from /ph.js for the
+ * filters the rules page. In production it also loads PostHog from /ph.js for the
  * usage analytics (issue #57), with the cookie banner, and sends the closed list of events below:
  * never an address the visitor audited, nothing they typed and nothing from a report but its
  * scores. Without it every page still reads and works, but the form. It runs once the page is read
@@ -612,8 +615,6 @@ export const SITE_JS = `(() => {
     "github.com": "github",
     "www.npmjs.com": "npm",
     "claude.ai": "claude_directory",
-    "mcp.agentic-seo.rivi.software": "hosted_server",
-    "agentic-seo.rivi.software": "website",
   };
 
   // The networks of the report's Share menu.
@@ -642,8 +643,9 @@ export const SITE_JS = `(() => {
   });
 
   // An address of this site as an event records it, less what belongs to the audited site: a
-  // share link's result (its address and scores) and the address a link put in the form.
-  const OWN = /^(mcp\\.)?agentic-seo(-check)?\\.rivi\\.software$/;
+  // share link's result (its address and scores) and the address a link put in the form. The
+  // hostnames before issue #168 too, which a referrer may still name.
+  const OWN = /^(agentic-seo\\.org|(mcp\\.)?agentic-seo(-check)?\\.rivi\\.software)$/;
 
   const clean = (value) => {
     if (typeof value !== "string" || !/^(\\/|https?:\\/\\/)/.test(value)) {
@@ -700,7 +702,7 @@ export const SITE_JS = `(() => {
       api_host: module.API_HOST,
       ui_host: "https://eu.posthog.com",
       defaults: "2026-08-30",
-      // Counted without a cookie until the visitor accepts one; one choice for both hostnames.
+      // Counted without a cookie until the visitor accepts one; one choice for every page.
       cookieless_mode: "on_reject",
       opt_out_capturing_by_default: true,
       opt_out_capturing_persistence_type: "cookie",

@@ -25,7 +25,7 @@ body:
       options:
         - CLI
         - MCP server, run on your machine
-        - Hosted MCP server (mcp.agentic-seo.rivi.software)
-        - Website (agentic-seo.rivi.software)
+        - Hosted MCP server (agentic-seo.org/mcp)
+        - Website (agentic-seo.org)
         - Library
         - Agent skill (seo-audit)

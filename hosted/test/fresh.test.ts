@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { freshResponse } from "../src/fresh.ts";
 
-const URL = "https://agentic-seo.rivi.software/";
+const URL = "https://agentic-seo.org/";
 
 const HEADERS = {
   "content-type": "text/html; charset=utf-8",

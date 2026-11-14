@@ -11,9 +11,22 @@
   // fetch() to a site on Cloudflare goes through its zone's front door (redirects, WAF, Workers), as a
   // search engine's request does, rather than straight to its origin.
   "compatibility_flags": ["global_fetch_strictly_public"],
-  // The MCP server's hostname, and its hostname in 0.7.0, which still answers at /mcp (FORMER_HOST).
-  // The website's, agentic-seo.rivi.software, is wrangler.site.jsonc's.
+  // The server's own paths on agentic-seo.org (issue #168), whose custom domain is the website's
+  // (wrangler.site.jsonc): Cloudflare runs a route before a custom domain on the same hostname. The
+  // first route's hostname is also the one `hosted:dev` gives its requests. Then the server's
+  // hostnames before, which keep answering at /mcp and send the rest to agentic-seo.org
+  // (FORMER_SERVER_HOSTS), and serve the key directory that Signature-Agent names (BOT_ORIGIN).
   "routes": [
+    { "pattern": "agentic-seo.org/mcp", "zone_name": "agentic-seo.org" },
+    { "pattern": "agentic-seo.org/crawler", "zone_name": "agentic-seo.org" },
+    {
+      "pattern": "agentic-seo.org/.well-known/http-message-signatures-directory",
+      "zone_name": "agentic-seo.org"
+    },
+    {
+      "pattern": "agentic-seo.org/.well-known/openai-apps-challenge",
+      "zone_name": "agentic-seo.org"
+    },
     { "pattern": "mcp.agentic-seo.rivi.software", "custom_domain": true },
     { "pattern": "mcp.agentic-seo-check.rivi.software", "custom_domain": true }
   ],
