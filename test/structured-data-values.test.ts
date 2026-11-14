@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { auditHtml } from "../src/core/audit.js";
+import { extractPage } from "../src/core/html/extract.js";
 import type {
   JsonObject,
   JsonValue,
@@ -662,9 +663,9 @@ describe("structured-data.self-serving-review", () => {
 
     const fixed = applied(html, found?.fix);
 
+    // The extractor reads the script, so the test needs no regular expression over HTML.
     const script =
-      /<script[^>]*>(?<json>[^<]*)<\/script>/iu.exec(fixed)?.groups?.["json"] ??
-      "";
+      extractPage(fixed, { url: HOME }).structuredData[0]?.scriptText ?? "";
 
     expect(found?.fix?.map((e) => e.action)).toStrictEqual([
       "remove",
