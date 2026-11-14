@@ -192,6 +192,9 @@ export const SITE_JS = `(() => {
     const text = label.dataset.idle || label.textContent;
     let waiting = false;
 
+    // How long the form waits for Turnstile's token before it gives the page back.
+    const CHECK_WAIT_MS = 30000;
+
     const input = form.querySelector('[name="url"]');
 
     // The address in the field as the server reads it (readForm, isHomepage in audit.ts), or null
@@ -259,13 +262,52 @@ export const SITE_JS = `(() => {
       return field ? field.value : "";
     };
 
+    // The form as it was before the send: the button, and what the waiting panel stood in for.
+    let stalled;
+
+    const reset = () => {
+      waiting = false;
+      clearTimeout(stalled);
+      button.disabled = false;
+      button.classList.remove("is-busy");
+      label.textContent = text;
+      wait(false);
+      showMode();
+    };
+
     // Turnstile calls this by name once it has a token.
     window.onAuditToken = () => {
       if (waiting) {
         waiting = false;
+        clearTimeout(stalled);
         form.submit();
       }
     };
+
+    // The check gave no token, so the form was never sent and no answer will come: the page goes
+    // back to what it showed, says so, and asks Turnstile for a new check for the next try.
+    const stall = form.querySelector(".audit-stalled");
+
+    const giveUp = () => {
+      if (!waiting) {
+        return;
+      }
+
+      reset();
+
+      if (stall) {
+        stall.hidden = false;
+      }
+
+      try {
+        window.turnstile.reset();
+      } catch {
+        // Turnstile's script did not load: the next send waits for it again.
+      }
+    };
+
+    // Turnstile calls this by name when its check fails.
+    window.onAuditCheckFailed = giveUp;
 
     form.addEventListener("submit", (event) => {
       // Sent at once: the form's answer is the next page.
@@ -275,9 +317,17 @@ export const SITE_JS = `(() => {
         { send_instantly: true, transport: "sendBeacon" }
       );
 
+      if (stall) {
+        stall.hidden = true;
+      }
+
+      // A check that fails without a word, or whose script was blocked, would leave the page
+      // waiting for good.
       if (!token()) {
         event.preventDefault();
         waiting = true;
+        clearTimeout(stalled);
+        stalled = setTimeout(giveUp, CHECK_WAIT_MS);
       }
 
       button.disabled = true;
@@ -288,14 +338,7 @@ export const SITE_JS = `(() => {
 
     // A page restored from the back/forward cache still has the button as it was left, and a
     // crawl's answer has it busy until the report is in.
-    window.addEventListener("pageshow", () => {
-      waiting = false;
-      button.disabled = false;
-      button.classList.remove("is-busy");
-      label.textContent = text;
-      wait(false);
-      showMode();
-    });
+    window.addEventListener("pageshow", reset);
   }
 
   // The rules page: a filter over the rules by text, audit and severity, a link to a rule opens it,
@@ -453,6 +496,9 @@ export const SITE_JS = `(() => {
 
   // The controls over a section's findings: one severity at a time, and all of them open or closed
   // at once. A filter hides the findings of the other severities, and a group left without any.
+  // A hidden finding stays findable, as a report's hidden section does, where the browser can
+  // (hidden=until-found): find in page then shows it. Elsewhere it is plainly hidden.
+  const HIDDEN = "onbeforematch" in document.body ? "until-found" : true;
   const showAll = new Map();
 
   for (const tools of document.querySelectorAll(".findings-tools")) {
@@ -484,11 +530,12 @@ export const SITE_JS = `(() => {
 
     const show = (severity) => {
       for (const finding of findings) {
-        finding.hidden = severity !== "" && finding.dataset.severity !== severity;
+        finding.hidden =
+          severity !== "" && finding.dataset.severity !== severity ? HIDDEN : false;
       }
 
       for (const group of groups.querySelectorAll(".finding-group, .finding-part")) {
-        group.hidden = !group.querySelector(".finding:not([hidden])");
+        group.hidden = group.querySelector(".finding:not([hidden])") ? false : HIDDEN;
       }
 
       for (const button of buttons) {
@@ -520,9 +567,22 @@ export const SITE_JS = `(() => {
     groups.addEventListener("toggle", syncSoon, true);
     showAll.set(groups, () => show(""));
 
+    // The browser's find in page found text in a finding the filter hides: every severity shows
+    // again, so the match is there to see.
+    groups.addEventListener("beforematch", () => {
+      show("");
+    });
+
     tools.hidden = false;
     sync();
   }
+
+  // Paper gets every finding, whatever a filter hides.
+  window.addEventListener("beforeprint", () => {
+    for (const all of showAll.values()) {
+      all();
+    }
+  });
 
   // A link to a finding its section's filter hides shows every severity again.
   const reveal = (target) => {

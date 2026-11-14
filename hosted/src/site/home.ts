@@ -132,7 +132,8 @@ const auditForm = (state: HomeState): string => {
 ${submitButton(state.crawling ?? false)}
 </div>
 </div>
-<div class="cf-turnstile" data-sitekey="${esc(state.siteKey)}" data-callback="onAuditToken" data-action="audit"></div>
+<div class="cf-turnstile" data-sitekey="${esc(state.siteKey)}" data-callback="onAuditToken" data-error-callback="onAuditCheckFailed" data-action="audit"></div>
+<p class="notice audit-stalled" role="alert" hidden>${icon("error")}<span>The check that keeps bots out did not finish, so the audit did not start. Try again, or reload the page.</span></p>
 ${state.error ? `<p class="notice" role="alert"${state.failure ? ` data-failure="${state.failure}"` : ""}>${icon("error")}<span>${esc(state.error)}</span></p>` : ""}
 <ul class="audit-facts">${formFacts(state.crawls)
     .map((fact) => `<li>${icon("check")}${fact}</li>`)

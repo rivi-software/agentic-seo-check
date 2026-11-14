@@ -13,7 +13,12 @@ import type { FixtureServer } from "../../test/helpers/fixture-server.ts";
 import { MCP_URL } from "../src/limits.ts";
 import { crawlerPage, landingPage } from "../src/pages.ts";
 import { isHomepage, readForm } from "../src/site/audit.ts";
-import { LLMS_TXT, SITE_ROBOTS_TXT, SITEMAP_XML } from "../src/site/files.ts";
+import {
+  LLMS_TXT,
+  SITE_JS,
+  SITE_ROBOTS_TXT,
+  SITEMAP_XML,
+} from "../src/site/files.ts";
 import { homePage, notFoundPage } from "../src/site/home.ts";
 import { SITE_ORIGIN } from "../src/site/layout.ts";
 import { partsHtml, renderReport } from "../src/site/report.ts";
@@ -1041,12 +1046,36 @@ describe("the audit tool's controls", () => {
     ).toContain('style="--n:5;--of:5"');
   });
 
-  it("prints every finding whatever the filter hides, and none of the controls", () => {
+  it("prints none of the controls, and shows every finding before a print", () => {
     const print = STYLE.slice(STYLE.indexOf("@media print{"));
+    const filter = SITE_JS.slice(SITE_JS.indexOf("const showAll = new Map()"));
 
     expect(print).toMatch(/[,{]\.findings-tools[,{]/u);
-    expect(print).toContain(
-      ".finding[hidden],.finding-group[hidden],.finding-part[hidden]{display:block}"
+    expect(filter).toMatch(
+      /addEventListener\("beforeprint", \(\) => \{\s+for \(const all of showAll\.values\(\)\)/u
     );
+  });
+
+  it("keeps a finding its filter hides findable, and out of the layout", () => {
+    // Find in page reaches a hidden finding, and the filter then shows every severity again.
+    expect(SITE_JS).toContain(
+      '"onbeforematch" in document.body ? "until-found" : true'
+    );
+    expect(SITE_JS).toContain('groups.addEventListener("beforematch"');
+    expect(STYLE).toContain(
+      ".finding[hidden=until-found],.finding-group[hidden=until-found],.finding-part[hidden=until-found]{position:absolute;"
+    );
+  });
+
+  it("gives the page back when the check that keeps bots out yields no token", () => {
+    const home = homePage(OPEN);
+
+    expect(home).toContain('data-error-callback="onAuditCheckFailed"');
+    expect(home).toContain(
+      '<p class="notice audit-stalled" role="alert" hidden>'
+    );
+    expect(SITE_JS).toContain("window.onAuditCheckFailed = giveUp;");
+    expect(SITE_JS).toContain("stalled = setTimeout(giveUp, CHECK_WAIT_MS);");
+    expect(SITE_JS).toContain('window.addEventListener("pageshow", reset);');
   });
 });

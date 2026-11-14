@@ -223,6 +223,7 @@ const HOME = `
 .cf-turnstile:not(:empty){display:flex;justify-content:center;margin-top:12px}
 .notice{display:flex;align-items:flex-start;gap:10px;margin-top:12px;padding:12px 14px;border:1px solid #f0675f47;border-radius:10px;background:var(--error-soft);color:var(--text);font-size:.9375rem}
 .notice .icon{margin-top:3px;color:var(--error-text)}
+.notice[hidden]{display:none}
 .stage{position:relative;margin-top:72px;perspective:1600px}
 .stage::before{content:"";position:absolute;left:50%;top:-120px;width:80%;height:440px;transform:translateX(-50%);background:radial-gradient(50% 50%,#3be08a47,#0000 70%);filter:blur(24px);pointer-events:none}
 .stage-window{position:relative;transform-origin:50% 0;transform:rotateX(5deg);-webkit-mask-image:linear-gradient(#000 64%,#0000);mask-image:linear-gradient(#000 64%,#0000)}
@@ -386,7 +387,8 @@ a.score-card:hover{border-color:var(--line-strong)}
 .index-empty{display:flex;align-items:center;gap:8px;color:var(--text-muted);font-size:.875rem}
 .index-empty .icon{color:var(--signal)}
 .findings-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:0 2px}
-.findings-tools[hidden],.finding-group[hidden],.finding-part[hidden]{display:none}
+.findings-tools[hidden],.finding-group[hidden]:not([hidden=until-found]),.finding-part[hidden]:not([hidden=until-found]){display:none}
+.finding[hidden=until-found],.finding-group[hidden=until-found],.finding-part[hidden=until-found]{position:absolute;margin:0;padding:0;border:0;box-shadow:none}
 .seg-count{margin-left:7px;color:var(--text-faint);font-family:var(--mono);font-size:.6875rem;font-variant-numeric:tabular-nums}
 .seg button[aria-pressed=true] .seg-count{color:var(--text-body)}
 .findings-toggle{margin-left:auto}
@@ -765,7 +767,6 @@ html{font-size:12px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 body{font-size:12px}
 *,::before,::after{animation:none!important;transition:none!important}
 .site-header,.site-footer,.consent,.skip-link,.crawl-progress,.report-actions,.report-tabs,.findings-tools,.score-meter,.copy,.evidence,.chev,.fix-row>.arrow,.score-more{display:none!important}
-.finding[hidden],.finding-group[hidden],.finding-part[hidden]{display:block}
 main:has(>.report)>:not(.report){display:none}
 .wrap{max-width:none;padding-inline:0}
 pre,.table-wrap{overflow:visible}
