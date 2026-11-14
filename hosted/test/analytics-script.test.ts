@@ -4,11 +4,26 @@
  */
 import { runInNewContext } from "node:vm";
 
+import { is } from "css-select";
+import { isTag, isText } from "domhandler";
+import type { AnyNode, Element } from "domhandler";
 import { describe, expect, it } from "vitest";
 
+import { auditAeoHtml } from "../../src/core/aeo/audit.ts";
+import { auditHtml } from "../../src/core/audit.ts";
+import { parseDocument } from "../../src/core/html/dom.ts";
 import { cleanMessage as coreCleanMessage } from "../../src/telemetry/exceptions.ts";
 import { ANALYTICS_HELPERS_JS } from "../src/site/analytics-script.ts";
 import { SITE_JS } from "../src/site/files.ts";
+import { homePage } from "../src/site/home.ts";
+import { renderReport } from "../src/site/report.ts";
+import { shareMenu, sharePage } from "../src/site/share-page.ts";
+import { signShare } from "../src/site/share.ts";
+import {
+  progressClose,
+  progressLine,
+  progressOpen,
+} from "../src/site/site-report.ts";
 
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 
@@ -17,10 +32,17 @@ interface Event {
   properties: { [key: string]: Json };
 }
 
+/** What the recorder hands maskAttribute: an element that answers `closest`. */
+interface Closest {
+  closest: (selector: string) => object | null;
+}
+
 interface Helpers {
   clean: (value: string) => string;
   cleanMessage: (message: string) => string;
   cleanEvent: (event: Event) => Event | null;
+  PRIVATE: string;
+  maskAttribute: (name: string, value: string, element: Closest) => string;
 }
 
 /** The globals the script finds, and where it leaves its helpers. */
@@ -37,7 +59,7 @@ const helpers = (href: string): Helpers => {
   };
 
   runInNewContext(
-    `${ANALYTICS_HELPERS_JS}\nthis.helpers = { clean, cleanMessage, cleanEvent };`,
+    `${ANALYTICS_HELPERS_JS}\nthis.helpers = { clean, cleanMessage, cleanEvent, PRIVATE, maskAttribute };`,
     context
   );
 
@@ -165,5 +187,191 @@ describe("the pages' event cleaning", () => {
     expect(
       cleaned(exception("chrome-extension://abcdef/content.js"))
     ).toBeNull();
+  });
+});
+
+/** `element`, or the nearest element around it, that `selector` matches, as the browser's `closest`. */
+const closest = (element: Element, selector: string): Element | null => {
+  for (let node: AnyNode | null = element; node; node = node.parent) {
+    if (isTag(node) && is(node, selector)) {
+      return node;
+    }
+  }
+
+  return null;
+};
+
+const AUDITED = "https://shop.example.com/pricing?plan=team";
+
+/**
+ * Every page that can show an audited address, with that address everywhere it can be: the form
+ * filled with it and refused, the wait for a crawl and its pages, the report with its share menu,
+ * and the page a share link opens.
+ */
+const pagesWithTheAddress = async (): Promise<string[]> => {
+  const html =
+    "<html><head><title>React App</title></head><body><a href='/about'>About</a></body></html>";
+
+  const seo = await auditHtml(html, {
+    url: AUDITED,
+    source: "url",
+    target: AUDITED,
+  });
+
+  const aeo = await auditAeoHtml(html, { url: AUDITED });
+
+  const link = await signShare(
+    { SHARE_KEY: "the key that signs" },
+    {
+      kind: "page",
+      url: AUDITED,
+      day: "2026-11-14",
+      seo: { score: seo.score, counts: { error: 1, warning: 2, info: 3 } },
+      aeo: { score: aeo.score, counts: { error: 0, warning: 1, info: 2 } },
+      pages: 1,
+    }
+  );
+
+  if (!link) {
+    throw new Error("signShare made no link with a key");
+  }
+
+  const state = {
+    open: true,
+    crawls: true,
+    siteKey: "1x00000000000000000000BB",
+    url: AUDITED,
+  };
+
+  return [
+    homePage({
+      ...state,
+      error: `The site at ${AUDITED} answered 403.`,
+      failure: "refused",
+    }),
+    homePage({
+      ...state,
+      crawling: true,
+      report: `${progressOpen(AUDITED)}${progressLine({
+        phase: "crawl",
+        message: `200 ${AUDITED}`,
+        crawled: 1,
+        discovered: 4,
+      })}${progressClose(`The crawl of ${AUDITED} stopped.`, "refused")}`,
+    }),
+    homePage({
+      ...state,
+      report: renderReport(seo, aeo, false, shareMenu(link)),
+    }),
+    sharePage(link),
+  ];
+};
+
+describe("what a session recording shows (issue #181)", () => {
+  it("is set up in the pages' script, masking fields and the private parts", () => {
+    expect(SITE_JS).toContain("maskTextSelector: PRIVATE");
+    expect(SITE_JS).toContain("maskAttributeFn: maskAttribute");
+    expect(SITE_JS).toContain("maskAllInputs: true");
+    expect(SITE_JS).toContain('import("/ph-recorder.js")');
+    expect(SITE_JS).not.toContain("disable_session_recording");
+  });
+
+  it("masks every text and attribute of the pages that names the audited site", async () => {
+    const leaks: string[] = [];
+
+    for (const html of await pagesWithTheAddress()) {
+      const walk = (node: AnyNode) => {
+        if (isText(node)) {
+          const { parent } = node;
+
+          // The recorder replaces a script's text, and the site's styles name no address.
+          if (
+            node.data.includes("shop.example") &&
+            parent &&
+            isTag(parent) &&
+            !["script", "style"].includes(parent.name) &&
+            !closest(parent, page.PRIVATE)
+          ) {
+            leaks.push(`text in <${parent.name}>: ${node.data.trim()}`);
+          }
+        }
+
+        if (isTag(node)) {
+          const element = {
+            closest: (selector: string) => closest(node, selector),
+          };
+
+          for (const [name, value] of Object.entries(node.attribs)) {
+            const shown = page.maskAttribute(name, value, element);
+
+            // The address, or a share link's token, which holds it.
+            if (/shop\.example|\/share\/[\w-]+\./u.test(shown)) {
+              leaks.push(`<${node.name} ${name}="${shown}">`);
+            }
+          }
+
+          for (const child of node.children) {
+            walk(child);
+          }
+        }
+      };
+
+      for (const child of parseDocument(html).children) {
+        walk(child);
+      }
+    }
+
+    expect(leaks).toStrictEqual([]);
+  });
+
+  it("keeps the site's own copy, links and the look of a private part", () => {
+    const outside: Closest = { closest: () => null };
+    const inside: Closest = { closest: () => ({}) };
+
+    expect([
+      page.maskAttribute("href", "/rules", outside),
+      page.maskAttribute(
+        "href",
+        "https://agentic-seo.org/?url=https%3A%2F%2Fshop.example%2F#audit",
+        outside
+      ),
+      page.maskAttribute("value", "https://shop.example/", outside),
+      page.maskAttribute("placeholder", "https://example.com/pricing", outside),
+      page.maskAttribute("class", "finding sev-error", inside),
+      page.maskAttribute("data-rule", "title.generic", inside),
+      page.maskAttribute("href", "https://shop.example/", inside),
+      page.maskAttribute("content", "shop.example scored 71", inside),
+    ]).toStrictEqual([
+      "/rules",
+      "https://agentic-seo.org/",
+      "*********************",
+      "https://example.com/pricing",
+      "finding sev-error",
+      "title.generic",
+      "*********************",
+      "************ ****** **",
+    ]);
+  });
+
+  it("sends a recording's data as the recorder masked it, and cleans the rest of its event", () => {
+    const deep = {
+      a: { b: { c: { d: { e: { f: { g: { href: "/x" } } } } } } },
+    };
+
+    const event = cleaned({
+      event: "$snapshot",
+      properties: {
+        $current_url: "https://agentic-seo.org/share/abc123",
+        $snapshot_data: [deep],
+      },
+    });
+
+    expect(event).toStrictEqual({
+      event: "$snapshot",
+      properties: {
+        $current_url: "https://agentic-seo.org/share/:result",
+        $snapshot_data: [deep],
+      },
+    });
   });
 });

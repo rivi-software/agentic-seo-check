@@ -827,6 +827,7 @@ describe("the hosted Worker in workerd", () => {
           "/favicon.svg",
           "/site.js",
           "/ph.js",
+          "/ph-recorder.js",
           "/og-mcp.png",
           "/fonts/bricolage-grotesque-latin.woff2",
           "/fonts/geist-latin.woff2",
@@ -852,6 +853,7 @@ describe("the hosted Worker in workerd", () => {
         ["/favicon.svg", 200, "image/svg+xml"],
         ["/site.js", 200, "text/javascript; charset=utf-8"],
         ["/ph.js", 200, "text/javascript; charset=utf-8"],
+        ["/ph-recorder.js", 200, "text/javascript; charset=utf-8"],
         ["/og-mcp.png", 200, "image/png"],
         ["/fonts/bricolage-grotesque-latin.woff2", 200, "font/woff2"],
         ["/fonts/geist-latin.woff2", 200, "font/woff2"],
@@ -1154,16 +1156,25 @@ describe("the hosted Worker in workerd", () => {
       );
     });
 
-    it("bundles the two extensions the pages turn on into /ph.js, so nothing loads from PostHog's CDN", async () => {
-      const { text: source } = await fetchRead(website, `${SITE}/ph.js`);
+    it("bundles the extensions the pages turn on into /ph.js, and serves session replay's recorder apart, so nothing loads from PostHog's CDN", async () => {
+      const [{ text: source }, recorder] = await Promise.all([
+        fetchRead(website, `${SITE}/ph.js`),
+        fetchRead(website, `${SITE}/ph-recorder.js`),
+      ]);
 
       expect(
         [
           /export\{[^}]*\bas EXTENSIONS\b/u,
           /postHogWebVitalsCallbacks/u,
           /errorWrappingFunctions/u,
+          /sessionRecording/u,
         ].filter((pattern) => !pattern.test(source))
       ).toStrictEqual([]);
+      expect(recorder.res.headers.get("content-type")).toBe(
+        "text/javascript; charset=utf-8"
+      );
+      expect(recorder.text).toContain("initSessionRecording");
+      expect(recorder.text).not.toContain("sourceMappingURL");
     });
 
     it("serves its own share image and the hosted server's, each at its own path", async () => {
@@ -1216,10 +1227,12 @@ describe("the hosted Worker in workerd", () => {
         ["site", "/rules"],
         ["site", "/site.js"],
         ["site", "/ph.js"],
+        ["site", "/ph-recorder.js"],
         ["mcp", "/mcp"],
         ["mcp", "/crawler"],
         ["mcp", "/site.js"],
         ["mcp", "/ph.js"],
+        ["mcp", "/ph-recorder.js"],
         ["site", "/pdfmake.js"],
       ] as const;
 
@@ -1244,8 +1257,9 @@ describe("the hosted Worker in workerd", () => {
       expect(
         answers.map(([cache, status, bytes]) => [cache, status, bytes])
       ).toStrictEqual(files.map(() => ["no-cache", 304, 0]));
-      // One script for both hostnames' pages.
-      expect(answers[2]?.[3]).toBe(answers[6]?.[3]);
+      // One script, and one recorder, for both hostnames' pages.
+      expect(answers[2]?.[3]).toBe(answers[7]?.[3]);
+      expect(answers[4]?.[3]).toBe(answers[9]?.[3]);
     });
 
     it("serves pdfmake with the code that draws a report's PDF, and its TrueType fonts, on its own hostname only", async () => {

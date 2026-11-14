@@ -77,8 +77,9 @@ export const PDFMAKE_PATH = "/pdfmake.js";
  * Share menu, and
  * filters the rules page. In production it also loads PostHog from /ph.js for the
  * usage analytics (issue #57), with the cookie banner, and sends the closed list of events below,
- * the site's own Web Vitals and its scripts' errors: never an address the visitor audited, nothing
- * they typed and nothing from a report but its scores and the ids of the rules opened. Without it
+ * the site's own Web Vitals and its scripts' errors, and records the sessions of visitors who
+ * accept the cookie (issue #181): never an address the visitor audited, nothing they typed and
+ * nothing from a report but its scores and the ids of the rules opened. Without it
  * every page still reads and works, but the form. It runs once the page is read to its end, so
  * after a crawl's streamed answer.
  */
@@ -978,6 +979,30 @@ ${ANALYTICS_HELPERS_JS}
   const start = (module) => {
     const posthog = module.default;
 
+    // Session replay (issue #181) waits for the project's remote config, which the pages never
+    // load: this is the part of it replay reads, so the project's settings turn nothing on here.
+    // posthog-js records only while capturing is opted in, so only a visitor who accepted the
+    // cookie is recorded.
+    window._POSTHOG_REMOTE_CONFIG = {
+      [module.TOKEN]: { config: { sessionRecording: { endpoint: "/s/" } } },
+    };
+
+    // Where posthog-js would fetch the recorder from PostHog's CDN: from this site, once a
+    // recording starts, and nothing else.
+    const extensions = (window.__PosthogExtensions__ = window.__PosthogExtensions__ || {});
+
+    extensions.loadExternalDependency = (_instance, kind, done) => {
+      if (kind !== "lazy-recorder" && kind !== "recorder") {
+        done("Not available on this site: " + kind);
+        return;
+      }
+
+      import("/ph-recorder.js").then(
+        () => done(),
+        () => done("The recorder did not load.")
+      );
+    };
+
     posthog.init(module.TOKEN, {
       api_host: module.API_HOST,
       ui_host: "https://eu.posthog.com",
@@ -1011,9 +1036,24 @@ ${ANALYTICS_HELPERS_JS}
         web_vitals_attribution: false,
         network_timing: false,
       },
-      // The two extensions /ph.js bundles beside posthog-js's slim build (scripts/posthog-js.ts).
+      // The three extensions /ph.js bundles beside posthog-js's slim build (scripts/posthog-js.ts).
       __extensionClasses: module.EXTENSIONS,
-      disable_session_recording: true,
+      // A recording shows this site's own copy, its layout and what the visitor does, never the
+      // audited site: every field is masked, and the text and attributes of the parts that can
+      // name it (PRIVATE, maskAttribute); the address of each page goes through clean. No console,
+      // no network requests, no canvas.
+      session_recording: {
+        maskAllInputs: true,
+        maskTextSelector: PRIVATE,
+        maskAttributeFn: maskAttribute,
+        maskCapturedNetworkRequestFn: (request) => {
+          request.name = clean(request.name);
+          return request;
+        },
+        recordHeaders: false,
+        recordBody: false,
+      },
+      enable_recording_console_log: false,
       disable_surveys: true,
       disable_product_tours: true,
       disable_web_experiments: true,

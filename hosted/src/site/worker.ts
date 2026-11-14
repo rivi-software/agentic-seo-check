@@ -25,6 +25,7 @@ const KNOWN_PATHS = new Set([
   "/llms.txt",
   "/site.js",
   "/ph.js",
+  "/ph-recorder.js",
   "/favicon.svg",
 ]);
 

@@ -38,7 +38,7 @@ import { DIRECTORY_PATH, directoryResponse, signingKeys } from "./signing.js";
 import { SITE_JS } from "./site/files.js";
 import { fontResponse, shareImageResponse } from "./ui/assets.js";
 import { SERVER_CARD } from "./ui/og.js";
-import { posthogResponse } from "./ui/posthog-script.js";
+import { posthogFileResponse } from "./ui/posthog-script.js";
 import { productHuntUpvotes } from "./ui/product-hunt.js";
 
 export { HostedState } from "./state.js";
@@ -212,19 +212,13 @@ const devFile = (
       return page(request, SITE_JS, "text/javascript; charset=utf-8");
     }
 
-    case "/ph.js": {
-      return (
-        posthogResponse(request, env.POSTHOG_HOST) ??
-        page(request, notFoundPage(), HTML, 404)
-      );
-    }
-
     case SERVER_CARD.path: {
       return shareImageResponse(request, "server");
     }
 
     default: {
       return (
+        posthogFileResponse(request, pathname, env.POSTHOG_HOST) ??
         fontResponse(request, pathname) ??
         page(request, notFoundPage(), HTML, 404)
       );
@@ -294,6 +288,7 @@ const KNOWN_PATHS = new Set([
   "/crawler",
   "/site.js",
   "/ph.js",
+  "/ph-recorder.js",
   "/favicon.svg",
   DIRECTORY_PATH,
 ]);
