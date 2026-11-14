@@ -88,9 +88,10 @@
     // The token OpenAI asks the domain to serve at /.well-known/openai-apps-challenge (#33); none yet.
     "OPENAI_APPS_CHALLENGE": "",
     // Usage analytics in PostHog's EU project "Agentic SEO" (issue #57): the pages' pageviews and
-    // events, after their consent banner's rules, and one event per MCP tool call. Empty turns both
-    // off; .dev.vars empties it for local runs.
-    "POSTHOG_HOST": "https://eu.i.posthog.com"
+    // events, after their consent banner's rules, and one event per MCP tool call. It is the managed
+    // proxy POSTHOG_HOST names in src/telemetry/posthog.ts, which the website's CSP allows. Empty
+    // turns both off; .dev.vars empties it for local runs.
+    "POSTHOG_HOST": "https://g.rivi.software"
   },
   // Errors only, as the Worker logs them: no invocation logs, which carry request details.
   "observability": {

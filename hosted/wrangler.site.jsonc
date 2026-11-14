@@ -78,9 +78,10 @@
     // jurisdictions. Both Workers name the same, so that they share one object.
     "STATE_JURISDICTION": "eu",
     // Usage analytics in PostHog's EU project "Agentic SEO" (issue #57): the pages' pageviews and
-    // events, after the consent banner's rules. Empty turns them off; .dev.vars empties it for
-    // local runs.
-    "POSTHOG_HOST": "https://eu.i.posthog.com"
+    // events, after the consent banner's rules. It is the managed proxy POSTHOG_HOST names in
+    // src/telemetry/posthog.ts, which the CSP allows. Empty turns them off; .dev.vars empties it
+    // for local runs.
+    "POSTHOG_HOST": "https://g.rivi.software"
   },
   // Errors only, as the Worker logs them: no invocation logs, which carry request details.
   "observability": {

@@ -33,7 +33,7 @@ const TEXT = "text/plain; charset=utf-8";
 /**
  * Scripts from this site and Turnstile only, and none inline: a report quotes the audited page,
  * and nothing in it may run. Styles are the page's own <style>. The pages send their analytics
- * (issue #57) to PostHog's EU host, the only place besides this site they connect to.
+ * (issue #57) to PostHog's managed proxy, the only place besides this site they connect to.
  */
 const CSP = [
   "default-src 'none'",
