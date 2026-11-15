@@ -33,7 +33,8 @@
   // The pages' fonts and share images (src/ui/assets.ts), bundled as their bytes.
   "rules": [{ "type": "Data", "globs": ["**/*.woff2", "**/*.png"], "fallthrough": true }],
   // Copies posthog-js's browser build to .generated/posthog-js.txt, which the Worker bundles as text
-  // and serves at /ph.js (issue #57).
+  // and serves at /ph.js (issue #57), and its session recorder to .generated/posthog-recorder.txt,
+  // served at /ph-recorder.js (issue #181).
   "build": { "command": "node scripts/posthog-js.ts" },
   "workers_dev": false,
   "preview_urls": false,

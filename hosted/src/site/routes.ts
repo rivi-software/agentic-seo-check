@@ -13,7 +13,7 @@ import { FORMER_SITE_HOST, movedToOrigin } from "../limits.js";
  */
 import { fontResponse, shareImageResponse } from "../ui/assets.js";
 import { SERVER_CARD, SITE_CARD } from "../ui/og.js";
-import { posthogResponse } from "../ui/posthog-script.js";
+import { posthogFileResponse } from "../ui/posthog-script.js";
 import { productHuntUpvotes } from "../ui/product-hunt.js";
 import { shareImage } from "../ui/share-image.js";
 import { answerAudit, formCrawls, formOpen } from "./audit.js";
@@ -224,10 +224,15 @@ const cardResponse = (request: Request, path: string): Response | null => {
 };
 
 /**
- * A rule's page, a share image, a font of the pages or of a report's PDF, pdfmake, or the 404
- * page.
+ * posthog-js or its recorder while the analytics are on, a rule's page, a share image, a font of
+ * the pages or of a report's PDF, pdfmake, or the 404 page.
  */
-const asset = (request: Request, path: string): Response | Promise<Response> =>
+const asset = (
+  request: Request,
+  path: string,
+  env: SiteEnv
+): Response | Promise<Response> =>
+  posthogFileResponse(request, path, env.POSTHOG_HOST) ??
   ruleResponse(request, path) ??
   cardResponse(request, path) ??
   fontResponse(request, path) ??
@@ -311,19 +316,12 @@ export const siteRoute = (
       return file(request, SITE_JS, "text/javascript; charset=utf-8");
     }
 
-    case "/ph.js": {
-      return (
-        posthogResponse(request, env.POSTHOG_HOST) ??
-        file(request, notFoundPage(), HTML, 404)
-      );
-    }
-
     case "/favicon.svg": {
       return file(request, MARK_SVG, "image/svg+xml");
     }
 
     default: {
-      return asset(request, url.pathname);
+      return asset(request, url.pathname, env);
     }
   }
 };

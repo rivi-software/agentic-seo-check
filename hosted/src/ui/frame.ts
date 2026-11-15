@@ -170,11 +170,12 @@ ${FOOTER.map(
 /**
  * The cookie banner (issue #57). It stays hidden until site.js has loaded PostHog and the visitor
  * has made no choice, so a page without the script, or with the analytics off, shows none. Until a
- * choice, and after "Decline", PostHog counts the visit without a cookie.
+ * choice, and after "Decline", PostHog counts the visit without a cookie and records nothing;
+ * "Accept" also starts a session recording, masked (issue #181).
  */
 const CONSENT_BANNER = `<section class="consent" id="consent" aria-labelledby="consent-title" hidden>
 <p class="consent-title" id="consent-title">One cookie, if you allow it</p>
-<p>This site counts visits with PostHog (EU), without cookies. May it set a cookie that recognises your browser when you come back? <a href="${PRIVACY_URL}">Privacy policy</a></p>
+<p>This site counts visits with PostHog (EU), without cookies. May it set a cookie that recognises your browser when you come back, and record your visits to improve the site, with what you type and every report hidden? <a href="${PRIVACY_URL}">Privacy policy</a></p>
 <div class="consent-actions"><button class="btn btn-secondary btn-sm" type="button" data-consent="decline">Decline</button><button class="btn btn-primary btn-sm" type="button" data-consent="accept">Accept</button></div>
 </section>`;
 

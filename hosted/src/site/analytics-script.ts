@@ -2,7 +2,9 @@
  * The part of the pages' script (files.ts) that cleans an event before posthog-js sends it: an
  * address of this site loses what belongs to the audited site, at any depth of the event (a Web
  * Vitals event nests its address), and an error's message loses what could be a page's or a
- * person's, by the very patterns `cleanMessage` uses for the tool's own errors. It is a string of
+ * person's, by the very patterns `cleanMessage` uses for the tool's own errors. It also holds what
+ * a session recording may not show (issue #181): `PRIVATE`, the parts of a page that can name the
+ * audited site, and `maskAttribute`, which the recorder runs on each attribute. It is a string of
  * browser code with no access to the page, so the tests run it in Node (hosted/test/analytics-script.test.ts).
  */
 import {
@@ -94,6 +96,58 @@ export const ANALYTICS_HELPERS_JS = String.raw`
     return text.length > ${MAX_MESSAGE} ? text.slice(0, ${MAX_MESSAGE - 1}) + "…" : text;
   };
 
+  // Session replay (issue #181): the parts of a page that can show the audited site, whose text a
+  // recording masks, and whose attributes maskAttribute masks: the report, the wait for it, a
+  // crawl's progress, the form's notices (an error can quote the address), a share page's hero,
+  // and the title and meta tags, which name a shared result.
+  const PRIVATE =
+    "title, meta, #report, #pending, #progress, .notice, .share-hero";
+
+  // The attributes of a private part a recording keeps: how it looks and what is open, never what
+  // it says or links to. A rule's id and a severity are sent with events anyway.
+  const SHOWN_ATTRIBUTES = new Set([
+    "class",
+    "id",
+    "style",
+    "role",
+    "hidden",
+    "open",
+    "type",
+    "tabindex",
+    "disabled",
+    "rel",
+    "aria-hidden",
+    "aria-expanded",
+    "aria-selected",
+    "aria-pressed",
+    "aria-current",
+    "aria-controls",
+    "aria-labelledby",
+    "data-pending",
+    "data-findings",
+    "data-report",
+    "data-rule",
+    "data-severity",
+    "data-failure",
+  ]);
+
+  const mask = (value) => String(value).replace(/\S/g, "*");
+
+  // The recorder's maskAttributeFn. A field's value is masked everywhere, as the recorder masks
+  // what is typed; an attribute of a private part is masked unless it is shown; any other address
+  // goes through clean, as an event's do.
+  const maskAttribute = (name, value, element) => {
+    if (name === "value") {
+      return mask(value);
+    }
+
+    if (!element.closest(PRIVATE)) {
+      return clean(value);
+    }
+
+    return SHOWN_ATTRIBUTES.has(name) ? value : mask(value);
+  };
+
   // Every string of an event's properties through clean. An object or array nested deeper than
   // any event posthog-js builds is dropped, not sent unread.
   const scrub = (value, depth) => {
@@ -140,6 +194,27 @@ export const ANALYTICS_HELPERS_JS = String.raw`
       );
     });
 
+  // The addresses a recording names, in the meta event (data.href) and the custom events
+  // $pageview and $url_changed (data.payload.href). posthog-js puts each through
+  // maskCapturedNetworkRequestFn, which cleans it (files.ts); this holds should an upgrade stop.
+  const cleanSnapshots = (list) => {
+    if (!Array.isArray(list)) {
+      return list;
+    }
+
+    for (const item of list) {
+      const data = item && typeof item === "object" ? item.data : undefined;
+
+      for (const holder of [data, data?.payload]) {
+        if (holder && typeof holder === "object" && typeof holder.href === "string") {
+          holder.href = clean(holder.href);
+        }
+      }
+    }
+
+    return list;
+  };
+
   const cleanEvent = (event) => {
     if (!event) {
       return event;
@@ -172,7 +247,13 @@ export const ANALYTICS_HELPERS_JS = String.raw`
         // A share page's title names the address and its scores.
         delete part.title;
         delete part.$title;
-        scrub(part, 0);
+
+        for (const key of Object.keys(part)) {
+          // A recording's data, masked as the recorder took it (PRIVATE, maskAttribute) and partly
+          // compressed, nests deeper than scrub reads: its addresses are cleaned where they are.
+          part[key] =
+            key === "$snapshot_data" ? cleanSnapshots(part[key]) : scrub(part[key], 1);
+        }
       }
     }
 
