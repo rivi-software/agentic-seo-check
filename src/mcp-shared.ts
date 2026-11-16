@@ -64,13 +64,13 @@ export const commonOptions = {
     .array(z.string())
     .optional()
     .describe(
-      'Rule ids or categories to skip, e.g. ["twitter.card-missing"] or ["social"]. Use seo_list_rules to see ids and their categories.'
+      'Rule ids, categories, or what an id has before its dot, to skip: e.g. ["twitter.card-missing"], ["social"] or ["twitter"]. Use seo_list_rules to see ids and their categories.'
     ),
   rules: z
     .array(z.string())
     .optional()
     .describe(
-      'Run only these rule ids or categories: ["img.alt-missing"] to re-check the findings a fix was for (use with `baseline`), or ["structured-data"] for one category. Use seo_list_rules to see ids and their categories.'
+      'Run only these rule ids, categories, or what an id has before its dot: ["img.alt-missing"] to re-check the findings a fix was for (use with `baseline`), ["structured-data"] for one category, or ["robots", "canonical"] for every robots.* and canonical.* rule. An HTTP status or a redirect is response.*. Use seo_list_rules to see ids and their categories.'
     ),
   baseline: z
     .array(z.string())

@@ -165,20 +165,49 @@ const categoriesOf = (rules: readonly RuleMeta[]): string[] => [
   ...new Set(rules.map((r) => r.category)),
 ];
 
+/** What a rule id has before its dot: `robots` of `robots.noindex`. Every rule id has a dot. */
+const prefixOf = (id: string): string => id.slice(0, id.indexOf("."));
+
 /**
  * Rule names as the ids of `rules`: a category stands for its rules among them (issue #121), as an
- * agent on a structured-data pass names `structured-data`. Every rule id has a dot and no category
- * has one, so neither reads as the other. A name that is neither stays as it was given.
+ * agent on a structured-data pass names `structured-data`, and so does what an id has before its
+ * dot (issue #187): an agent checking indexing names `robots`, and one checking share tags `og`,
+ * though their categories are `indexing` and `social`. Where a category and a prefix are the same
+ * word, as `links` is, the category holds every rule the prefix does. Every rule id has a dot and
+ * no category has one, so neither reads as the other. A name that is none of them stays as given.
  */
 const ruleIdsOf = (
   names: readonly string[],
   rules: readonly RuleMeta[]
 ): string[] =>
   names.flatMap((name) => {
-    const inCategory = rules.filter((r) => r.category === name);
+    const named = rules.filter(
+      (r) => r.category === name || prefixOf(r.id) === name
+    );
 
-    return inCategory.length > 0 ? inCategory.map((r) => r.id) : [name];
+    return named.length > 0 ? named.map((r) => r.id) : [name];
   });
+
+/** At most this many ids follow an unknown name in the error. */
+const MAX_SUGGESTIONS = 6;
+
+/**
+ * Ids of `rules` an agent may have meant by `name`: those holding the word after its last dot, as
+ * `response.status` finds `response.error-status` and `noindex` finds `robots.noindex`. A word
+ * under three letters matches too much to help.
+ */
+const suggestionsFor = (name: string, rules: readonly RuleMeta[]): string[] => {
+  const word = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
+
+  if (word.length < 3) {
+    return [];
+  }
+
+  return rules
+    .filter((r) => r.id.includes(word))
+    .slice(0, MAX_SUGGESTIONS)
+    .map((r) => r.id);
+};
 
 /** Fails on ids that are none of `rules`, the rules an audit runs; `kind` names it. */
 const checkRuleIds = (
@@ -187,14 +216,17 @@ const checkRuleIds = (
   kind: "SEO" | "AEO"
 ): void => {
   const known = new Set(rules.map((r) => r.id));
-  const unknown = ids.filter((id) => !known.has(id));
+  const unknown = [...new Set(ids.filter((id) => !known.has(id)))];
 
   if (unknown.length === 0) {
     return;
   }
 
   const other = kind === "SEO" ? AEO_RULES : SEO_RULES;
-  const otherNames = new Set(other.flatMap((r) => [r.id, r.category]));
+
+  const otherNames = new Set(
+    other.flatMap((r) => [r.id, r.category, prefixOf(r.id)])
+  );
 
   // The caller's input: an error the tool explains, not a bug (issue #60).
   if (unknown.every((id) => otherNames.has(id))) {
@@ -204,17 +236,25 @@ const checkRuleIds = (
     );
   }
 
+  // Each unknown name with the ids it comes close to, so the next call can name them.
+  const named = unknown.map((id) => {
+    const near = suggestionsFor(id, rules);
+
+    return near.length > 0 ? `${id} (perhaps ${near.join(", ")})` : id;
+  });
+
   throw new RuleNamesError(
-    `Unknown rule id(s): ${unknown.join(", ")}. Name rule ids, or their categories (${categoriesOf(rules).join(", ")}). List the rules with \`agentic-seo-check rules\` or seo_list_rules.`,
+    `Unknown rule id(s): ${named.join(", ")}. Name rule ids, their categories (${categoriesOf(rules).join(", ")}), or what an id has before its dot. List the rules with \`agentic-seo-check rules\` or seo_list_rules.`,
     "unknown_rules"
   );
 };
 
 /**
  * `options` with `onlyRules` and `disableRules` as the ids of `rules`, the rules an audit runs, a
- * category standing for its rules. Fails on `onlyRules` that name none of them, before any request
- * goes out, so a typo fails loudly instead of running nothing; `kind` names the audit for the
- * message. A name in `disableRules` that is neither is kept, as before: it turns nothing off.
+ * category or an id's prefix standing for its rules. Fails on `onlyRules` that name none of them,
+ * before any request goes out, so a typo fails loudly instead of running nothing, and names the
+ * ids it comes close to; `kind` names the audit for the message. A name in `disableRules` that is
+ * none of them is kept, as before: it turns nothing off.
  */
 export const selectRules = <
   T extends { onlyRules?: string[]; disableRules?: string[] },
