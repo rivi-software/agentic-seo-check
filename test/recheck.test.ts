@@ -229,12 +229,14 @@ describe("a re-check against a baseline", () => {
     ).rejects.toMatchObject({
       reason: "unknown_rules",
       message: expect.stringMatching(
-        /^Unknown rule id\(s\): schema\. Name rule ids, or their categories \(title, meta, .*structured-data.*\)\./u
+        /^Unknown rule id\(s\): schema\. Name rule ids, their categories \(title, meta, .*structured-data.*\), or what an id has before its dot\./u
       ),
     });
     await expect(
       auditAeoHtml(page("x"), {}, { onlyRules: ["aeo.no-such-rule"] })
-    ).rejects.toThrow(/their categories \(aeo\)\./u);
+    ).rejects.toThrow(
+      /their categories \(aeo\), or what an id has before its dot\./u
+    );
   });
 
   it("takes a category for its rules, in onlyRules and in disableRules (issue #121)", async () => {
@@ -283,6 +285,69 @@ describe("a re-check against a baseline", () => {
     );
 
     expect(aeoOnly.findings).toStrictEqual(aeo.findings);
+  });
+
+  it("takes what a rule id has before its dot for its rules, as agents name robots and og", async () => {
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>React App</title><meta name="robots" content="noindex"></head><body><h1>Heading</h1><p>Text</p></body></html>`;
+    const all = await auditHtml(html, { url: URL_A });
+
+    const prefixed = (prefix: string) =>
+      rulesWhere(all.findings, (f) => f.rule.startsWith(`${prefix}.`));
+
+    // The page has findings of both, and of their categories' other rules.
+    expect(prefixed("robots")).not.toHaveLength(0);
+    expect(prefixed("og")).not.toHaveLength(0);
+    expect(
+      rulesWhere(all.findings, (f) => f.category === "social")
+    ).not.toStrictEqual(prefixed("og"));
+
+    const only = await auditHtml(
+      html,
+      { url: URL_A },
+      { onlyRules: ["robots", "og", "title"] }
+    );
+
+    expect(only.findings.map((f) => f.rule)).toStrictEqual(
+      rulesWhere(all.findings, (f) =>
+        ["robots.", "og.", "title."].some((p) => f.rule.startsWith(p))
+      )
+    );
+
+    const without = await auditHtml(
+      html,
+      { url: URL_A },
+      { disableRules: ["og"] }
+    );
+
+    expect(without.findings.map((f) => f.rule)).toStrictEqual(
+      rulesWhere(all.findings, (f) => !f.rule.startsWith("og."))
+    );
+  });
+
+  it("names the rule ids an unknown name comes close to", async () => {
+    await expect(
+      auditHtml(page("x"), {}, { onlyRules: ["response.status", "noindex"] })
+    ).rejects.toMatchObject({
+      reason: "unknown_rules",
+      message: expect.stringMatching(
+        /^Unknown rule id\(s\): response\.status \(perhaps response\.error-status\), noindex \(perhaps robots\.noindex, /u
+      ),
+    });
+    await expect(
+      auditAeoHtml(page("x"), {}, { onlyRules: ["noindex"] })
+    ).rejects.toThrow(
+      /^Unknown rule id\(s\): noindex \(perhaps aeo\.noindex\)\. Name rule ids, their categories \(aeo\), or what an id has before its dot\./u
+    );
+    // A rule a page audit runs comes before one it needs a crawl or --render for, which says so.
+    await expect(
+      auditHtml(page("x"), {}, { onlyRules: ["noindex"] })
+    ).rejects.toThrow(
+      /^Unknown rule id\(s\): noindex \(perhaps robots\.noindex, rendering\.noindex-client-only \(requires render\), .*site\.links-to-noindex \(requires crawl\)\)\. /u
+    );
+    // A word of two letters matches too much to suggest anything.
+    await expect(
+      auditHtml(page("x"), {}, { onlyRules: ["xx.no"] })
+    ).rejects.toThrow(/^Unknown rule id\(s\): xx\.no\. /u);
   });
 
   it("re-checks a category's rules and leaves the rest unchecked (issue #121)", async () => {

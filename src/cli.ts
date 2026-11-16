@@ -305,9 +305,12 @@ const addAuditOptions = (cmd: Command, mode: Mode): Command => {
     )
     .option(
       "--rule <id...>",
-      "Run only these rule ids or categories (space- or comma-separated): re-check the findings a fix was for, or check one category"
+      "Run only these rule ids, categories or id prefixes such as robots (space- or comma-separated): re-check the findings a fix was for, or check one area"
     )
-    .option("--disable <rule...>", "Rule ids or categories to skip")
+    .option(
+      "--disable <rule...>",
+      "Rule ids, categories or id prefixes to skip"
+    )
     .option(
       "--baseline <file>",
       "Compare with an earlier audit saved as JSON: lists the findings since fixed, still open and new"
