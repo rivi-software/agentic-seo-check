@@ -338,6 +338,12 @@ describe("a re-check against a baseline", () => {
     ).rejects.toThrow(
       /^Unknown rule id\(s\): noindex \(perhaps aeo\.noindex\)\. Name rule ids, their categories \(aeo\), or what an id has before its dot\./u
     );
+    // A rule a page audit runs comes before one it needs a crawl or --render for, which says so.
+    await expect(
+      auditHtml(page("x"), {}, { onlyRules: ["noindex"] })
+    ).rejects.toThrow(
+      /^Unknown rule id\(s\): noindex \(perhaps robots\.noindex, rendering\.noindex-client-only \(requires render\), .*site\.links-to-noindex \(requires crawl\)\)\. /u
+    );
     // A word of two letters matches too much to suggest anything.
     await expect(
       auditHtml(page("x"), {}, { onlyRules: ["xx.no"] })

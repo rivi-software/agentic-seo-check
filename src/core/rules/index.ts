@@ -147,7 +147,7 @@ export const AEO_RULES: RuleMeta[] = ALL_RULES.filter(
 
 /**
  * Why `--rule` names nothing an audit runs, for the hosted server's analytics (issue #121): names
- * that are no rule or category, or the other audit's.
+ * that are no rule, category or rule id's prefix, or the other audit's.
  */
 export type RuleNamesReason = "unknown_rules" | "other_audit_rules";
 
@@ -194,7 +194,9 @@ const MAX_SUGGESTIONS = 6;
 /**
  * Ids of `rules` an agent may have meant by `name`: those holding the word after its last dot, as
  * `response.status` finds `response.error-status` and `noindex` finds `robots.noindex`. A word
- * under three letters matches too much to help.
+ * under three letters matches too much to help. The rules every audit runs come first, and a rule
+ * that needs more (a crawl, `--render`) says so, as `agentic-seo-check rules` does: named on a
+ * page audit without it, the rule runs nothing, and the re-check counts its findings `notChecked`.
  */
 const suggestionsFor = (name: string, rules: readonly RuleMeta[]): string[] => {
   const word = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
@@ -203,10 +205,11 @@ const suggestionsFor = (name: string, rules: readonly RuleMeta[]): string[] => {
     return [];
   }
 
-  return rules
-    .filter((r) => r.id.includes(word))
+  const near = rules.filter((r) => r.id.includes(word));
+
+  return [...near.filter((r) => !r.requires), ...near.filter((r) => r.requires)]
     .slice(0, MAX_SUGGESTIONS)
-    .map((r) => r.id);
+    .map((r) => (r.requires ? `${r.id} (requires ${r.requires})` : r.id));
 };
 
 /** Fails on ids that are none of `rules`, the rules an audit runs; `kind` names it. */
