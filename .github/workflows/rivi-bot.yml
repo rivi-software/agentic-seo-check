@@ -6,14 +6,16 @@ name: rivi-bot
 # (`@rivi-bot why does this rule skip noindex pages?`).
 #
 # It stays on GitHub Actions, not Depot CI with CI (issue #127): Depot CI runs no pull_request_target for a pull
-# request from a fork, which a maintainer's label asks RIVI Bot to review.
+# request from a fork. With reviews off, pull_request_target and the `labeled` event start nothing; they stay so that
+# turning review.enabled back on is all it takes for a maintainer's label to ask RIVI Bot to review a fork's pull
+# request.
 #
 # The events and permissions here are the most it can do. pull_request_target runs this file as it is on main, with
 # the secrets, and nothing from the pull request runs: the reusable workflow gates outside pull requests on the label
 # and requests on write access, and reads its configuration from main.
 #
-# The review runs on Workers AI, through the AI Gateway github-rivi-monorepo that RIVI Software's other repositories
-# also use; its logs tell the calls apart by repository, pull request and run. It needs the variable
+# A review, once turned back on, runs on Workers AI, through the AI Gateway github-rivi-monorepo that RIVI Software's
+# other repositories also use; its logs tell the calls apart by repository, pull request and run. It needs the variable
 # CLOUDFLARE_ACCOUNT_ID, the secret CLOUDFLARE_AI_API_TOKEN (Workers AI Read and AI Gateway Read) and the gateway's own
 # secret CLOUDFLARE_AI_GATEWAY_TOKEN. The rest (the fix, the answers, the descriptions and the triage) runs on Claude,
 # with the secret ANTHROPIC_REVIEW_API_KEY (from a workspace with a spend limit). For RIVI Bot's own name it needs the
