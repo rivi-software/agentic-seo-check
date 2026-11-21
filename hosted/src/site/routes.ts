@@ -223,12 +223,18 @@ const REPORT_ROUTE = /^\/report\/(?<id>[\w-]{22})$/u;
  * sends no referrer (a link in the report would hand the address to the audited site), is never
  * cached, and is kept out of search.
  */
-const sharedReport = async (env: SiteEnv, id: string): Promise<Response> => {
+const sharedReport = async (
+  request: Request,
+  env: SiteEnv,
+  id: string
+): Promise<Response> => {
   const stored = env.SHARED_REPORTS
     ? await readReport(env.SHARED_REPORTS, id)
     : null;
 
-  return new Response(stored ? sharedReportPage(stored) : notFoundPage(), {
+  const body = stored ? sharedReportPage(stored) : notFoundPage();
+
+  return new Response(request.method === "HEAD" ? null : body, {
     status: stored ? 200 : 404,
     headers: {
       "content-type": HTML,
@@ -262,7 +268,7 @@ const sharedRoute = (
   }
 
   return request.method === "GET" || request.method === "HEAD"
-    ? sharedReport(env, id)
+    ? sharedReport(request, env, id)
     : new Response("Method not allowed.\n", {
         status: 405,
         headers: { allow: "GET, HEAD" },

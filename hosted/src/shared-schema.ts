@@ -324,13 +324,14 @@ export const SharedReportSchema = z.discriminatedUnion("kind", [
     schemaVersion: z.literal(1),
     kind: z.literal("page"),
     seo: PageAuditSchema,
-    aeo: AeoAuditSchema,
+    // A page's AEO audit is of the page too, so the report never shows a site's under a page.
+    aeo: AeoAuditSchema.extend({ source: z.enum(["url", "file", "html"]) }),
   }),
   z.object({
     schemaVersion: z.literal(1),
     kind: z.literal("site"),
     seo: SiteAuditSchema,
-    aeo: AeoAuditSchema,
+    aeo: AeoAuditSchema.extend({ source: z.enum(["crawl", "directory"]) }),
     start: z.object({ seo: PageAuditSchema, aeo: AeoAuditSchema }).nullable(),
   }),
 ]);

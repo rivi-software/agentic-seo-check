@@ -80,6 +80,8 @@ export interface HostedCallInfo {
    * each a site of the day once it is requested.
    */
   competitors?: string[];
+  /** seo_share_report: the call keeps a report on the website, which a limit of its own holds. */
+  shares?: boolean;
 }
 
 /** How a hosted tool call ended. */
@@ -142,6 +144,7 @@ export type LimitReason =
   | "no_crawls"
   | "caller_calls"
   | "caller_crawls"
+  | "caller_shares"
   | "platform_calls"
   | "platform_crawls"
   | "daily_requests"
@@ -1087,6 +1090,7 @@ const registerShareReport = (
           fetches: true,
           crawl: input.crawl,
           host,
+          shares: true,
         },
         async (fetch) => {
           const report = await auditForShare(input.url, {

@@ -26,7 +26,7 @@ export const sharedReportHtml = (report: CheckedReport): string =>
 
 /** Who ran the audits, and so how far the report can be taken as the site's own word. */
 const SOURCE_TEXT: Record<StoredReport["source"], string> = {
-  upload: `Someone ran ${PRODUCT_NAME} on their own machine and uploaded the result: this website did not request the pages itself.`,
+  upload: `Uploaded by whoever shared the link: this website did not request the pages itself or run these audits, and cannot vouch for the scores.`,
   hosted: `${PRODUCT_NAME}'s hosted MCP server ran these audits for an AI assistant, from Cloudflare's network.`,
 };
 

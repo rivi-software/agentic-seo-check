@@ -88,7 +88,14 @@ export const shareUpload = async (
     return refuse(429, SHARE_LIMIT_MESSAGE);
   }
 
-  if (!request.headers.get("content-type")?.startsWith("application/json")) {
+  // The media type before any parameter, such as `; charset=utf-8`, in any case.
+  const mediaType = request.headers
+    .get("content-type")
+    ?.split(";")[0]
+    ?.trim()
+    .toLowerCase();
+
+  if (mediaType !== "application/json") {
     return refuse(415, "Send the report as application/json.");
   }
 

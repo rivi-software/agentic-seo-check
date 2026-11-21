@@ -189,7 +189,7 @@ export const shareAudits = async (
     });
   } catch (error) {
     throw new ShareError(
-      `Could not reach ${new URL(options.endpoint ?? SHARE_ENDPOINT).host} to share the report: ${error instanceof Error ? error.message : String(error)}`,
+      `Could not reach ${options.endpoint ?? SHARE_ENDPOINT} to share the report: ${error instanceof Error ? error.message : String(error)}`,
       { reason: "unreachable", cause: error }
     );
   }

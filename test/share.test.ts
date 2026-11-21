@@ -10,6 +10,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { auditSite } from "../src/core/audit.js";
 import { DEFAULT_USER_AGENT } from "../src/core/fetch.js";
 import {
   auditForShare,
@@ -82,14 +83,34 @@ describe("sharing a report", () => {
 
   it("audits a page for both audits, and a site from one crawl", async () => {
     const page = await auditForShare(`${site.origin}/about/`);
-    const crawl = await auditForShare(`${site.origin}/`, { crawl: true });
+
+    const aboutRequests = async (work: () => Promise<void>) => {
+      const before = site.requests.length;
+      await work();
+
+      return site.requests.slice(before).filter((path) => path === "/about/")
+        .length;
+    };
+
+    let crawl: SharedReport | undefined;
+
+    const shared = await aboutRequests(async () => {
+      crawl = await auditForShare(`${site.origin}/`, { crawl: true });
+    });
+
+    // Both audits from one crawl: a page is requested as often as the SEO crawl alone requests it.
+    expect(shared).toBe(
+      await aboutRequests(async () => {
+        await auditSite(`${site.origin}/`);
+      })
+    );
 
     expect([page.kind, page.seo.kind, page.aeo.kind]).toStrictEqual([
       "page",
       "page",
       "aeo",
     ]);
-    expect([crawl.kind, crawl.seo.kind, crawl.aeo.source]).toStrictEqual([
+    expect([crawl?.kind, crawl?.seo.kind, crawl?.aeo.source]).toStrictEqual([
       "site",
       "site",
       "crawl",
@@ -136,6 +157,14 @@ describe("sharing a report", () => {
     } finally {
       await website.close();
     }
+  });
+
+  it("answers an endpoint it cannot reach with a ShareError, a malformed one too", async () => {
+    const report = await auditForShare(`${site.origin}/about/`);
+
+    await expect(
+      shareAudits(report, { endpoint: "not a url" })
+    ).rejects.toThrow(ShareError);
   });
 
   it("sends nothing over the size the website takes", async () => {

@@ -343,7 +343,7 @@ export const shareDescription = (
   server: "local" | "hosted",
   note: string
 ): string =>
-  `Run the SEO and the AEO audit of a page (or of a site with \`crawl: true\`) and share the full report, every finding with its fix, as a secret link on ${WEBSITE_URL} that a person opens in a browser. Use it when the user asks to share, send or show a report to someone, such as a client, a colleague or a ticket. ` +
+  `Run the SEO and the AEO audit of a page (or of a site with \`crawl: true\`) and share the website's report of them (a page's findings each with its fix; a site's findings across the site, its page findings by rule with example pages, and the homepage's with their fixes) as a secret link on ${WEBSITE_URL} that a person opens in a browser. Use it when the user asks to share, send or show a report to someone, such as a client, a colleague or a ticket. ` +
   `The website keeps the report for ${SHARE_DAYS} days and then deletes it; anyone with the link can read it until then, and search engines do not index it. Give the user the link and the date it expires. ${note}${docsNote(server)}`;
 
 /** The answer of seo_share_report: the link, when it expires, and the two scores. */

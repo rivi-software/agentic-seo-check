@@ -65,6 +65,21 @@ export const runReport = (report: Audit | AeoAudit): AuditReport => {
   };
 };
 
+/** What a shared report's two audits found together, for the CLI's `share`. */
+export const sharedRunReport = (seo: Audit, aeo: AeoAudit): AuditReport => {
+  const [a, b] = [runReport(seo), runReport(aeo)];
+
+  return {
+    pages: a.pages,
+    counts: {
+      error: a.counts.error + b.counts.error,
+      warning: a.counts.warning + b.counts.warning,
+      info: a.counts.info + b.counts.info,
+    },
+    rules: [...new Set([...a.rules, ...b.rules])].slice(0, MAX_RULES),
+  };
+};
+
 /**
  * What a comparison found (issue #129): the pages it read, its gaps, and the rules whose fix closes
  * one, which fired on the page. It has no findings of its own to count.

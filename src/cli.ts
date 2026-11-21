@@ -63,7 +63,11 @@ import {
   telemetryCommand,
 } from "./telemetry/local.js";
 import type { CliRun } from "./telemetry/local.js";
-import { comparisonReport, runReport } from "./telemetry/report.js";
+import {
+  comparisonReport,
+  runReport,
+  sharedRunReport,
+} from "./telemetry/report.js";
 import {
   colorFor,
   endQuietlyOnClosedPipe,
@@ -864,7 +868,7 @@ const runShare = async (
 
   if (run) {
     run.format = format;
-    run.report = runReport(report.seo);
+    run.report = sharedRunReport(report.seo, report.aeo);
   }
 
   if (format === "json") {
@@ -888,7 +892,7 @@ withExamples(
     .argument("<target>", "URL, or a directory of built HTML")
     .summary("Share the SEO and AEO report as a secret link")
     .description(
-      `Run the SEO and the AEO audit, upload the report to ${new URL(SHARE_ENDPOINT).host}, and print a secret link to it. Anyone with the link can read the full report, every finding with its fix, for ${SHARE_DAYS} days; search engines do not index it`
+      `Run the SEO and the AEO audit, upload the report to ${new URL(SHARE_ENDPOINT).host}, and print a secret link to it. Anyone with the link can read the report, as the website shows it, for ${SHARE_DAYS} days; search engines do not index it`
     )
     .optionsGroup("Crawling")
     .option(

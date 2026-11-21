@@ -83,6 +83,7 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
     CALLER_CRAWLS: limiter(3),
     PLATFORM_CALLS: limiter(300),
     PLATFORM_CRAWLS: limiter(30),
+    SHARE_UPLOADS: limiter(5),
     CALLS: {
       // As Analytics Engine does, throw for an index longer than it holds.
       writeDataPoint: (point) => {
@@ -129,6 +130,14 @@ const PAGE: HostedCallInfo = {
   fetches: true,
   crawl: false,
   host: "www.example.com",
+};
+
+const SHARE: HostedCallInfo = {
+  tool: "seo_share_report",
+  fetches: true,
+  crawl: false,
+  host: "shop.example.com",
+  shares: true,
 };
 
 const CRAWL: HostedCallInfo = {
@@ -465,6 +474,8 @@ describe("the hosted server's limits", () => {
         reasonOf(hostedProfile(full.env, full.ctx, PERSON).startCall(PAGE)),
         reason({ CALLER_SITES: 0 }, PERSON, PAGE),
         reason({ PLATFORM_SITES: 0 }, CLAUDE, PAGE),
+        reason({ SHARE_UPLOADS: limiter(0) }, PERSON, SHARE),
+        reason({ SHARE_UPLOADS: limiter(0) }, CLAUDE, SHARE),
         reason({}, PERSON, PAGE),
       ])
     ).resolves.toStrictEqual([
@@ -477,6 +488,9 @@ describe("the hosted server's limits", () => {
       "daily_requests",
       "caller_sites",
       "platform_sites",
+      "caller_shares",
+      // A platform's users share reports within its calls a minute.
+      "admitted",
       "admitted",
     ]);
   });

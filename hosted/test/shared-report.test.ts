@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { auditAeoHtml, auditSiteBoth } from "../../src/core/aeo/audit.ts";
 import { auditHtml } from "../../src/core/audit.ts";
-import { SHARE_DAYS } from "../../src/core/share.ts";
+import { MAX_SHARE_BYTES, SHARE_DAYS } from "../../src/core/share.ts";
 import type { SharedReport } from "../../src/core/share.ts";
 import {
   siteRoutes,
@@ -19,6 +19,7 @@ import type { FixtureServer } from "../../test/helpers/fixture-server.ts";
 import { keepReport, readReport, REPORT_ID } from "../src/shared-reports.ts";
 import type { ReportBucket } from "../src/shared-reports.ts";
 import { SharedReportSchema } from "../src/shared-schema.ts";
+import type { CheckedReport } from "../src/shared-schema.ts";
 import { shareUpload } from "../src/site/share-api.ts";
 import type { ShareApiEnv } from "../src/site/share-api.ts";
 import { sharedReportHtml, sharedReportPage } from "../src/site/shared-page.ts";
@@ -90,7 +91,7 @@ const idOf = (url: string): string => url.split("/").pop() ?? "";
 const asSent = (report: SharedReport): string => JSON.stringify(report);
 
 /** A report as an upload brings it, through the schema. */
-const throughJson = (report: SharedReport): SharedReport =>
+const throughJson = (report: SharedReport): CheckedReport =>
   SharedReportSchema.parse(JSON.parse(asSent(report)));
 
 describe("shared reports", () => {
@@ -180,6 +181,20 @@ describe("shared reports", () => {
       ).toBeFalsy();
     });
 
+    it("refuses an AEO audit of a site under a page, and of a page under a site", () => {
+      expect(
+        passes((r) => {
+          r.aeo.source = "crawl";
+        })
+      ).toBeFalsy();
+      expect(
+        SharedReportSchema.safeParse({
+          ...siteReport,
+          aeo: pageReport.aeo,
+        }).success
+      ).toBeFalsy();
+    });
+
     it("drops the keys it does not name", () => {
       const parsed = SharedReportSchema.parse({
         ...pageReport,
@@ -236,6 +251,29 @@ describe("shared reports", () => {
       );
     });
 
+    it("stops reading a body over the cap that names no length, and takes JSON in any case", async () => {
+      const env = envWith(memoryBucket());
+
+      // A Request built from a string sends no content-length of its own here: the stream is capped.
+      const unnamed = await upload(env, " ".repeat(MAX_SHARE_BYTES + 1));
+
+      const shouted = await upload(env, JSON.stringify(pageReport), {
+        "content-type": "Application/JSON; charset=utf-8",
+      });
+
+      const jsonp = await upload(env, JSON.stringify(pageReport), {
+        "content-type": "application/jsonp",
+      });
+
+      expect([unnamed.status, shouted.status, jsonp.status]).toStrictEqual([
+        413, 201, 415,
+      ]);
+
+      await Promise.all(
+        [unnamed, shouted, jsonp].map((response) => response.body?.cancel())
+      );
+    });
+
     it("refuses an upload too large, one too many, or with sharing off", async () => {
       const large = await upload(
         envWith(memoryBucket()),
@@ -268,7 +306,9 @@ describe("shared reports", () => {
       const html = stored ? sharedReportPage(stored) : "";
 
       expect(html).toContain("Site audit report");
-      expect(html).toContain("did not request the pages itself");
+      expect(html).toContain(
+        "did not request the pages itself or run these audits"
+      );
       expect(html).toContain('content="noindex');
     });
 

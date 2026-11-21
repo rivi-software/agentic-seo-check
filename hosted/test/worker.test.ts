@@ -1428,7 +1428,7 @@ describe("the hosted Worker in workerd", () => {
         res.headers.get("referrer-policy"),
         res.headers.get("x-robots-tag"),
         res.headers.get("cache-control"),
-        text.includes("did not request the pages itself"),
+        text.includes("did not request the pages itself or run these audits"),
       ]).toStrictEqual([
         200,
         "no-referrer",
@@ -1446,6 +1446,16 @@ describe("the hosted Worker in workerd", () => {
       });
 
       const gone = await fetchRead(website, `${SITE}/report/${"A".repeat(22)}`);
+
+      const head = await fetchRead(
+        website,
+        `${SITE}/report/${"A".repeat(22)}`,
+        {
+          method: "HEAD",
+        }
+      );
+
+      expect([head.res.status, head.text]).toStrictEqual([404, ""]);
 
       expect([refused.res.status, gone.res.status]).toStrictEqual([400, 404]);
     });
