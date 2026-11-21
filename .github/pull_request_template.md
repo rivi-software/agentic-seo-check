@@ -65,7 +65,7 @@ Closes #
      - No duplicate: `gh pr list --state open --search "<keywords>"` (drafts included) shows no other pull request making this change, or Decisions below says why this one is still needed.
      - Promises: each promise in AGENTS.md's "What the tool promises" that the diff touches still holds.
      - Verify: `pnpm run verify` passed on the last commit pushed. On a diff of more than a few lines, a cleanup pass (Claude Code's /simplify) ran before it.
-     - Reviews: every RIVI Bot comment is fixed, or answered with the reason it does not apply.
+     - Reviews: every review comment is fixed, or answered with the reason it does not apply.
      - Public: code, fixtures, comments, commit messages and this description carry only public material. A secret, a key, or a private site audited in the session stays in the session.
 -->
 
@@ -89,7 +89,7 @@ Closes #
     Wrong: feat: Added canonical redirect check.   (capital, full stop, and no scope on a change to the rules)
 - Voice: the change is the subject of every sentence. Authorship is one fact, under Agent context, so the body has no "I", "me" or "my".
 - Body: pass it to `gh pr create --body-file -` on stdin, which keeps Markdown and newlines as written.
-- Draft: open a draft while the work or the body is unfinished, and open it ready once `pnpm run verify` passes locally. RIVI Bot reviews a pull request when it opens or leaves draft, and after every push, and each review spends its budget.
+- Draft: open a draft while the work or the body is unfinished, and open it ready once `pnpm run verify` passes locally.
 - Stack: two separable steps (a refactor, then the behaviour on top) are a stack of pull requests, each naming the one it is stacked on. A body that needs more than 150 words is a reason to suggest a stack to the person directing the work.
 - Mentions: GitHub notifies whoever a mention names, so mention only a handle verified in this session (`gh api user`, `gh pr view --json author,assignees`). Roles and package names that start with the at sign go in backticks.
 - Review: a person reviews every pull request an agent wrote, and the code owner's approval merges it, so approving and merging stay with them.

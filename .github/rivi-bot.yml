@@ -1,9 +1,10 @@
 # What RIVI Bot does here (.github/workflows/rivi-bot.yml), read from main: a change to this file takes effect once it
 # merges. The settings and their defaults: https://github.com/rivi-software/tools/tree/main/rivi-bot#configuration
 
-# Every pull request by someone with write access, and any other once a maintainer adds `rivi-bot:review`. The review
-# reads AGENTS.md and CONTRIBUTING.md; `focus` is what costs most here when it slips through.
+# Off: RIVI Bot reviews no pull request, on its own or on request. `focus` stays for the day reviews come back on: what
+# costs most here when it slips through.
 review:
+  enabled: false
   focus: |
     - Contract: a rule's id, severity, message and recommendation, the MCP tools' names and input schemas, the CLI's
       flags and exit codes, and the audit JSON (schemaVersion 1) are what agents and CI depend on. A rename, a removed
