@@ -197,6 +197,16 @@ export interface LinkInfo {
   outer: string;
 }
 
+/** A video the page shows as content (`extractVideos`). */
+export interface VideoInfo {
+  /** A `<video>` element, or a video host's player in an `<iframe>`. */
+  kind: "video" | "embed";
+  /** The video file (`<video src>` or its first `<source>`) or the player's URL; null when the HTML names none. */
+  url: string | null;
+  /** The `<video poster>`, or the thumbnail a YouTube player's video has; null when neither is known. */
+  thumbnail: string | null;
+}
+
 export interface HreflangInfo {
   lang: string;
   href: string;
@@ -265,6 +275,8 @@ export interface AnswerSignals {
   timeElements: number;
   /** The visible text contains a written date (2026-03-14, 14/03/2026, March 14, 2026, 14 March 2026). */
   mentionsDate: boolean;
+  /** The href of `<link rel="alternate" type="text/markdown">`, the page's Markdown version, when it has one. */
+  markdownAlternate: string | null;
 }
 
 /** A subresource the page requests: a script, stylesheet, frame, image or media file. */
@@ -417,6 +429,8 @@ export interface ExtractedPage {
   hreflang: HreflangInfo[];
   /** Scripts, stylesheets, frames, images and media the page requests. */
   resources: ResourceInfo[];
+  /** Videos shown as content, outside the header, footer, menu and sidebar; the first 20. */
+  videos: VideoInfo[];
   /** A Content-Security-Policy meta tag tells browsers to upgrade the page's http:// requests to https. */
   upgradesInsecureRequests: boolean;
   /** `href="#name"` values with no element on the page whose id (or `<a name>`) is that name. */

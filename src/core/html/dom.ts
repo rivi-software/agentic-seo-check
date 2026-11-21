@@ -171,6 +171,13 @@ export const queryAll = (root: AnyNode, selector: string): Element[] =>
 export const queryOne = (root: AnyNode, selector: string): Element | null =>
   selectOne<AnyNode, Element>(selector, root);
 
+/** The tokens of a `rel` attribute, lower-cased, split on ASCII whitespace as HTML splits them. */
+export const relList = (rel: string | null | undefined): string[] =>
+  (rel ?? "")
+    .toLowerCase()
+    .split(/[\t\n\f\r ]+/u)
+    .filter(Boolean);
+
 export const attr = (el: Element, name: string): string | undefined =>
   Object.hasOwn(el.attribs, name) ? el.attribs[name] : undefined;
 

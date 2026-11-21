@@ -58,8 +58,10 @@ import type {
   SeverityCounts,
   SiteAudit,
 } from "../types.js";
+import { normalizeUrl } from "../url.js";
 import { AI_BOTS, crawlerAccess } from "./bots.js";
-import { loadLlmsTxt, readLlmsTxt } from "./llms-txt.js";
+import { llmsTxtLinks, loadLlmsTxt, readLlmsTxt } from "./llms-txt.js";
+import type { LlmsTxtLink } from "./llms-txt.js";
 import { aeoPageSummary } from "./page.js";
 import { probeBots } from "./probe.js";
 import { aeoSiteFindings } from "./site-rules.js";
@@ -530,6 +532,75 @@ const listablePages = (
       : []
   );
 
+/**
+ * The links of llms.txt to pages the audit read that answered 4xx or 5xx. A link to a page it did
+ * not read stays unchecked: the AEO audit sends no request for llms.txt's links. A build directory
+ * has no answers to judge by, so it checks none.
+ */
+const brokenLlmsLinks = (
+  c: Collected
+): (LlmsTxtLink & { status: number })[] => {
+  const links = c.llmsTxt && c.live ? llmsTxtLinks(c.llmsTxt) : [];
+
+  if (links.length === 0) {
+    return [];
+  }
+
+  const statusByUrl = new Map<string, number>();
+
+  for (const r of c.records) {
+    const status = r.response?.status ?? null;
+
+    if (status !== null) {
+      for (const u of [r.url, r.requestedUrl]) {
+        const k = normalizeUrl(u);
+
+        if (k) {
+          statusByUrl.set(k, status);
+        }
+      }
+    }
+  }
+
+  return links.flatMap((link) => {
+    const status = statusByUrl.get(normalizeUrl(link.url) ?? link.url);
+
+    return status !== undefined && status >= 400 ? [{ ...link, status }] : [];
+  });
+};
+
+/** A URL path that ends in .md: a page's Markdown version, as llms.txt proposes. */
+const MARKDOWN_PATH = /\.md$/iu;
+
+/**
+ * Whether a page of the site links a Markdown version of itself, or llms.txt links a .md URL on
+ * the site. An error page or a noindex page, as `listablePages` leaves out, does not count.
+ */
+const hasMarkdownVersions = (c: Collected): boolean => {
+  const listable = new Set(listablePages(c.records).map((p) => p.url));
+
+  if (
+    c.records.some(
+      (r) => listable.has(r.url) && r.page.answer.markdownAlternate !== null
+    )
+  ) {
+    return true;
+  }
+
+  if (!c.llmsTxt) {
+    return false;
+  }
+
+  // A .md file on another site says nothing about this site's pages.
+  const { host } = new URL(c.llmsTxt.url);
+
+  return llmsTxtLinks(c.llmsTxt).some((l) => {
+    const url = new URL(l.url);
+
+    return url.host === host && MARKDOWN_PATH.test(url.pathname);
+  });
+};
+
 const buildAudit = async (
   c: Collected,
   options: AeoOptions
@@ -558,6 +629,8 @@ const buildAudit = async (
       ...aeoSiteFindings({
         crawlers,
         llmsTxt: c.llmsTxt,
+        brokenLlmsLinks: brokenLlmsLinks(c),
+        markdownVersions: hasMarkdownVersions(c),
         pages: listablePages(c.records),
         pageCount: pages.length,
         probeSkipped,

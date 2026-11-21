@@ -7,6 +7,7 @@ import {
   slot,
 } from "./rules/fix.js";
 import { robotsDirectives } from "./rules/indexing.js";
+import { PERMANENT_FOR } from "./rules/page-fixes.js";
 import { finding, GOOGLE_DOCS, cap } from "./rules/rule.js";
 import {
   addLinkEdit,
@@ -335,6 +336,20 @@ export const SITE_RULES: RuleMeta[] = [
     GOOGLE_DOCS.canonical
   ),
   meta(
+    "site.canonical-to-one-page",
+    "warning",
+    "Three or more pages whose text differs from it name the same page as canonical, often the home page: a canonical written once in a shared layout. Search engines may fold those pages into that one and leave them out of the index.",
+    "Give each page a canonical that names its own URL, built from the page's address in the shared layout, and keep a canonical to another page for real copies of it (a filtered list, a print view).",
+    GOOGLE_DOCS.canonical
+  ),
+  meta(
+    "site.redirect-not-permanent",
+    "warning",
+    "The http:// version of the site, or its www/non-www variant, redirects to the main site with a temporary redirect (302, 307). The move is permanent, and Google reads a temporary redirect as a weaker sign of which URL to show.",
+    "Answer the redirect with 301 (or 308) at the server, CDN or DNS host.",
+    GOOGLE_DOCS.redirects
+  ),
+  meta(
     "site.hreflang-no-return-link",
     "warning",
     "hreflang alternates do not link back to the page that references them.",
@@ -483,12 +498,16 @@ export interface ProbeResults {
     status: number | null;
     finalUrl: string | null;
     redirectsToHttps: boolean;
+    /** The status of the first redirect, when it redirected. */
+    redirectStatus?: number | null;
   } | null;
   hostVariant?: {
     url: string;
     status: number | null;
     finalUrl: string | null;
     redirectsToMain: boolean;
+    /** The status of the first redirect, when it redirected. */
+    redirectStatus?: number | null;
   } | null;
   urlVariants?: UrlVariantProbe[];
 }
@@ -2115,6 +2134,49 @@ const architectureFindings = ({
   return out;
 };
 
+/** The http:// and www/non-www probes that reach the main site through a temporary redirect. */
+const temporaryRedirectFindings = (ctx: SiteContext): Finding[] => {
+  const out: Finding[] = [];
+
+  const { httpRedirect, hostVariant } = ctx.probes;
+
+  for (const [probe, reaches, to] of [
+    [httpRedirect, httpRedirect?.redirectsToHttps, "https"],
+    [hostVariant, hostVariant?.redirectsToMain, "the main host"],
+  ] as const) {
+    const status = probe?.redirectStatus ?? null;
+
+    if (!probe || !reaches || status === null || !PERMANENT_FOR.has(status)) {
+      continue;
+    }
+
+    const target = probe.finalUrl ?? probe.url;
+
+    out.push(
+      finding(
+        m("site.redirect-not-permanent"),
+        `${probe.url} redirects to ${to} with a temporary ${status}.`,
+        {
+          key: probe.url,
+          fix: [
+            {
+              in: "http",
+              action: "replace",
+              url: probe.url,
+              current: statusLine(status),
+              code: redirectTo(target, status === 307),
+              write: `For every URL on ${new URL(probe.url).origin}, to the same path on the main site, at the server, CDN or DNS host.`,
+            },
+          ],
+          evidence: probe,
+        }
+      )
+    );
+  }
+
+  return out;
+};
+
 const hreflangFindings = ({ ctx, key, pagesByKey }: SiteScope): Finding[] => {
   const out: Finding[] = [];
 
@@ -2299,6 +2361,98 @@ const targetProblem = (scope: SiteScope, url: string): TargetProblem | null => {
         to: finalCanonical(scope, canonical),
       }
     : null;
+};
+
+/** Pages that name one page as canonical, from this many on, are a layout's canonical rather than copies. */
+const SHARED_CANONICAL_PAGES = 3;
+
+/** Below this share of shingles with the canonical, a page is no copy of it, not even a variant. */
+const OTHER_TEXT = 0.5;
+
+/**
+ * Pages whose text differs from the page they name as canonical, when several name the same one:
+ * the canonical a layout writes on every page. A parameter variant of the canonical's own path (a
+ * sort order, a filter) is a copy by design and is left out, as is a page with too little text to
+ * compare.
+ */
+const sharedCanonicalFindings = ({
+  key,
+  pagesByKey,
+  okPages,
+  isIndexable,
+}: SiteScope): Finding[] => {
+  const byTarget = new Map<string, PageRecord[]>();
+
+  for (const p of okPages) {
+    const { canonical } = p.page;
+
+    if (
+      !canonical ||
+      p.page.wordCount < MIN_COMPARABLE_WORDS ||
+      !isIndexable(p)
+    ) {
+      continue;
+    }
+
+    const target = key(canonical);
+
+    if (target !== key(p.url) && pathKey(canonical) !== pathKey(p.url)) {
+      pushTo(byTarget, target, p);
+    }
+  }
+
+  const out: Finding[] = [];
+
+  for (const [target, pages] of byTarget) {
+    const named = pagesByKey.get(target);
+
+    if (
+      !named ||
+      named.page.wordCount < MIN_COMPARABLE_WORDS ||
+      pages.length < SHARED_CANONICAL_PAGES
+    ) {
+      continue;
+    }
+
+    const base = shingles(named.page.text);
+
+    // One comparison per page, so every page of the group is read.
+    const others = pages.filter(
+      (p) => jaccard(base, shingles(p.page.text)) < OTHER_TEXT
+    );
+
+    if (others.length < SHARED_CANONICAL_PAGES) {
+      continue;
+    }
+
+    const canonical = others[0]?.page.canonical ?? named.url;
+
+    out.push(
+      finding(
+        m("site.canonical-to-one-page"),
+        `${others.length} pages with text of their own name ${canonical} as canonical.`,
+        {
+          key: target,
+          fix: others
+            .slice(0, MAX_EDITS)
+            .map((p) =>
+              canonicalEdit(
+                p,
+                p.url,
+                "The page's own URL. Where a shared layout writes the canonical, build it there from each page's address, so every page gets its own."
+              )
+            ),
+          evidence: {
+            canonical,
+            count: others.length,
+            pages: cap(others.map((p) => p.url)),
+          },
+        }
+      )
+    );
+  }
+
+  return out;
 };
 
 /** Canonicals that point at broken, redirecting, noindex or re-canonicalized URLs. */
@@ -2884,6 +3038,8 @@ export const runSiteRules = (ctx: SiteContext): Finding[] => {
     ...parameterDuplicateFindings(scope),
     ...brokenImageFindings(scope),
     ...canonicalGraphFindings(scope),
+    ...sharedCanonicalFindings(scope),
+    ...temporaryRedirectFindings(scope.ctx),
     ...noindexLinkFindings(scope),
     ...hreflangTargetFindings(scope),
     ...hreflangFindings(scope),

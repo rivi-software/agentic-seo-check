@@ -870,6 +870,20 @@ describe("every AEO rule", () => {
         pageCount: 1,
       }),
       ...aeoSiteFindings({
+        crawlers: null,
+        llmsTxt: llms({}),
+        markdownVersions: false,
+        pages: [{ url: "https://www.example.com/", title: "Home" }],
+        brokenLlmsLinks: [
+          {
+            markdown: "[Old guide](https://www.example.com/old/)",
+            url: "https://www.example.com/old/",
+            status: 404,
+          },
+        ],
+        pageCount: 1,
+      }),
+      ...aeoSiteFindings({
         crawlers: crawlerAccess(robotsAt(null, 500), null, PAGE_URL, [
           PAGE_URL,
         ]),

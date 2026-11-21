@@ -17,6 +17,7 @@ import {
   parseDocument,
   queryAll,
   queryOne,
+  relList,
   sourceOf,
   text,
   visibleText,
@@ -31,6 +32,7 @@ import {
 } from "./resources.js";
 import { classSelectorsOf, extractStructuredData } from "./structured-data.js";
 import { collapseWhitespace, wordCount } from "./text.js";
+import { extractVideos } from "./video.js";
 
 export interface ExtractOptions {
   /** Absolute URL of the document; relative links are resolved against it (or against <base href>). */
@@ -40,9 +42,6 @@ export interface ExtractOptions {
   /** Host used to classify links as internal. Defaults to the host of `url`. */
   siteHost?: string;
 }
-
-const relList = (rel: string | null | undefined): string[] =>
-  (rel ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
 
 const attrOrNull = (value: string | undefined): string | null =>
   value?.trim() || null;
@@ -371,6 +370,7 @@ export const extractPage = (
     links,
     hreflang,
     resources: extractResources(doc, base),
+    videos: extractVideos(doc, base),
     upgradesInsecureRequests: upgradesInsecureRequests(doc),
     missingFragments: extractMissingFragments(doc),
     structuredData: structured.items,

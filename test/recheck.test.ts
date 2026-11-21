@@ -342,7 +342,7 @@ describe("a re-check against a baseline", () => {
     await expect(
       auditHtml(page("x"), {}, { onlyRules: ["noindex"] })
     ).rejects.toThrow(
-      /^Unknown rule id\(s\): noindex \(perhaps robots\.noindex, rendering\.noindex-client-only \(requires render\), .*site\.links-to-noindex \(requires crawl\)\)\. /u
+      /^Unknown rule id\(s\): noindex \(perhaps robots\.noindex, canonical\.noindex-conflict, rendering\.noindex-client-only \(requires render\), .*site\.canonical-target-noindex \(requires crawl\)\)\. /u
     );
     // A word of two letters matches too much to suggest anything.
     await expect(

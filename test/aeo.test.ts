@@ -257,7 +257,7 @@ describe("AEO page rules", () => {
         pageRules(
           article(
             ',"author":{"@type":"Person","name":"Sam","url":"https://www.example.com/sam/"},"datePublished":"2024-01-02","dateModified":"2024-02-03"'
-          )
+          ).replace("<h1>A guide</h1>", "<h1>A guide</h1><p>By Sam</p>")
         )
       )
     ).toStrictEqual(["aeo.article-date-not-visible"]);
@@ -705,7 +705,9 @@ describe("AEO audits of a site served over HTTP", () => {
       llmsTxt: "found",
     });
     expect(audit.llmsTxt?.title).toBe("Fixture site");
+    // The fixture's llms.txt links no .md copy, and its pages link none.
     expect(rulesOf(audit.findings)).toStrictEqual([
+      "aeo.markdown-alternate-missing",
       "aeo.robots-blocks-training-bot",
     ]);
     // Without aiBots, no request claims to be a bot.
@@ -992,5 +994,207 @@ describe("the llms.txt an AEO audit writes", () => {
     } finally {
       await server.close();
     }
+  });
+});
+
+/** A page of the llms.txt fixture site. */
+const llmsSitePage = (title: string, body = "") =>
+  `<!doctype html><html lang="en"><head><title>${title} of the llms fixture site</title></head><body><h1>${title}</h1><p>${"Words about widgets for readers. ".repeat(20)}</p>${body}</body></html>`;
+
+/** Whether a crawl of a one-page site with this llms.txt reports aeo.markdown-alternate-missing. */
+const markdownMissingWith = async (llms: string): Promise<boolean> => {
+  const server = await startFixtureServer({
+    "/": { body: llmsSitePage("Home") },
+    "/llms.txt": { headers: { "content-type": "text/plain" }, body: llms },
+  });
+
+  try {
+    const audit = await auditAeoSite(server.origin, { maxPages: 2 });
+
+    return rulesOf(audit.findings).includes("aeo.markdown-alternate-missing");
+  } finally {
+    await server.close();
+  }
+};
+
+describe("Markdown versions an llms.txt links", () => {
+  it("count when on the site, not when on another", async () => {
+    await expect(
+      markdownMissingWith("# Fixture site\n\n- [Home](/index.md)\n")
+    ).resolves.toBeFalsy();
+    await expect(
+      markdownMissingWith(
+        "# Fixture site\n\n- [Spec](https://other.example/spec.md)\n"
+      )
+    ).resolves.toBeTruthy();
+  });
+});
+
+describe("llms.txt links on a crawled site", () => {
+  let server: FixtureServer;
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  it("reports the llms.txt links to pages the crawl read that answer an error, and only those", async () => {
+    server = await startFixtureServer({
+      "/": {
+        body: llmsSitePage(
+          "Home",
+          '<a href="/guide">Guide</a> <a href="/gone">Gone</a>'
+        ),
+      },
+      "/guide": { body: llmsSitePage("Guide") },
+      "/gone": { status: 404, body: llmsSitePage("Not found") },
+      "/robots.txt": {
+        headers: { "content-type": "text/plain" },
+        body: "User-agent: *\nAllow: /\n",
+      },
+      // No page links /never, so the crawl does not read it and it stays unchecked.
+      "/llms.txt": {
+        headers: { "content-type": "text/plain" },
+        body: "# Fixture site\n\n## Pages\n\n- [Guide](/guide): the guide\n- [Gone](/gone): moved away\n- [Never](/never): not crawled\n",
+      },
+    });
+
+    const audit = await auditAeoSite(server.origin, {
+      maxPages: 10,
+      maxDepth: 2,
+    });
+
+    const broken = audit.findings.find(
+      (f) => f.rule === "aeo.llms-txt-broken-links"
+    );
+
+    expect(broken?.evidence).toStrictEqual({
+      count: 1,
+      links: [{ url: `${server.origin}/gone`, status: 404 }],
+    });
+    expect(broken?.fix).toStrictEqual([
+      {
+        in: "llms.txt",
+        action: "replace",
+        url: `${server.origin}/llms.txt`,
+        current: "[Gone](/gone)",
+        code: "[Gone]({{current URL of the page}})",
+        write: `The URL the page answers at now. If ${server.origin}/gone is gone for good, remove its line instead.`,
+      },
+    ]);
+    // Its llms.txt links no .md copy, and its pages link none.
+    expect(rulesOf(audit.findings)).toContain("aeo.markdown-alternate-missing");
+  });
+});
+
+const llmsFile = (text: string) =>
+  parseLlmsTxt("https://www.example.com/llms.txt", 200, text);
+
+const homeOnly = [{ url: "https://www.example.com/", title: "Home" }];
+
+/** The aeo.markdown-alternate-missing findings for a site with this llms.txt. */
+const markdownRule = (markdownVersions: boolean, text: string | null) =>
+  rulesOf(
+    aeoSiteFindings({
+      crawlers: null,
+      llmsTxt: text === null ? null : llmsFile(text),
+      markdownVersions,
+      pages: homeOnly,
+      pageCount: 1,
+    })
+  ).filter((r) => r === "aeo.markdown-alternate-missing");
+
+describe("aeo.markdown-alternate-missing", () => {
+  it("fires once for a site with llms.txt and no Markdown version of a page", () => {
+    const findings = aeoSiteFindings({
+      crawlers: null,
+      llmsTxt: llmsFile("# Widget Co\n\n- [Home](https://www.example.com/)"),
+      markdownVersions: false,
+      pages: homeOnly,
+      pageCount: 1,
+    });
+
+    expect(rulesOf(findings)).toStrictEqual(["aeo.markdown-alternate-missing"]);
+    expect(findings[0]?.fix).toMatchObject([
+      {
+        in: "html",
+        action: "add",
+        url: "https://www.example.com/",
+        at: "head",
+        code: '<link rel="alternate" type="text/markdown" href="{{URL of this page\'s Markdown version}}">',
+      },
+    ]);
+  });
+
+  it("stays quiet without llms.txt, and when a page or llms.txt offers Markdown", () => {
+    expect(markdownRule(false, null)).toStrictEqual([]);
+    expect(
+      markdownRule(true, "# Widget Co\n\n- [Home](https://www.example.com/)")
+    ).toStrictEqual([]);
+  });
+
+  it("skips an alternate with an empty href for a later one", () => {
+    expect(
+      extractPage(
+        '<!doctype html><html><head><link rel="alternate" type="text/markdown" href=" "><link rel="alternate" type="text/markdown" href="/a.md"></head><body></body></html>',
+        { url: "https://www.example.com/a" }
+      ).answer.markdownAlternate
+    ).toBe("/a.md");
+  });
+
+  it("reads a page's Markdown version from its <link rel=alternate>", () => {
+    expect(
+      extractPage(
+        '<!doctype html><html lang="en"><head><title>Docs</title><link rel="alternate" type="text/markdown; charset=utf-8" href="/docs.md"></head><body><h1>Docs</h1></body></html>',
+        { url: "https://www.example.com/docs" }
+      ).answer.markdownAlternate
+    ).toBe("/docs.md");
+  });
+});
+
+/** An article whose structured data names `author`, with `body` under its title. */
+const authored = (author: string, body: string) =>
+  `<!doctype html><html lang="en"><head><title>A guide</title><script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"A guide","author":${author},"datePublished":"2024-01-02","dateModified":"2024-02-03"}</script></head><body><h1>A guide</h1><p>Published 2 January 2024.</p>${body}<p>Some text about widgets for the guide, long enough to read.</p></body></html>`;
+
+const authorRule = (html: string) =>
+  rulesOf(pageRules(html)).filter(
+    (r) => r === "aeo.article-author-not-visible"
+  );
+
+describe("aeo.article-author-not-visible", () => {
+  it("fires on a microdata author only a <meta> tag names", () => {
+    expect(
+      authorRule(
+        '<!doctype html><html lang="en"><head><title>A guide</title></head><body><article itemscope itemtype="https://schema.org/Article"><h1 itemprop="headline">A guide</h1><meta itemprop="author" content="Jane Doe"><p>Some text about widgets for the guide, long enough to read.</p></article></body></html>'
+      )
+    ).toStrictEqual(["aeo.article-author-not-visible"]);
+  });
+
+  it("fires when the page shows none of the authors' names", () => {
+    expect(
+      authorRule(
+        authored(
+          '[{"@type":"Person","name":"Jane Doe","url":"https://www.example.com/jane/"}]',
+          ""
+        )
+      )
+    ).toStrictEqual(["aeo.article-author-not-visible"]);
+  });
+
+  it.each([
+    ["the whole name", '"Jane Doe"', "<p>By Jane Doe</p>"],
+    ["the surname with an initial", '"Jane Doe"', "<p>By J. Doe</p>"],
+    ["a short surname with an initial", '"Jane Li"', "<p>By J. Li</p>"],
+    [
+      "a name in another case",
+      '{"@type":"Person","name":"Jane Doe"}',
+      "<p>BY JANE DOE</p>",
+    ],
+    [
+      "an author given by @id only, whose name is elsewhere",
+      '{"@id":"https://www.example.com/#jane"}',
+      "",
+    ],
+  ])("stays quiet on %s", (_, author, body) => {
+    expect(authorRule(authored(author, body))).toStrictEqual([]);
   });
 });

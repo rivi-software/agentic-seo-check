@@ -68,6 +68,34 @@ const NON_HTML_EXTENSIONS = new Set([
   ".csv",
 ]);
 
+/** Query parameters that only tell analytics where a click came from (utm_* aside). */
+const ANALYTICS_PARAMETERS = new Set([
+  "gclid",
+  "gbraid",
+  "wbraid",
+  "dclid",
+  "fbclid",
+  "msclkid",
+  "yclid",
+  "twclid",
+  "ttclid",
+  "igshid",
+  "li_fat_id",
+  "mc_cid",
+  "mc_eid",
+  "_ga",
+  "_gl",
+  "_hsenc",
+  "_hsmi",
+]);
+
+/** A query parameter that only tells analytics where a click came from: utm_*, gclid, fbclid. */
+export const isTrackingParameter = (name: string): boolean => {
+  const key = name.toLowerCase();
+
+  return key.startsWith("utm_") || ANALYTICS_PARAMETERS.has(key);
+};
+
 export const isHttpUrl = (value: string): boolean =>
   /^https?:\/\//iu.test(value.trim());
 
@@ -244,3 +272,43 @@ export const samePath = (a: string, b: string): boolean => {
 
 export const truncate = (value: string, max = 120): string =>
   value.length > max ? `${value.slice(0, max - 1)}…` : value;
+
+/**
+ * `raw`, a URL as an attribute writes it, without the query parameters `drop` selects (and a
+ * `;jsessionid=` path parameter when `drop` selects "jsessionid"), written the way `raw` was:
+ * absolute stays absolute, a path stays a path.
+ */
+export const withoutParameters = (
+  raw: string,
+  base: string,
+  drop: (name: string) => boolean
+): string => {
+  const absolute = resolveUrl(raw, base);
+
+  if (!absolute) {
+    return raw;
+  }
+
+  const url = new URL(absolute);
+
+  if (drop("jsessionid")) {
+    url.pathname = url.pathname.replaceAll(/;jsessionid=[^/;]*/giu, "");
+  }
+
+  // A copy: deleting while the live iterator runs would skip the parameter after each one deleted.
+  const names = [...url.searchParams.keys()];
+
+  for (const name of names) {
+    if (drop(name)) {
+      url.searchParams.delete(name);
+    }
+  }
+
+  const search = url.searchParams.size > 0 ? url.search : "";
+
+  if (/^[a-z][\d+.a-z-]*:/iu.test(raw) || raw.startsWith("//")) {
+    return `${raw.startsWith("//") ? "//" : `${url.protocol}//`}${url.host}${url.pathname}${search}${url.hash}`;
+  }
+
+  return `${url.pathname}${search}${url.hash}`;
+};

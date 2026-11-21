@@ -19,6 +19,8 @@ import {
 } from "./bots.js";
 import type { RobotsBlock, RobotsRuleLine } from "./bots.js";
 import { statusLine } from "./fixes.js";
+import { retargetLink } from "./llms-txt.js";
+import type { LlmsTxtLink } from "./llms-txt.js";
 
 const LLMS_TXT_DOCS = "https://llmstxt.org/";
 const CONTENT_SIGNALS_DOCS = "https://contentsignals.org/";
@@ -122,6 +124,20 @@ export const AEO_SITE_RULES: RuleMeta[] = [
     LLMS_TXT_DOCS
   ),
   meta(
+    "aeo.llms-txt-broken-links",
+    "warning",
+    "/llms.txt links to pages that answer 4xx or 5xx, so AI tools that follow it reach an error. Only the pages the audit read are judged (a crawl's pages); the other links stay unchecked.",
+    "Point each broken link at the page's current URL, or remove its line when the page is gone for good.",
+    LLMS_TXT_DOCS
+  ),
+  meta(
+    "aeo.markdown-alternate-missing",
+    "info",
+    'The site publishes /llms.txt but offers no Markdown version of its pages: no audited page links one with <link rel="alternate" type="text/markdown">, and llms.txt links no .md URL. The llms.txt proposal asks for a clean Markdown copy of each page for AI tools to read.',
+    'Optional: serve each page as Markdown at its URL with .md appended (/docs/setup.md for /docs/setup), link it from the page with <link rel="alternate" type="text/markdown" href="...">, and list the .md URLs in llms.txt. No major answer engine has said it reads them, so this is low priority.',
+    LLMS_TXT_DOCS
+  ),
+  meta(
     "aeo.server-blocks-answer-bot",
     "warning",
     "The server refuses or challenges an AI answer bot's User-Agent (403, 429, a challenge page) while it serves the audit's own request.",
@@ -170,6 +186,10 @@ export interface AeoSiteContext {
   llmsTxt: LlmsTxtInfo | null;
   /** The audited pages, which a fix for a missing or empty llms.txt lists. */
   pages?: { url: string; title: string | null }[];
+  /** Whether an audited page links a Markdown version of itself, or llms.txt links a .md URL. */
+  markdownVersions?: boolean;
+  /** Links of llms.txt to pages the audit read that answered 4xx or 5xx. */
+  brokenLlmsLinks?: (LlmsTxtLink & { status: number })[];
   /** Pages audited, for "blocked from N of M pages". */
   pageCount: number;
   /** Set when the caller asked for the bot probe but it could not run. */
@@ -867,6 +887,66 @@ export const aeoSiteFindings = (ctx: AeoSiteContext): Finding[] => {
 
   if (ctx.llmsTxt) {
     out.push(...llmsTxtFindings(ctx.llmsTxt, ctx.pages));
+  }
+
+  const [firstPage] = ctx.pages ?? [];
+
+  if (
+    ctx.llmsTxt !== null &&
+    ctx.llmsTxt.status !== "missing" &&
+    ctx.markdownVersions === false &&
+    firstPage
+  ) {
+    out.push(
+      finding(
+        m("aeo.markdown-alternate-missing"),
+        "The site has an llms.txt but no Markdown version of its pages.",
+        {
+          fix: [
+            addEdit(
+              "html",
+              "head",
+              `<link rel="alternate" type="text/markdown" href="${slot("URL of this page's Markdown version")}">`,
+              {
+                url: firstPage.url,
+                write:
+                  "The URL of a Markdown copy of the page, its own URL with .md appended (served as text/markdown), on every page that has one; list those URLs in llms.txt too.",
+              }
+            ),
+          ],
+        }
+      )
+    );
+  }
+
+  const broken = ctx.brokenLlmsLinks ?? [];
+
+  if (ctx.llmsTxt && broken.length > 0) {
+    const llmsUrl = ctx.llmsTxt.url;
+
+    out.push(
+      finding(
+        m("aeo.llms-txt-broken-links"),
+        `llms.txt links to ${broken.length} page(s) that answer with an error.`,
+        {
+          fix: broken.map((link) =>
+            replaceEdit(
+              "llms.txt",
+              link.markdown,
+              retargetLink(link.markdown, slot("current URL of the page")),
+              {
+                url: llmsUrl,
+                write: `The URL the page answers at now. If ${link.url} is gone for good, remove its line instead.`,
+              }
+            )
+          ),
+          evidence: {
+            count: broken.length,
+            links: cap(broken.map((l) => ({ url: l.url, status: l.status }))),
+          },
+        }
+      )
+    );
   }
 
   if (ctx.probeSkipped) {

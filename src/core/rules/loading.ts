@@ -49,6 +49,9 @@ const MIN_COMPRESSIBLE_BYTES = 1400;
 /** An image shown before this many words of text is likely in the first screen. */
 const ABOVE_FOLD_WORDS = 100;
 
+/** An image at least this wide (by its width attribute) in the first screen is likely its largest element. */
+const HERO_MIN_WIDTH = 400;
+
 /** Images narrower than this (by their width attribute) gain little from other sizes. */
 const SRCSET_MIN_WIDTH = 640;
 
@@ -74,6 +77,41 @@ const isVector = (src: string): boolean =>
 
 const isLazy = (image: ImageInfo): boolean =>
   image.loading?.trim().toLowerCase() === "lazy";
+
+/**
+ * The first large image of the page when it is likely the Largest Contentful Paint and nothing asks
+ * the browser to fetch it first: in the first screen, not lazy (img.lazy-above-fold covers that),
+ * with no fetchpriority of its own, and no other image the author marked high. Large by its width
+ * attribute or its srcset, so a logo without dimensions is never taken for it.
+ */
+const unprioritizedHero = (page: ExtractedPage): ImageInfo | null => {
+  if (
+    page.images.some((i) => i.fetchpriority?.trim().toLowerCase() === "high")
+  ) {
+    return null;
+  }
+
+  const first = page.images.find(
+    (i) => i.src && i.wordsBefore !== null && !isVector(i.src) && !isSmall(i)
+  );
+
+  if (
+    !first ||
+    first.wordsBefore === null ||
+    first.wordsBefore >= ABOVE_FOLD_WORDS ||
+    isLazy(first) ||
+    first.fetchpriority !== null
+  ) {
+    return null;
+  }
+
+  const width = pixels(first.width);
+
+  return (width !== null && width >= HERO_MIN_WIDTH) ||
+    (width === null && (first.srcset !== null || first.inPicture))
+    ? first
+    : null;
+};
 
 /** Vector, animated and inline images, which one file serves at every size. */
 const isFixedFormat = (src: string): boolean =>
@@ -244,6 +282,40 @@ export const loadingRules = [
               fix: [eagerEdit(first, true)],
               selector: 'img[loading="lazy"]',
               evidence: { src: first.src, wordsBefore: first.wordsBefore },
+            }
+          )
+        : null;
+    }
+  ),
+  defineRule(
+    {
+      id: "img.lcp-fetchpriority-missing",
+      category: "images",
+      severity: "info",
+      description:
+        'The first large image on the page, likely in the first screen and often the Largest Contentful Paint, has no fetchpriority="high", and no other image does, so the browser fetches it with the other images rather than first.',
+      recommendation:
+        'Add fetchpriority="high" to the main image of the first screen (in Next.js, priority or preload on that <Image>), and to no more than one or two images per page.',
+      docs: "https://web.dev/articles/fetch-priority",
+    },
+    ({ page }, make) => {
+      const hero = unprioritizedHero(page);
+
+      return hero
+        ? make(
+            `The first large image (${hero.src}) comes after ${hero.wordsBefore} words of text and has no fetchpriority="high".`,
+            {
+              fix: [
+                setAttributeEdit(
+                  hero.tag,
+                  imageAt(hero),
+                  "fetchpriority",
+                  "high",
+                  "Only if this image is the largest element of the first screen; if a carousel shows it, only on its first slide."
+                ),
+              ],
+              selector: imageAt(hero),
+              evidence: { src: hero.src, wordsBefore: hero.wordsBefore },
             }
           )
         : null;

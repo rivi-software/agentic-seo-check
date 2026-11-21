@@ -187,6 +187,38 @@ const addAfter = (
     ? replaceHtml(tag, `${tag}\n${html}`, { at, write })
     : addHtml(at, html, write);
 
+/** The author names an article's structured data gives: strings, and objects that carry a name. */
+const authorNames = (node: JsonObject): string[] => {
+  const authors = Array.isArray(node["author"])
+    ? node["author"]
+    : [node["author"]];
+
+  return authors.flatMap((a) => {
+    const name = isString(a) || isJsonObject(a) ? nameOf(a) : null;
+
+    return name ? [name] : [];
+  });
+};
+
+/**
+ * Whether the page's text shows `name`: the whole name, the first initial and the surname ("J. Li"
+ * for "Jane Li"), or a surname of three letters or more alone. A shorter surname alone matches too
+ * much prose to count.
+ */
+const showsName = (text: string, name: string): boolean => {
+  const words = comparable(name).split(" ").filter(Boolean);
+  const [first = ""] = words;
+  const last = words.at(-1) ?? "";
+  const padded = ` ${text} `;
+
+  return (
+    words.length === 0 ||
+    padded.includes(` ${words.join(" ")} `) ||
+    (words.length > 1 && padded.includes(` ${first.charAt(0)} ${last} `)) ||
+    (last.length >= 3 && padded.includes(` ${last} `))
+  );
+};
+
 /** Edits that put an answer right under each question heading that lacks a short one. */
 const answerFixes = (
   page: ExtractedPage,
@@ -1160,6 +1192,54 @@ export const aeoRules = [
             datePublished: article.node["datePublished"] ?? null,
             dateModified: article.node["dateModified"] ?? null,
           },
+        }
+      );
+    }
+  ),
+  defineRule(
+    {
+      id: "aeo.article-author-not-visible",
+      category: "aeo",
+      severity: "info",
+      description:
+        "The article's structured data names an author the page does not show. Google asks for structured data that matches what readers see, and readers and answer engines look for a byline to judge who wrote it.",
+      recommendation:
+        "Show the author's name on the page, near the title, matching the structured data; link it to the author's page where there is one.",
+      docs: AEO_DOCS.article,
+    },
+    ({ page }, make) => {
+      const [article] = articles(page);
+
+      // Microdata counts too: <meta itemprop="author" content="…"> marks up a name nobody sees.
+      if (!article || page.wordCount === 0) {
+        return null;
+      }
+
+      const text = comparable(page.text);
+
+      const hidden = authorNames(article.node).filter(
+        (name) => !showsName(text, name)
+      );
+
+      if (hidden.length === 0) {
+        return null;
+      }
+
+      const h1 = page.headings.findIndex((h) => h.level === 1);
+      const names = hidden.map((n) => escapeText(n)).join(", ");
+
+      return make(
+        `Article names ${hidden.map((n) => `"${n}"`).join(", ")} as author in its structured data, but the page does not show ${hidden.length === 1 ? "that name" : "those names"}.`,
+        {
+          fix: [
+            addAfter(
+              page.markup.headings[h1] ?? null,
+              h1 === -1 ? "body" : "h1",
+              `<p>${slot("word before the name, such as By")} ${names}</p>`,
+              "The byline as the page writes it, next to the title, in the page's language; link each name to the author's page where there is one."
+            ),
+          ],
+          evidence: { authors: cap(hidden) },
         }
       );
     }

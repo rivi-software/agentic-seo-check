@@ -26,7 +26,7 @@ import type {
 import { hostOf, resolveUrl, stripWww } from "../url.js";
 import { addHtml, removeEdit, slot } from "./fix.js";
 import { json, jsonLdAt, productionOrigin } from "./page-fixes.js";
-import { defineRule } from "./rule.js";
+import { cap, defineRule } from "./rule.js";
 import { STRUCTURED_SLOTS_WRITE } from "./structured-data-fixes.js";
 import { eachObject, valueEdit } from "./structured-data-values.js";
 import type { ValueFix } from "./structured-data-values.js";
@@ -635,6 +635,65 @@ export const structuredDataEligibilityRules = [
         selector: JSON_LD,
         evidence: { ogSiteName: siteName ?? null },
       });
+    }
+  ),
+  defineRule(
+    {
+      id: "structured-data.video-missing",
+      category: "structured-data",
+      severity: "info",
+      description:
+        "The page shows a video (a <video> with controls, or a YouTube, Vimeo, Wistia, Dailymotion or Loom player) but has no VideoObject structured data, which Google reads for the video's title, thumbnail, date and length in search and in its video results.",
+      recommendation:
+        'Add VideoObject JSON-LD for the page\'s main video, with at least name, thumbnailUrl and uploadDate, and contentUrl or embedUrl: {"@type": "VideoObject", "name": "…", "thumbnailUrl": "…", "uploadDate": "2026-03-14", "embedUrl": "…"}.',
+      docs: `${SD}video`,
+    },
+    ({ page }, make) => {
+      const [video] = page.videos;
+
+      // A broken script may hold the VideoObject.
+      if (
+        !video ||
+        page.structuredDataErrors.length > 0 ||
+        typedNodes(page.structuredData).some((n) =>
+          n.types.includes("VideoObject")
+        )
+      ) {
+        return null;
+      }
+
+      const urlKey = video.kind === "embed" ? "embedUrl" : "contentUrl";
+
+      const code = [
+        '<script type="application/ld+json">',
+        "{",
+        '  "@context": "https://schema.org",',
+        '  "@type": "VideoObject",',
+        `  "name": "${slot("video title")}",`,
+        `  "description": "${slot("what the video shows")}",`,
+        `  "thumbnailUrl": ${video.thumbnail ? json(video.thumbnail) : `"${slot("thumbnail image URL")}"`},`,
+        `  "uploadDate": "${slot("upload date")}",`,
+        `  "${urlKey}": ${video.url ? json(video.url) : `"${slot("video URL")}"`}`,
+        "}",
+        "</script>",
+      ].join("\n");
+
+      return make(
+        `The page shows ${page.videos.length === 1 ? "a video" : `${page.videos.length} videos`} but has no VideoObject structured data.`,
+        {
+          fix: [
+            addHtml(
+              "head",
+              code,
+              `The title, description and upload date of the page's main video${video.thumbnail ? "" : ", and an image of it Google can crawl"}${video.url ? "" : ", and the URL of its file or player"}. ${STRUCTURED_SLOTS_WRITE}`
+            ),
+          ],
+          selector: video.kind === "embed" ? "iframe" : "video",
+          evidence: {
+            videos: cap(page.videos.map((v) => ({ kind: v.kind, url: v.url }))),
+          },
+        }
+      );
     }
   ),
 ];
