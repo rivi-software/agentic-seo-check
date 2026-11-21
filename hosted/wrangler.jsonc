@@ -59,12 +59,25 @@
     { "name": "CALLER_CRAWLS", "namespace_id": "35003", "simple": { "limit": 3, "period": 60 } },
     // claude.ai and ChatGPT call from their platforms' own addresses: one caller each, with ten times the limits.
     { "name": "PLATFORM_CALLS", "namespace_id": "35004", "simple": { "limit": 300, "period": 60 } },
-    { "name": "PLATFORM_CRAWLS", "namespace_id": "35005", "simple": { "limit": 30, "period": 60 } }
+    { "name": "PLATFORM_CRAWLS", "namespace_id": "35005", "simple": { "limit": 30, "period": 60 } },
+    // Reports one IP address may share a minute, uploaded to the website or kept by the MCP server's
+    // seo_share_report (src/shared-reports.ts).
+    { "name": "SHARE_UPLOADS", "namespace_id": "35006", "simple": { "limit": 5, "period": 60 } }
   ],
   // The day's count of outgoing requests, the sites each caller audited today, and ChatGPT's
   // connector addresses. The website binds it too.
   "durable_objects": { "bindings": [{ "name": "STATE", "class_name": "HostedState" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HostedState"] }],
+  // Shared reports (src/shared-reports.ts): each kept for 30 days in the EU, under a random id. The
+  // bucket's lifecycle rule deletes them: `wrangler r2 bucket lifecycle add
+  // agentic-seo-check-shared-reports expire-reports reports/ --expire-days 30 --jurisdiction eu`.
+  "r2_buckets": [
+    {
+      "binding": "SHARED_REPORTS",
+      "bucket_name": "agentic-seo-check-shared-reports",
+      "jurisdiction": "eu"
+    }
+  ],
   // One record per tool call: the tool, the outcome, the duration, the requests and pages, the target hostname.
   // Analytics Engine keeps data for three months.
   "analytics_engine_datasets": [{ "binding": "CALLS", "dataset": "agentic_seo_check_calls" }],

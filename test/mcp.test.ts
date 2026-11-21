@@ -72,6 +72,7 @@ describe("MCP server", () => {
       "seo_crawl_site",
       "seo_lighthouse",
       "seo_list_rules",
+      "seo_share_report",
     ]);
     // The analytics leave out a call to any tool not in LOCAL_TOOLS (issue #57).
     expect([...LOCAL_TOOLS].toSorted()).toStrictEqual(names);
@@ -88,13 +89,15 @@ describe("MCP server", () => {
     const local = new Set(["seo_audit_directory", "seo_list_rules"]);
 
     for (const tool of tools) {
-      // Every tool reads, and sets all four hints, as OpenAI's plugin guidelines ask.
+      // Every tool reads but seo_share_report, which keeps a report on the website. Each sets all
+      // four hints, as OpenAI's plugin guidelines ask.
+      const reads = tool.name !== "seo_share_report";
       expect({ tool: tool.name, ...tool.annotations }).toStrictEqual({
         tool: tool.name,
         title: tool.title,
-        readOnlyHint: true,
+        readOnlyHint: reads,
         destructiveHint: false,
-        idempotentHint: true,
+        idempotentHint: reads,
         openWorldHint: !local.has(tool.name),
       });
     }

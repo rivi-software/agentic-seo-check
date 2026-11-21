@@ -48,7 +48,10 @@
     { "name": "CALLER_CALLS", "namespace_id": "35002", "simple": { "limit": 30, "period": 60 } },
     { "name": "CALLER_CRAWLS", "namespace_id": "35003", "simple": { "limit": 3, "period": 60 } },
     { "name": "PLATFORM_CALLS", "namespace_id": "35004", "simple": { "limit": 300, "period": 60 } },
-    { "name": "PLATFORM_CRAWLS", "namespace_id": "35005", "simple": { "limit": 30, "period": 60 } }
+    { "name": "PLATFORM_CRAWLS", "namespace_id": "35005", "simple": { "limit": 30, "period": 60 } },
+    // Reports one IP address may share a minute, uploaded to the website or kept by the MCP server's
+    // seo_share_report (src/shared-reports.ts).
+    { "name": "SHARE_UPLOADS", "namespace_id": "35006", "simple": { "limit": 5, "period": 60 } }
   ],
   // The MCP server's Durable Object, so the form's requests count in the same day. It runs the code
   // the MCP server last deployed, which deploys first: keep its methods additive (src/state.ts).
@@ -57,6 +60,16 @@
       { "name": "STATE", "class_name": "HostedState", "script_name": "agentic-seo-check-mcp" }
     ]
   },
+  // Shared reports (src/shared-reports.ts): each kept for 30 days in the EU, under a random id. The
+  // bucket's lifecycle rule deletes them: `wrangler r2 bucket lifecycle add
+  // agentic-seo-check-shared-reports expire-reports reports/ --expire-days 30 --jurisdiction eu`.
+  "r2_buckets": [
+    {
+      "binding": "SHARED_REPORTS",
+      "bucket_name": "agentic-seo-check-shared-reports",
+      "jurisdiction": "eu"
+    }
+  ],
   // The MCP server's dataset: one record per run of the form, as per tool call.
   "analytics_engine_datasets": [{ "binding": "CALLS", "dataset": "agentic_seo_check_calls" }],
   // A deploy fails until these are set on the Worker (`pnpm run site:secret <NAME>`), rather than

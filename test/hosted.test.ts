@@ -24,6 +24,7 @@ import {
   hostedUrlProblem,
   siteRefusal,
 } from "../src/core/hosted.js";
+import type { SharedReport } from "../src/core/share.js";
 import { CallLimitError, guarded, HOSTED_TOOLS } from "../src/mcp-hosted.js";
 import { createMcpServer } from "../src/mcp.js";
 import type {
@@ -361,6 +362,7 @@ describe("the hosted server", () => {
         "seo_compare_pages",
         "seo_crawl_site",
         "seo_list_rules",
+        "seo_share_report",
       ]);
 
       const inputs = tools.flatMap((t) =>
@@ -855,16 +857,18 @@ describe("the hosted server", () => {
       const { tools } = await client.listTools();
 
       for (const tool of tools) {
-        // Every tool reads, but send_feedback, which records what the agent sent (issue #101).
-        // Each sets all four hints, as OpenAI's plugin guidelines ask.
-        const reads = tool.name !== "send_feedback";
+        // Every tool reads, but send_feedback, which records what the agent sent (issue #101),
+        // and seo_share_report, which keeps a report on the website. Each sets all four hints, as
+        // OpenAI's plugin guidelines ask.
+        const shares = tool.name === "seo_share_report";
+        const reads = tool.name !== "send_feedback" && !shares;
         expect({ tool: tool.name, ...tool.annotations }).toStrictEqual({
           tool: tool.name,
           title: tool.title,
           readOnlyHint: reads,
           destructiveHint: false,
           idempotentHint: reads,
-          openWorldHint: reads && tool.name !== "seo_list_rules",
+          openWorldHint: shares || (reads && tool.name !== "seo_list_rules"),
         });
       }
 
@@ -874,6 +878,61 @@ describe("the hosted server", () => {
         expect(tool.description).toContain(`${REPOSITORY_URL}#hosted-server`);
         expect(tool.description).toContain(`${WEBSITE_URL}/rules`);
       }
+    });
+
+    it("shares both audits of a page through the server's own store, as one call", async () => {
+      serve({
+        "https://shop.example.com/": {
+          body: page("Shop home page for the fixture", ""),
+        },
+      });
+
+      const { profile, calls, ends } = profileWith();
+      const shared: SharedReport[] = [];
+
+      const client = await connect({
+        ...profile,
+        // oxlint-disable-next-line eslint/require-await -- the Worker's keeps the report in R2
+        share: async (report) => {
+          shared.push(report);
+
+          return {
+            url: "https://agentic-seo.org/report/AAAAAAAAAAAAAAAAAAAAAA",
+            expiresAt: "2026-12-21T00:00:00.000Z",
+          };
+        },
+      });
+
+      const result = await client.callTool({
+        name: "seo_share_report",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      expect(result.structuredContent).toMatchObject({
+        url: "https://agentic-seo.org/report/AAAAAAAAAAAAAAAAAAAAAA",
+        kind: "page",
+      });
+      expect(shared.map((r) => [r.seo.kind, r.aeo.kind])).toStrictEqual([
+        ["page", "aeo"],
+      ]);
+      expect(calls).toMatchObject([
+        { tool: "seo_share_report", fetches: true, crawl: false },
+      ]);
+      expect(ends).toStrictEqual([{ outcome: "ok", pages: 1 }]);
+    });
+
+    it("says sharing is off on a server without a store, before the call counts", async () => {
+      const { profile, calls } = profileWith();
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_share_report",
+        arguments: { url: "https://shop.example.com/" },
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(JSON.stringify(result.content)).toContain("switched off");
+      expect(calls).toStrictEqual([]);
     });
 
     it("audits inline HTML as a call that requests nothing", async () => {

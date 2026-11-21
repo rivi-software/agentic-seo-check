@@ -5,6 +5,7 @@ import { VERSION } from "../../../src/version.js";
 import { reportError } from "../analytics.js";
 import { freshResponse } from "../fresh.js";
 import { FORMER_SITE_HOST, movedToOrigin } from "../limits.js";
+import { readReport } from "../shared-reports.js";
 /**
  * The routes of the website at agentic-seo.org (issues #39 and #168), which its own Worker serves
  * (worker.ts): the homepage with the audit form, the rules, the form's answer at /audit, the
@@ -24,8 +25,10 @@ import { pdfAssetResponse } from "./pdf-assets.js";
 import { RULES_PREFIX } from "./rule-info.js";
 import { rulePage } from "./rule-page.js";
 import { rulesPage } from "./rules-page.js";
+import { shareUpload } from "./share-api.js";
 import { sharePage } from "./share-page.js";
 import { openShare, shareImageCacheKey } from "./share.js";
+import { sharedReportPage } from "./shared-page.js";
 
 const HTML = "text/html; charset=utf-8";
 const TEXT = "text/plain; charset=utf-8";
@@ -212,6 +215,60 @@ const share = async (
     : image;
 };
 
+/** A shared report's page (shared-reports.ts): the id is 128 random bits. */
+const REPORT_ROUTE = /^\/report\/(?<id>[\w-]{22})$/u;
+
+/**
+ * A shared report, or the 404 page once it has expired. Its address is the secret, so the page
+ * sends no referrer (a link in the report would hand the address to the audited site), is never
+ * cached, and is kept out of search.
+ */
+const sharedReport = async (env: SiteEnv, id: string): Promise<Response> => {
+  const stored = env.SHARED_REPORTS
+    ? await readReport(env.SHARED_REPORTS, id)
+    : null;
+
+  return new Response(stored ? sharedReportPage(stored) : notFoundPage(), {
+    status: stored ? 200 : 404,
+    headers: {
+      "content-type": HTML,
+      ...SECURITY,
+      "referrer-policy": "no-referrer",
+      "cache-control": "private, no-store",
+      "x-robots-tag": "noindex",
+    },
+  });
+};
+
+/** An upload of a report to share at /api/share, or a shared report's page; null for any other path. */
+const sharedRoute = (
+  request: Request,
+  env: SiteEnv,
+  path: string
+): Promise<Response> | Response | null => {
+  if (path === "/api/share") {
+    return request.method === "POST"
+      ? shareUpload(request, env)
+      : new Response("Method not allowed.\n", {
+          status: 405,
+          headers: { allow: "POST" },
+        });
+  }
+
+  const id = REPORT_ROUTE.exec(path)?.groups?.id;
+
+  if (!id) {
+    return null;
+  }
+
+  return request.method === "GET" || request.method === "HEAD"
+    ? sharedReport(env, id)
+    : new Response("Method not allowed.\n", {
+        status: 405,
+        headers: { allow: "GET, HEAD" },
+      });
+};
+
 /** The share image of a card at `path`: the website's, or the MCP server's, whose pages it serves. */
 const cardResponse = (request: Request, path: string): Response | null => {
   if (path === SITE_CARD.path) {
@@ -264,6 +321,12 @@ export const siteRoute = (
           status: 405,
           headers: { allow: "GET, HEAD, POST" },
         });
+  }
+
+  const sharing = sharedRoute(request, env, url.pathname);
+
+  if (sharing) {
+    return sharing;
   }
 
   if (!read) {

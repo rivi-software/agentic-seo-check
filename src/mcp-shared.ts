@@ -17,6 +17,8 @@ import {
   renderMarkdown,
 } from "./core/report/markdown.js";
 import { ALL_RULES } from "./core/rules/index.js";
+import { SHARE_DAYS, shareSummary } from "./core/share.js";
+import type { ShareLink, SharedReport } from "./core/share.js";
 import type { AeoAudit, Audit, Comparison } from "./core/types.js";
 import { noteCall, withErrorType } from "./telemetry/mcp.js";
 import type { McpErrorType } from "./telemetry/mcp.js";
@@ -326,3 +328,31 @@ export const fail = (
     type === "internal" ? error : undefined
   );
 };
+
+/** The annotations of seo_share_report: it keeps a report on the website, so it is not read-only. */
+export const SHARE_ANNOTATIONS = {
+  title: "Share a report as a secret link",
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+} satisfies ToolAnnotations;
+
+/** What seo_share_report does, on both servers; `note` is what the server adds. */
+export const shareDescription = (
+  server: "local" | "hosted",
+  note: string
+): string =>
+  `Run the SEO and the AEO audit of a page (or of a site with \`crawl: true\`) and share the full report, every finding with its fix, as a secret link on ${WEBSITE_URL} that a person opens in a browser. Use it when the user asks to share, send or show a report to someone, such as a client, a colleague or a ticket. ` +
+  `The website keeps the report for ${SHARE_DAYS} days and then deletes it; anyone with the link can read it until then, and search engines do not index it. Give the user the link and the date it expires. ${note}${docsNote(server)}`;
+
+/** The answer of seo_share_report: the link, when it expires, and the two scores. */
+export const respondShare = (report: SharedReport, link: ShareLink) => ({
+  content: [
+    {
+      type: "text" as const,
+      text: `Shared report: ${link.url}\nAnyone with the link can read the full report until ${link.expiresAt.slice(0, 10)}, when the website deletes it. SEO score ${report.seo.score}/100, AEO score ${report.aeo.score}/100.`,
+    },
+  ],
+  structuredContent: shareSummary(report, link),
+});

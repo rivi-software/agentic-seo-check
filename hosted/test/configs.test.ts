@@ -25,6 +25,7 @@ const settings = (config: typeof server) => ({
   observability: config.observability,
   ratelimits: config.ratelimits,
   analytics_engine_datasets: config.analytics_engine_datasets,
+  r2_buckets: config.r2_buckets,
   DAILY_REQUESTS: config.vars["DAILY_REQUESTS"],
   CALLER_SITES: config.vars["CALLER_SITES"],
   PLATFORM_SITES: config.vars["PLATFORM_SITES"],

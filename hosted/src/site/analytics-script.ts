@@ -29,7 +29,8 @@ const PATTERNS = MESSAGE_PATTERNS.map(([pattern, replacement]) => [
  */
 export const ANALYTICS_HELPERS_JS = String.raw`
   // An address of this site as an event records it, less what belongs to the audited site: a
-  // share link's result (its address and scores) and the address a link put in the form. The
+  // share link's result (its address and scores), a shared report's id, and the address a link
+  // put in the form. The
   // hostnames before issue #168 too, which a referrer may still name.
   const OWN = /^(agentic-seo\.org|(mcp\.)?agentic-seo(-check)?\.rivi\.software)$/;
 
@@ -52,6 +53,11 @@ export const ANALYTICS_HELPERS_JS = String.raw`
 
     if (url.pathname.startsWith("/share/")) {
       url.pathname = "/share/:result";
+    }
+
+    // A shared report's id is the secret that opens it.
+    if (url.pathname.startsWith("/report/")) {
+      url.pathname = "/report/:id";
     }
 
     url.searchParams.delete("url");
@@ -99,9 +105,9 @@ export const ANALYTICS_HELPERS_JS = String.raw`
   // Session replay (issue #181): the parts of a page that can show the audited site, whose text a
   // recording masks, and whose attributes maskAttribute masks: the report, the wait for it, a
   // crawl's progress, the form's notices (an error can quote the address), a share page's hero,
-  // and the title and meta tags, which name a shared result.
+  // a shared report's heading, and the title and meta tags, which name a shared result.
   const PRIVATE =
-    "title, meta, #report, #pending, #progress, .notice, .share-hero";
+    "title, meta, #report, #pending, #progress, .notice, .share-hero, .shared-head";
 
   // The attributes of a private part a recording keeps: how it looks and what is open, never what
   // it says or links to. A rule's id and a severity are sent with events anyway.

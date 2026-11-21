@@ -34,6 +34,13 @@ import {
 } from "./core/report/text.js";
 import type { TextOptions } from "./core/report/text.js";
 import { ALL_RULES } from "./core/rules/index.js";
+import {
+  auditForShare,
+  SHARE_DAYS,
+  SHARE_ENDPOINT,
+  shareAudits,
+  shareSummary,
+} from "./core/share.js";
 import { SEVERITY_RANK } from "./core/types.js";
 import type { AeoAudit, Audit, Severity } from "./core/types.js";
 import { errorText, formatHelp, usageHint, withExamples } from "./help.js";
@@ -112,6 +119,13 @@ const COMPARE_EXAMPLES = [
   "compare https://www.example.com/widgets https://a.example/widgets -o comparison.md",
 ];
 
+const SHARE_EXAMPLES = [
+  "share https://www.example.com/pricing",
+  "share https://www.example.com --crawl --max-pages 25",
+  "share http://localhost:3000",
+  "share ./dist --base-url https://www.example.com",
+];
+
 const RULES_EXAMPLES = [
   "rules",
   "rules --category structured-data",
@@ -134,6 +148,7 @@ const TRACKED = new Set([
   "crawl",
   "aeo",
   "compare",
+  "share",
   "rules",
   "install-browser",
 ]);
@@ -786,6 +801,139 @@ withExamples(
 );
 
 program.commandsGroup("Other commands");
+
+/** The options of `share`: what to audit, what to print, and how to send requests. */
+interface ShareCliOptions {
+  crawl?: boolean;
+  maxPages: number;
+  maxDepth: number;
+  concurrency: number;
+  delay: number;
+  ignoreRobots?: boolean;
+  includeSubdomains?: boolean;
+  baseUrl?: string;
+  info: boolean;
+  format?: "text" | "json";
+  quiet?: boolean;
+  timeout: number;
+  userAgent?: string;
+  header?: string[];
+}
+
+const runShare = async (
+  target: string,
+  opts: ShareCliOptions
+): Promise<void> => {
+  if (run) {
+    run.target = await targetKind(target);
+  }
+
+  const headers = parseHeaders(opts.header);
+
+  if (showsProgress(opts)) {
+    status.show(`${opts.crawl ? "Crawling" : "Auditing"} ${target}`);
+  }
+
+  const report = await auditForShare(target, {
+    crawl: opts.crawl,
+    maxPages: opts.maxPages,
+    maxDepth: opts.maxDepth,
+    concurrency: opts.concurrency,
+    delayMs: opts.delay,
+    respectRobots: !opts.ignoreRobots,
+    includeSubdomains: opts.includeSubdomains,
+    baseUrl: opts.baseUrl,
+    includeInfo: opts.info,
+    pageDetail: "summary",
+    fetch: {
+      timeoutMs: opts.timeout,
+      userAgent: opts.userAgent,
+      headers: Object.keys(headers).length ? headers : undefined,
+    },
+    onProgress: progressPrinter(opts),
+  });
+
+  if (showsProgress(opts)) {
+    status.show(`Uploading the report to ${new URL(SHARE_ENDPOINT).host}`);
+  }
+
+  const link = await shareAudits(report);
+  status.clear();
+
+  const format = opts.format ?? (process.stdout.isTTY ? "text" : "json");
+
+  if (run) {
+    run.format = format;
+    run.report = runReport(report.seo);
+  }
+
+  if (format === "json") {
+    process.stdout.write(
+      `${JSON.stringify(shareSummary(report, link), null, 2)}\n`
+    );
+
+    return;
+  }
+
+  const color = colorFor(process.stdout);
+
+  process.stdout.write(
+    `${paint(color, "green", "✓")} Shared: ${terminalSafe(link.url)}\n${paint(color, "dim", `Anyone with the link can read the full report until ${link.expiresAt.slice(0, 10)}, when it is deleted. SEO ${report.seo.score}, AEO ${report.aeo.score}.`)}\n`
+  );
+};
+
+withExamples(
+  program
+    .command("share")
+    .argument("<target>", "URL, or a directory of built HTML")
+    .summary("Share the SEO and AEO report as a secret link")
+    .description(
+      `Run the SEO and the AEO audit, upload the report to ${new URL(SHARE_ENDPOINT).host}, and print a secret link to it. Anyone with the link can read the full report, every finding with its fix, for ${SHARE_DAYS} days; search engines do not index it`
+    )
+    .optionsGroup("Crawling")
+    .option(
+      "--crawl",
+      "Crawl the site from the URL and share the site's report"
+    )
+    .option("--max-pages <n>", "Maximum pages to crawl", intArg, 50)
+    .option(
+      "--max-depth <n>",
+      "Maximum link depth from the start URL",
+      intArg,
+      3
+    )
+    .option("--concurrency <n>", "Parallel requests while crawling", intArg, 5)
+    .option("--delay <ms>", "Delay between requests per worker", intArg, 0)
+    .option("--ignore-robots", "Do not obey robots.txt while crawling")
+    .option(
+      "--include-subdomains",
+      "Treat subdomains as internal when crawling"
+    )
+    .optionsGroup("Checks")
+    .option(
+      "--base-url <url>",
+      "Origin of a directory's files (default http://localhost/)"
+    )
+    .option("--no-info", "Omit info-level findings")
+    .optionsGroup("Output")
+    .addOption(
+      new Option(
+        "-f, --format <format>",
+        "Output format: text for people, or json with the link and the scores (default: text on a terminal, json when piped)"
+      ).choices(["text", "json"])
+    )
+    .option("-q, --quiet", "Suppress progress output on stderr")
+    .optionsGroup("Requests")
+    .option("--timeout <ms>", "Per-request timeout", intArg, 15_000)
+    .option("--user-agent <ua>", "Custom User-Agent header")
+    .option(
+      "-H, --header <header...>",
+      'Extra request header "Name: value" (repeatable), sent to the audited origin only'
+    ),
+  runs(SHARE_EXAMPLES)
+).action(async (target: string, opts: ShareCliOptions) => {
+  await runShare(target, opts);
+});
 
 withExamples(
   program

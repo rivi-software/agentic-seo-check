@@ -10,7 +10,9 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 
 import { onCaughtError } from "../../src/core/errors.js";
 import { HOSTED_LIMITS } from "../../src/core/hosted.js";
-import { HOSTED_TOOLS } from "../../src/mcp-hosted.js";
+import { SHARE_LIMIT_MESSAGE } from "../../src/core/share.js";
+import { CallLimitError, HOSTED_TOOLS } from "../../src/mcp-hosted.js";
+import type { HostedProfile } from "../../src/mcp-hosted.js";
 import { createMcpServer } from "../../src/mcp.js";
 import { instrumentTransport } from "../../src/telemetry/mcp.js";
 import {
@@ -21,6 +23,7 @@ import {
   reportTask,
 } from "./analytics.js";
 import type { ErrorRoute } from "./analytics.js";
+import type { Caller } from "./callers.js";
 import {
   callerOf,
   openAiRangesReader,
@@ -34,6 +37,7 @@ import {
   landingPage,
   notFoundPage,
 } from "./pages.js";
+import { keepReport } from "./shared-reports.js";
 import { DIRECTORY_PATH, directoryResponse, signingKeys } from "./signing.js";
 import { SITE_JS } from "./site/files.js";
 import { fontResponse, shareImageResponse } from "./ui/assets.js";
@@ -58,6 +62,30 @@ const PREFLIGHT = {
   "access-control-allow-headers":
     "content-type, accept, authorization, mcp-protocol-version, mcp-session-id, last-event-id",
   "access-control-max-age": "86400",
+};
+
+/**
+ * How seo_share_report keeps a report (shared-reports.ts): in the bucket, as the server's own
+ * audit. An IP address shares as many a minute as it may upload to the website; claude.ai and
+ * ChatGPT, one caller each for all their users, have their calls a minute as their limit instead.
+ */
+const reportKeeper = (env: Env, caller: Caller): HostedProfile["share"] => {
+  const bucket = env.SHARED_REPORTS;
+
+  return (
+    bucket &&
+    (async (report) => {
+      const { success } = caller.platform
+        ? { success: true }
+        : await env.SHARE_UPLOADS.limit({ key: caller.key });
+
+      if (!success) {
+        throw new CallLimitError(SHARE_LIMIT_MESSAGE, "caller_calls");
+      }
+
+      return keepReport(bucket, report, "hosted");
+    })
+  );
 };
 
 /** OpenAI's ranges as this isolate reads them: from the Durable Object at most once an hour. */
@@ -102,6 +130,7 @@ const handleMcp = async (
         report,
       }),
       connection: tracking?.connection,
+      share: reportKeeper(env, caller),
     },
   });
 
