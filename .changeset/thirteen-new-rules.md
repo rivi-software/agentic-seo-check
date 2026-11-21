@@ -11,8 +11,8 @@ Thirteen new rules catch framework defaults, canonical mistakes, temporary redir
 - `hreflang.lang-mismatch`: the page's own hreflang entry names another language than `<html lang>`.
 - `img.lcp-fetchpriority-missing`: the first large image of the first screen has no `fetchpriority="high"`, and no other image does.
 - `structured-data.video-missing`: a `<video>` with controls, or a YouTube, Vimeo, Wistia, Dailymotion or Loom player, without VideoObject markup.
-- `response.temporary-redirect`: a 302, 303 or 307 that only moves to https, to or from www, or to another trailing slash or case.
-- `site.canonical-to-one-page` (crawl): three or more pages with text of their own name one page as canonical, as a canonical written once in a shared layout does.
+- `response.temporary-redirect`: a 302 or 307 that only moves to https, to or from www, or to another trailing slash or case.
+- `site.canonical-to-one-page` (crawl): three or more pages with distinct text all name the same page as canonical, as a canonical written once in a shared layout does.
 - `site.redirect-not-permanent` (crawl): http or the www variant redirects to the main site with a temporary redirect.
 - `aeo.article-author-not-visible`: the article's structured data names an author the page does not show.
 - `aeo.llms-txt-broken-links` (crawl): llms.txt links to pages the crawl read that answer 4xx or 5xx. The audit sends no extra requests for it.

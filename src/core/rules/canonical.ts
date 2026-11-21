@@ -242,14 +242,21 @@ const firstPageKey = (url: string, pathOnly: boolean): string | null => {
     : `${parsed.origin}${path}${parsed.search}`;
 };
 
+/**
+ * `url` normalized without any tracking parameter, not only those normalizeUrl drops: a canonical
+ * that is this page plus ?_ga= is this page with a tracking parameter (canonical.tracking-parameters).
+ */
+const withoutTracking = (url: string): string | null =>
+  normalizeUrl(withoutParameters(url, url, isTrackingParameter));
+
 /** Whether the canonical names a URL other than the page's own, compared as canonical.other-page does. */
 const namesOtherPage = (
   page: ExtractedPage,
   canonical: string,
   pathOnly: boolean
 ): boolean => {
-  const pageUrl = normalizeUrl(page.url);
-  const canon = normalizeUrl(canonical);
+  const pageUrl = withoutTracking(page.url);
+  const canon = withoutTracking(canonical);
 
   if (!pageUrl || !canon) {
     return false;

@@ -1001,6 +1001,35 @@ describe("the llms.txt an AEO audit writes", () => {
 const llmsSitePage = (title: string, body = "") =>
   `<!doctype html><html lang="en"><head><title>${title} of the llms fixture site</title></head><body><h1>${title}</h1><p>${"Words about widgets for readers. ".repeat(20)}</p>${body}</body></html>`;
 
+/** Whether a crawl of a one-page site with this llms.txt reports aeo.markdown-alternate-missing. */
+const markdownMissingWith = async (llms: string): Promise<boolean> => {
+  const server = await startFixtureServer({
+    "/": { body: llmsSitePage("Home") },
+    "/llms.txt": { headers: { "content-type": "text/plain" }, body: llms },
+  });
+
+  try {
+    const audit = await auditAeoSite(server.origin, { maxPages: 2 });
+
+    return rulesOf(audit.findings).includes("aeo.markdown-alternate-missing");
+  } finally {
+    await server.close();
+  }
+};
+
+describe("Markdown versions an llms.txt links", () => {
+  it("count when on the site, not when on another", async () => {
+    await expect(
+      markdownMissingWith("# Fixture site\n\n- [Home](/index.md)\n")
+    ).resolves.toBeFalsy();
+    await expect(
+      markdownMissingWith(
+        "# Fixture site\n\n- [Spec](https://other.example/spec.md)\n"
+      )
+    ).resolves.toBeTruthy();
+  });
+});
+
 describe("llms.txt links on a crawled site", () => {
   let server: FixtureServer;
 
@@ -1103,6 +1132,15 @@ describe("aeo.markdown-alternate-missing", () => {
     ).toStrictEqual([]);
   });
 
+  it("skips an alternate with an empty href for a later one", () => {
+    expect(
+      extractPage(
+        '<!doctype html><html><head><link rel="alternate" type="text/markdown" href=" "><link rel="alternate" type="text/markdown" href="/a.md"></head><body></body></html>',
+        { url: "https://www.example.com/a" }
+      ).answer.markdownAlternate
+    ).toBe("/a.md");
+  });
+
   it("reads a page's Markdown version from its <link rel=alternate>", () => {
     expect(
       extractPage(
@@ -1123,6 +1161,14 @@ const authorRule = (html: string) =>
   );
 
 describe("aeo.article-author-not-visible", () => {
+  it("fires on a microdata author only a <meta> tag names", () => {
+    expect(
+      authorRule(
+        '<!doctype html><html lang="en"><head><title>A guide</title></head><body><article itemscope itemtype="https://schema.org/Article"><h1 itemprop="headline">A guide</h1><meta itemprop="author" content="Jane Doe"><p>Some text about widgets for the guide, long enough to read.</p></article></body></html>'
+      )
+    ).toStrictEqual(["aeo.article-author-not-visible"]);
+  });
+
   it("fires when the page shows none of the authors' names", () => {
     expect(
       authorRule(
@@ -1137,6 +1183,7 @@ describe("aeo.article-author-not-visible", () => {
   it.each([
     ["the whole name", '"Jane Doe"', "<p>By Jane Doe</p>"],
     ["the surname with an initial", '"Jane Doe"', "<p>By J. Doe</p>"],
+    ["a short surname with an initial", '"Jane Li"', "<p>By J. Li</p>"],
     [
       "a name in another case",
       '{"@type":"Person","name":"Jane Doe"}',

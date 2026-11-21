@@ -572,13 +572,34 @@ const brokenLlmsLinks = (
 /** A URL path that ends in .md: a page's Markdown version, as llms.txt proposes. */
 const MARKDOWN_PATH = /\.md$/iu;
 
-/** Whether an audited page links a Markdown version of itself, or llms.txt links a .md URL. */
-const hasMarkdownVersions = (c: Collected): boolean =>
-  c.records.some((r) => r.page.answer.markdownAlternate !== null) ||
-  (c.llmsTxt !== null &&
-    llmsTxtLinks(c.llmsTxt).some((l) =>
-      MARKDOWN_PATH.test(new URL(l.url).pathname)
-    ));
+/**
+ * Whether a page of the site links a Markdown version of itself, or llms.txt links a .md URL on
+ * the site. An error page or a noindex page, as `listablePages` leaves out, does not count.
+ */
+const hasMarkdownVersions = (c: Collected): boolean => {
+  const listable = new Set(listablePages(c.records).map((p) => p.url));
+
+  if (
+    c.records.some(
+      (r) => listable.has(r.url) && r.page.answer.markdownAlternate !== null
+    )
+  ) {
+    return true;
+  }
+
+  if (!c.llmsTxt) {
+    return false;
+  }
+
+  // A .md file on another site says nothing about this site's pages.
+  const { host } = new URL(c.llmsTxt.url);
+
+  return llmsTxtLinks(c.llmsTxt).some((l) => {
+    const url = new URL(l.url);
+
+    return url.host === host && MARKDOWN_PATH.test(url.pathname);
+  });
+};
 
 const buildAudit = async (
   c: Collected,

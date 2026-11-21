@@ -892,7 +892,8 @@ export const aeoSiteFindings = (ctx: AeoSiteContext): Finding[] => {
   const [firstPage] = ctx.pages ?? [];
 
   if (
-    ctx.llmsTxt?.status === "found" &&
+    ctx.llmsTxt !== null &&
+    ctx.llmsTxt.status !== "missing" &&
     ctx.markdownVersions === false &&
     firstPage
   ) {

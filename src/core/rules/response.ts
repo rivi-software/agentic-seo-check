@@ -42,15 +42,19 @@ const isPersonal = (response: ResponseInfo): boolean =>
   /\b(?:cookie|authorization)\b/iu.test(response.headers["vary"] ?? "");
 
 /**
- * A URL as it reads once the spellings of one address are made equal: http and https, with and
- * without www, a trailing slash and the case of the path. Null for a URL that does not parse.
+ * A URL as it reads once the spellings of one address are made equal: with and without www, a
+ * trailing slash and the case of the path. The scheme is left out, and a port other than the
+ * scheme's own stays in. Null for a URL that does not parse.
  */
-const addressKey = (url: string): string | null => {
+const addressKey = (url: string): { key: string; https: boolean } | null => {
   try {
     const u = new URL(url);
     const path = u.pathname.toLowerCase().replace(/\/+$/u, "");
 
-    return `${u.hostname.toLowerCase().replace(/^www\./u, "")}${path}${u.search}`;
+    return {
+      key: `${u.host.toLowerCase().replace(/^www\./u, "")}${path}${u.search}`,
+      https: u.protocol === "https:",
+    };
   } catch {
     return null;
   }
@@ -58,13 +62,20 @@ const addressKey = (url: string): string | null => {
 
 /**
  * Whether a redirect from `from` to `to` only moves to another spelling of the same address: to
- * https, to or from www, a trailing slash or the case of the path. Such a move is permanent by
- * nature, unlike a redirect to a login page or a visitor's language.
+ * https (never back to http), to or from www, a trailing slash or the case of the path. Such a move
+ * is permanent by nature, unlike a redirect to a login page or a visitor's language.
  */
 const isSpellingMove = (from: string, to: string): boolean => {
   const a = addressKey(from);
+  const b = addressKey(to);
 
-  return a !== null && from !== to && a === addressKey(to);
+  return (
+    a !== null &&
+    b !== null &&
+    from !== to &&
+    a.key === b.key &&
+    (b.https || !a.https)
+  );
 };
 
 export const responseRules = [
@@ -166,7 +177,7 @@ export const responseRules = [
       category: "response",
       severity: "info",
       description:
-        "The requested URL redirects with a temporary status (302, 303, 307) only to another spelling of the same address: to https, to or from www, or with a trailing slash or the path's case changed. Such a move is permanent, and Google reads a temporary redirect as a weaker sign of which URL to show.",
+        "The requested URL redirects with a temporary status (302, 307) only to another spelling of the same address: to https, to or from www, or with a trailing slash or the path's case changed. Such a move is permanent, and Google reads a temporary redirect as a weaker sign of which URL to show.",
       recommendation:
         "Answer these redirects with 301 (or 308) at the server or CDN, and link to the final URL.",
       docs: GOOGLE_DOCS.redirects,

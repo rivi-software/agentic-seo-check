@@ -201,17 +201,20 @@ const authorNames = (node: JsonObject): string[] => {
 };
 
 /**
- * Whether the page's text shows `name`: the whole name, or its last word, as a byline that gives
- * only the surname or an initial ("J. Smith" for "Jane Smith") writes it.
+ * Whether the page's text shows `name`: the whole name, the first initial and the surname ("J. Li"
+ * for "Jane Li"), or a surname of three letters or more alone. A shorter surname alone matches too
+ * much prose to count.
  */
 const showsName = (text: string, name: string): boolean => {
   const words = comparable(name).split(" ").filter(Boolean);
+  const [first = ""] = words;
   const last = words.at(-1) ?? "";
   const padded = ` ${text} `;
 
   return (
     words.length === 0 ||
     padded.includes(` ${words.join(" ")} `) ||
+    (words.length > 1 && padded.includes(` ${first.charAt(0)} ${last} `)) ||
     (last.length >= 3 && padded.includes(` ${last} `))
   );
 };
@@ -1207,8 +1210,8 @@ export const aeoRules = [
     ({ page }, make) => {
       const [article] = articles(page);
 
-      // Microdata marks up elements the page shows, so its author is on the page already.
-      if (!article || page.wordCount === 0 || isMicrodata(page, article.node)) {
+      // Microdata counts too: <meta itemprop="author" content="…"> marks up a name nobody sees.
+      if (!article || page.wordCount === 0) {
         return null;
       }
 

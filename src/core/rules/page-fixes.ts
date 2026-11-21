@@ -15,10 +15,13 @@ import type {
 import { isLocalHost } from "./canonical.js";
 import { replaceHtml, slot, withContent } from "./fix.js";
 
-/** Temporary redirect statuses, each with the permanent one that keeps its handling of the method. */
+/**
+ * Temporary redirect statuses, each with the permanent one that keeps its handling of the method.
+ * A 303 has no such twin: it turns every method into GET, as a form's answer does, so it is no
+ * spelling of an address to make permanent.
+ */
 export const PERMANENT_FOR: ReadonlyMap<number, number> = new Map([
   [302, 301],
-  [303, 301],
   [307, 308],
 ]);
 

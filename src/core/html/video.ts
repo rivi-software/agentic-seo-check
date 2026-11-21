@@ -12,12 +12,10 @@ import type { Document, Element } from "./dom.js";
 const MAX_VIDEOS = 20;
 
 /**
- * Where a video is page furniture rather than content: a site's header, footer, menu or sidebar,
- * or an element that does not render (a <template> a script stamps out, a <noscript> fallback).
+ * Where a video is page furniture rather than content: a menu or sidebar, or an element that does
+ * not render (a <template> a script stamps out, a <noscript> fallback).
  */
 const OUTSIDE_CONTENT = new Set([
-  "header",
-  "footer",
   "nav",
   "aside",
   "template",
@@ -25,14 +23,31 @@ const OUTSIDE_CONTENT = new Set([
   "svg",
 ]);
 
+/** The site's header and footer, unless an <article> or <main> holds them: then they are its own. */
+const SITE_CHROME = new Set(["header", "footer"]);
+
+const CONTENT_ROOTS = new Set(["article", "main"]);
+
 const inContent = (el: Element): boolean => {
+  let inChrome = false;
+
   for (let node = el.parent; node; node = node.parent) {
-    if ("name" in node && OUTSIDE_CONTENT.has(node.name)) {
+    if (!("name" in node)) {
+      continue;
+    }
+
+    if (OUTSIDE_CONTENT.has(node.name)) {
       return false;
+    }
+
+    if (CONTENT_ROOTS.has(node.name)) {
+      inChrome = false;
+    } else if (SITE_CHROME.has(node.name)) {
+      inChrome = true;
     }
   }
 
-  return true;
+  return !inChrome;
 };
 
 /** Hosts whose iframe player shows a video, and the paths their players live at. */

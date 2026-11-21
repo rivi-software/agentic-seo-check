@@ -815,14 +815,14 @@ describe("fixes for findings a local crawl cannot reach", () => {
         probes: {
           httpRedirect: {
             url: "http://www.example.com/",
-            status: 302,
+            status: 200,
             finalUrl: `${ORIGIN}/`,
             redirectsToHttps: true,
             redirectStatus: 302,
           },
           hostVariant: {
             url: "https://example.com/",
-            status: 307,
+            status: 200,
             finalUrl: `${ORIGIN}/`,
             redirectsToMain: true,
             redirectStatus: 307,

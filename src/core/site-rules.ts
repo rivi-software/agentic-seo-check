@@ -345,7 +345,7 @@ export const SITE_RULES: RuleMeta[] = [
   meta(
     "site.redirect-not-permanent",
     "warning",
-    "The http:// version of the site, or its www/non-www variant, redirects to the main site with a temporary redirect (302, 303, 307). The move is permanent, and Google reads a temporary redirect as a weaker sign of which URL to show.",
+    "The http:// version of the site, or its www/non-www variant, redirects to the main site with a temporary redirect (302, 307). The move is permanent, and Google reads a temporary redirect as a weaker sign of which URL to show.",
     "Answer the redirect with 301 (or 308) at the server, CDN or DNS host.",
     GOOGLE_DOCS.redirects
   ),
@@ -2416,9 +2416,10 @@ const sharedCanonicalFindings = ({
 
     const base = shingles(named.page.text);
 
-    const others = pages
-      .slice(0, 150)
-      .filter((p) => jaccard(base, shingles(p.page.text)) < OTHER_TEXT);
+    // One comparison per page, so every page of the group is read.
+    const others = pages.filter(
+      (p) => jaccard(base, shingles(p.page.text)) < OTHER_TEXT
+    );
 
     if (others.length < SHARED_CANONICAL_PAGES) {
       continue;

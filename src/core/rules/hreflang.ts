@@ -50,6 +50,27 @@ const setKey = (url: string, pathOnly: boolean): string | null => {
 const languageOf = (code: string): string =>
   code.toLowerCase().split(/[-_]/u)[0] ?? "";
 
+/** The script subtag of a code, lower-cased: "hant" for "zh-Hant-TW"; null when it has none. */
+const scriptOf = (code: string): string | null =>
+  code
+    .toLowerCase()
+    .split(/[-_]/u)
+    .slice(1)
+    .find((part) => /^[a-z]{4}$/u.test(part)) ?? null;
+
+/**
+ * Whether two codes name the same language: the region aside, and the script too unless both give
+ * one (zh-Hans and zh-Hant are two written languages; zh and zh-Hant may be the same).
+ */
+const sameLanguage = (a: string, b: string): boolean => {
+  const [scriptA, scriptB] = [scriptOf(a), scriptOf(b)];
+
+  return (
+    languageOf(a) === languageOf(b) &&
+    (scriptA === null || scriptB === null || scriptA === scriptB)
+  );
+};
+
 export const hreflangRules = [
   defineRule(
     {
@@ -373,7 +394,15 @@ export const hreflangRules = [
       }
 
       const pathOnly = source !== "url" || isLocal(page);
-      const self = setKey(page.url, pathOnly);
+
+      // The page's own entries name its URL or its canonical, as hreflang.missing-self reads them.
+      const self = new Set(
+        [page.url, page.canonical].flatMap((u) => {
+          const k = u ? setKey(u, pathOnly) : null;
+
+          return k === null ? [] : [k];
+        })
+      );
 
       // A page may list itself for several regions (en-us, en-gb); one in its language is enough.
       const own = page.hreflang.filter(
@@ -381,12 +410,12 @@ export const hreflangRules = [
           h.url !== null &&
           h.lang.toLowerCase() !== "x-default" &&
           HREFLANG_CODE.test(h.lang) &&
-          setKey(h.url, pathOnly) === self
+          self.has(setKey(h.url, pathOnly) ?? "")
       );
 
       const [entry] = own;
 
-      if (!entry || own.some((h) => languageOf(h.lang) === languageOf(lang))) {
+      if (!entry || own.some((h) => sameLanguage(h.lang, lang))) {
         return null;
       }
 

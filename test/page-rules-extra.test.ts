@@ -137,6 +137,18 @@ describe("canonical.noindex-conflict", () => {
     expect(rulesOf(findings)).toStrictEqual(["canonical.noindex-conflict"]);
   });
 
+  it("reads a self-canonical with a tracking parameter as the page itself", async () => {
+    expect(
+      rulesOf(
+        await audit(
+          doc(
+            `<meta name="robots" content="noindex"><link rel="canonical" href="${PAGE}?_ga=1.2.3">`
+          )
+        )
+      )
+    ).toStrictEqual(["canonical.tracking-parameters"]);
+  });
+
   it("stays quiet on a noindex page with a self-referencing canonical, and on an indexable copy", async () => {
     expect(
       rulesOf(
@@ -225,6 +237,26 @@ describe("hreflang.lang-mismatch", () => {
     expect(fixOf(findings, "hreflang.lang-mismatch")).toMatchObject([
       { current: '<html lang="en">', code: '<html lang="nl">' },
     ]);
+  });
+
+  it("tells scripts apart: zh-Hant against zh-Hans", async () => {
+    const html = doc(hreflangSet("zh-Hant"), "<p>文字</p>", "zh-Hans");
+
+    expect(rulesOf(await audit(html))).toStrictEqual([
+      "hreflang.lang-mismatch",
+    ]);
+  });
+
+  it("finds the page's own entry by its canonical", async () => {
+    const canonical = "https://www.example.com/widgets/blue-widgets/";
+
+    const html = doc(
+      `<link rel="canonical" href="${canonical}"><link rel="alternate" hreflang="nl" href="${canonical}"><link rel="alternate" hreflang="de" href="https://www.example.com/de/widgets/blau/">`,
+      "<p>Tekst</p>",
+      "en"
+    );
+
+    expect(rulesOf(await audit(html))).toContain("hreflang.lang-mismatch");
   });
 
   it("stays quiet when only the region differs, or one of several own entries matches", async () => {
@@ -319,6 +351,19 @@ describe("structured-data.video-missing", () => {
     );
   });
 
+  it("reads a player in an article's own header as content", async () => {
+    expect(
+      rulesOf(
+        await audit(
+          doc(
+            "",
+            '<article><header><iframe src="https://player.vimeo.com/video/123456"></iframe></header><p>Text</p></article>'
+          )
+        )
+      )
+    ).toStrictEqual(["structured-data.video-missing"]);
+  });
+
   it("reads a <video> with controls, its source and its poster", async () => {
     const findings = await audit(
       doc(
@@ -393,6 +438,34 @@ describe("response.temporary-redirect", () => {
     expect(fixOf(findings, "response.temporary-redirect")?.[0]?.code).toBe(
       `HTTP/1.1 308 Permanent Redirect\nLocation: ${PAGE}`
     );
+  });
+
+  it.each([
+    [
+      "back to http",
+      "https://www.example.com/widgets/blue/",
+      "http://www.example.com/widgets/blue/",
+    ],
+    ["to another port", "https://www.example.com:8443/widgets/blue/", PAGE],
+  ])("stays quiet on a temporary redirect %s", async (_, from, to) => {
+    expect(
+      rulesOf(
+        await audit(doc(""), {
+          url: to,
+          chain: [{ url: from, status: 302 }],
+        })
+      )
+    ).toStrictEqual([]);
+  });
+
+  it("stays quiet on a 303, which no permanent status matches", async () => {
+    expect(
+      rulesOf(
+        await audit(doc(""), {
+          chain: [{ url: "http://www.example.com/widgets/blue/", status: 303 }],
+        })
+      )
+    ).toStrictEqual([]);
   });
 
   it("stays quiet on a permanent redirect and on a temporary one to another page", async () => {

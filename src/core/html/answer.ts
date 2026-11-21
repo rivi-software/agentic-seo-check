@@ -239,6 +239,7 @@ const MARKDOWN_TYPES = new Set(["text/markdown", "text/x-markdown"]);
 const markdownAlternateOf = (doc: Document): string | null => {
   const link = queryAll(doc, "link[rel][type][href]").find(
     (el) =>
+      Boolean(attr(el, "href")?.trim()) &&
       relList(attr(el, "rel")).includes("alternate") &&
       MARKDOWN_TYPES.has(
         (attr(el, "type") ?? "").split(";")[0]?.trim().toLowerCase() ?? ""
