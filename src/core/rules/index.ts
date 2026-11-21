@@ -205,7 +205,13 @@ const suggestionsFor = (name: string, rules: readonly RuleMeta[]): string[] => {
     return [];
   }
 
-  const near = rules.filter((r) => r.id.includes(word));
+  // An id whose part after the dot is the word itself (robots.noindex for noindex) leads its group.
+  const near = rules
+    .filter((r) => r.id.includes(word))
+    .toSorted(
+      (a, b) =>
+        Number(!a.id.endsWith(`.${word}`)) - Number(!b.id.endsWith(`.${word}`))
+    );
 
   return [...near.filter((r) => !r.requires), ...near.filter((r) => r.requires)]
     .slice(0, MAX_SUGGESTIONS)

@@ -328,6 +328,7 @@ const runProbes = async (
             status: res.status,
             finalUrl: res.finalUrl,
             redirectsToHttps: res.finalUrl.startsWith("https://"),
+            redirectStatus: res.redirectChain[0]?.status ?? null,
           };
   }
 
@@ -343,6 +344,7 @@ const runProbes = async (
           status: res.status,
           finalUrl: res.finalUrl,
           redirectsToMain: (hostOf(res.finalUrl) ?? "") === host,
+          redirectStatus: res.redirectChain[0]?.status ?? null,
         };
 
   return probes;

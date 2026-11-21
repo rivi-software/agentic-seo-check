@@ -1,6 +1,13 @@
 import { quote } from "../html/dom.js";
 import type { ExtractedPage, FixEdit, ResponseInfo } from "../types.js";
-import { hostOf, normalizeUrl, resolveUrl, samePath } from "../url.js";
+import {
+  hostOf,
+  isTrackingParameter,
+  normalizeUrl,
+  resolveUrl,
+  samePath,
+  withoutParameters,
+} from "../url.js";
 import {
   addHtml,
   escapeAttribute,
@@ -8,6 +15,7 @@ import {
   replaceEdit,
   setAttributeEdit,
 } from "./fix.js";
+import { robotsDirectives } from "./indexing.js";
 import { liveUrl, ORIGIN_WRITE } from "./quoted-tags.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
 
@@ -233,6 +241,32 @@ const firstPageKey = (url: string, pathOnly: boolean): string | null => {
     ? `${path}${parsed.search}`
     : `${parsed.origin}${path}${parsed.search}`;
 };
+
+/** Whether the canonical names a URL other than the page's own, compared as canonical.other-page does. */
+const namesOtherPage = (
+  page: ExtractedPage,
+  canonical: string,
+  pathOnly: boolean
+): boolean => {
+  const pageUrl = normalizeUrl(page.url);
+  const canon = normalizeUrl(canonical);
+
+  if (!pageUrl || !canon) {
+    return false;
+  }
+
+  return pathOnly
+    ? !samePath(pageUrl, canon)
+    : stripTrailingSlash(pageUrl) !== stripTrailingSlash(canon);
+};
+
+/** The canonical the page's own <link> names, resolved; null when it has none or names it only in a header. */
+const writtenCanonical = (page: ExtractedPage): string | null =>
+  page.markup.canonicals[0] === undefined ? null : page.canonical;
+
+/** A fragment that routes a single-page app ("#/products", "#!/products"), which a canonical cannot lose. */
+const isRouteFragment = (hash: string): boolean =>
+  hash.startsWith("#/") || hash.startsWith("#!");
 
 export const canonicalRules = [
   defineRule(
@@ -482,23 +516,11 @@ export const canonicalRules = [
         return null;
       }
 
-      const pageUrl = normalizeUrl(page.url);
-      const canon = normalizeUrl(page.canonical);
-
-      if (!pageUrl || !canon) {
-        return null;
-      }
-
       // For files and local dev servers the host is synthetic; compare paths only.
       const pathOnly = source !== "url" || isLocalHost(page.url);
 
-      const same = pathOnly
-        ? samePath(pageUrl, canon)
-        : stripTrailingSlash(pageUrl) === stripTrailingSlash(canon);
-
-      return same
-        ? null
-        : make(`Canonical points to ${page.canonical}, not to this page.`, {
+      return namesOtherPage(page, page.canonical, pathOnly)
+        ? make(`Canonical points to ${page.canonical}, not to this page.`, {
             fix: [
               pointCanonical(
                 page,
@@ -512,7 +534,8 @@ export const canonicalRules = [
               page: page.url,
               comparedBy: pathOnly ? "path" : "url",
             },
-          });
+          })
+        : null;
     }
   ),
   defineRule(
@@ -556,6 +579,122 @@ export const canonicalRules = [
             }
           )
         : null;
+    }
+  ),
+  defineRule(
+    {
+      id: "canonical.noindex-conflict",
+      category: "canonical",
+      severity: "info",
+      description:
+        "The page is set to noindex and also names another URL as its canonical. Google advises against using noindex to choose among duplicates, and the two say different things: drop this page, or count it as a copy of the other one.",
+      recommendation:
+        "Pick one signal. A copy of another page keeps the canonical and drops the noindex, so its signals pass to that page; a page that must stay out of search keeps the noindex and drops the canonical.",
+      docs: GOOGLE_DOCS.canonical,
+    },
+    ({ page, source, response }, make) => {
+      const [tag] = page.markup.canonicals;
+
+      if (
+        !page.canonical ||
+        tag === undefined ||
+        !robotsDirectives(page, response).noindex
+      ) {
+        return null;
+      }
+
+      const pathOnly = source !== "url" || isLocalHost(page.url);
+
+      return namesOtherPage(page, page.canonical, pathOnly)
+        ? make(
+            `Page is set to noindex and names ${page.canonical} as its canonical.`,
+            {
+              fix: [
+                removeEdit("html", tag, {
+                  at: SELECTOR,
+                  write: `This keeps the page out of search, as the noindex asks. If the page is a copy of ${page.canonical} whose signals should pass there, remove the noindex instead and keep the canonical.`,
+                }),
+              ],
+              selector: SELECTOR,
+              evidence: { canonical: page.canonical, page: page.url },
+            }
+          )
+        : null;
+    }
+  ),
+  defineRule(
+    {
+      id: "canonical.fragment",
+      category: "canonical",
+      severity: "info",
+      description:
+        "The canonical URL ends in a fragment (#section). Search engines drop the fragment, so it names nothing more than the URL before it.",
+      recommendation:
+        "Write the canonical without the fragment: the page's URL up to the #.",
+      docs: GOOGLE_DOCS.canonical,
+    },
+    ({ page }, make) => {
+      const canonical = writtenCanonical(page);
+
+      if (!canonical) {
+        return null;
+      }
+
+      const url = new URL(canonical);
+
+      if (!url.hash || isRouteFragment(url.hash)) {
+        return null;
+      }
+
+      const { hash } = url;
+      url.hash = "";
+
+      return make(`Canonical ${canonical} ends in the fragment ${hash}.`, {
+        fix: [pointCanonical(page, url.href)],
+        selector: SELECTOR,
+        evidence: { canonical, fragment: hash },
+      });
+    }
+  ),
+  defineRule(
+    {
+      id: "canonical.tracking-parameters",
+      category: "canonical",
+      severity: "warning",
+      description:
+        "The canonical URL carries campaign tracking parameters (utm_*, gclid, fbclid), so search engines are asked to index the tracking URL and every visit from search reports that campaign as its source.",
+      recommendation:
+        "Write the canonical without tracking parameters. A canonical built from the requested URL should drop them, as they say only where a click came from.",
+      docs: GOOGLE_DOCS.canonical,
+    },
+    ({ page }, make) => {
+      const canonical = writtenCanonical(page);
+
+      if (!canonical) {
+        return null;
+      }
+
+      const parameters = [
+        ...new Set(new URL(canonical).searchParams.keys()),
+      ].filter((name) => isTrackingParameter(name));
+
+      if (parameters.length === 0) {
+        return null;
+      }
+
+      return make(
+        `Canonical ${canonical} carries tracking parameters: ${parameters.join(", ")}.`,
+        {
+          fix: [
+            pointCanonical(
+              page,
+              withoutParameters(canonical, page.url, isTrackingParameter)
+            ),
+          ],
+          selector: SELECTOR,
+          evidence: { canonical, parameters: cap(parameters) },
+        }
+      );
     }
   ),
 ];

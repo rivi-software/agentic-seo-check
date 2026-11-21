@@ -1,5 +1,10 @@
 import type { ExtractedPage, FixEdit, PageSource } from "../types.js";
-import { hostOf, resolveUrl } from "../url.js";
+import {
+  hostOf,
+  isTrackingParameter,
+  resolveUrl,
+  withoutParameters,
+} from "../url.js";
 import { isLocalHost } from "./canonical.js";
 import {
   addEdit,
@@ -10,43 +15,12 @@ import {
   slot,
 } from "./fix.js";
 import { hashRoute } from "./links.js";
-import {
-  ORIGIN_SLOT_WRITE,
-  permanentRedirect,
-  withoutParameters,
-} from "./page-fixes.js";
+import { ORIGIN_SLOT_WRITE, permanentRedirect } from "./page-fixes.js";
 import { cap, defineRule, GOOGLE_DOCS } from "./rule.js";
 
 /** A CSS attribute value in double quotes. */
 const cssString = (value: string): string =>
   `"${value.replaceAll("\\", "\\\\").replaceAll('"', String.raw`\"`)}"`;
-
-/** Query parameters that only tell analytics where a click came from. */
-const TRACKING_PARAMETERS = new Set([
-  "gclid",
-  "gbraid",
-  "wbraid",
-  "dclid",
-  "fbclid",
-  "msclkid",
-  "yclid",
-  "twclid",
-  "ttclid",
-  "igshid",
-  "li_fat_id",
-  "mc_cid",
-  "mc_eid",
-  "_ga",
-  "_gl",
-  "_hsenc",
-  "_hsmi",
-]);
-
-const isTrackingParameter = (name: string): boolean => {
-  const key = name.toLowerCase();
-
-  return key.startsWith("utm_") || TRACKING_PARAMETERS.has(key);
-};
 
 /** Parameter names servers use for session ids, and the shortest value that looks like one. */
 const SESSION_PARAMETERS = new Map([

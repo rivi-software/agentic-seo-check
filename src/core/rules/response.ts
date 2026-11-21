@@ -6,7 +6,7 @@ import type {
 } from "../types.js";
 import { isLocalHost } from "./canonical.js";
 import { addEdit, removeEdit, replaceEdit } from "./fix.js";
-import { permanentRedirect, statusLine } from "./page-fixes.js";
+import { PERMANENT_FOR, permanentRedirect, statusLine } from "./page-fixes.js";
 import { defineRule, GOOGLE_DOCS } from "./rule.js";
 
 /** Where a redirect hop sends the request: the next hop's URL, or the final URL after the last. */
@@ -40,6 +40,32 @@ const isPersonal = (response: ResponseInfo): boolean =>
   "set-cookie" in response.headers ||
   /\b(?:private|no-store)\b/iu.test(response.headers["cache-control"] ?? "") ||
   /\b(?:cookie|authorization)\b/iu.test(response.headers["vary"] ?? "");
+
+/**
+ * A URL as it reads once the spellings of one address are made equal: http and https, with and
+ * without www, a trailing slash and the case of the path. Null for a URL that does not parse.
+ */
+const addressKey = (url: string): string | null => {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.toLowerCase().replace(/\/+$/u, "");
+
+    return `${u.hostname.toLowerCase().replace(/^www\./u, "")}${path}${u.search}`;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Whether a redirect from `from` to `to` only moves to another spelling of the same address: to
+ * https, to or from www, a trailing slash or the case of the path. Such a move is permanent by
+ * nature, unlike a redirect to a login page or a visitor's language.
+ */
+const isSpellingMove = (from: string, to: string): boolean => {
+  const a = addressKey(from);
+
+  return a !== null && from !== to && a === addressKey(to);
+};
 
 export const responseRules = [
   defineRule(
@@ -133,6 +159,59 @@ export const responseRules = [
             }
           )
         : null
+  ),
+  defineRule(
+    {
+      id: "response.temporary-redirect",
+      category: "response",
+      severity: "info",
+      description:
+        "The requested URL redirects with a temporary status (302, 303, 307) only to another spelling of the same address: to https, to or from www, or with a trailing slash or the path's case changed. Such a move is permanent, and Google reads a temporary redirect as a weaker sign of which URL to show.",
+      recommendation:
+        "Answer these redirects with 301 (or 308) at the server or CDN, and link to the final URL.",
+      docs: GOOGLE_DOCS.redirects,
+    },
+    ({ response }, make) => {
+      if (!response) {
+        return null;
+      }
+
+      const temporary = response.redirectChain.flatMap((hop, i) => {
+        const permanent = PERMANENT_FOR.get(hop.status);
+        const to = nextUrl(response, i);
+
+        return permanent && isSpellingMove(hop.url, to)
+          ? [{ hop, i, to, permanent }]
+          : [];
+      });
+
+      const [first] = temporary;
+
+      return first
+        ? make(
+            `${first.hop.url} redirects to ${first.to} with a temporary ${first.hop.status}.`,
+            {
+              fix: temporary.map(({ hop, i, to, permanent }) =>
+                replaceEdit(
+                  "http",
+                  hopResponse(response, i, hop),
+                  redirectTo(permanent, to),
+                  {
+                    url: hop.url,
+                    at: "status line",
+                    write:
+                      "For every URL this redirect rule matches, at the server, framework or CDN.",
+                  }
+                )
+              ),
+              evidence: {
+                chain: response.redirectChain,
+                finalUrl: response.finalUrl,
+              },
+            }
+          )
+        : null;
+    }
   ),
   defineRule(
     {

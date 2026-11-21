@@ -7,6 +7,7 @@ import {
   HIDDEN_ELEMENTS,
   queryAll,
   queryOne,
+  relList,
   sourceOf,
   text,
   visibleText,
@@ -231,6 +232,22 @@ const emptySignals = (robotsMeta: AnswerSignals["robotsMeta"]) => ({
   mentionsDate: false,
 });
 
+/** Media types a Markdown version of a page is served as. */
+const MARKDOWN_TYPES = new Set(["text/markdown", "text/x-markdown"]);
+
+/** The href of the page's `<link rel="alternate">` to a Markdown version, or null. */
+const markdownAlternateOf = (doc: Document): string | null => {
+  const link = queryAll(doc, "link[rel][type][href]").find(
+    (el) =>
+      relList(attr(el, "rel")).includes("alternate") &&
+      MARKDOWN_TYPES.has(
+        (attr(el, "type") ?? "").split(";")[0]?.trim().toLowerCase() ?? ""
+      )
+  );
+
+  return link ? (attr(link, "href") ?? "").trim() || null : null;
+};
+
 /**
  * Reads what the AEO rules need from a parsed document; `bodyText` is its visible body text. With
  * `html`, the source it was parsed from, the signals also quote the elements a fix rewrites.
@@ -256,9 +273,10 @@ export const extractAnswerSignals = (
     });
 
   const body = queryOne(doc, "body");
+  const markdownAlternate = markdownAlternateOf(doc);
 
   if (!body) {
-    return emptySignals(robotsMeta);
+    return { ...emptySignals(robotsMeta), markdownAlternate };
   }
 
   const nosnippet = queryAll(body, "[data-nosnippet]").filter(
@@ -300,5 +318,6 @@ export const extractAnswerSignals = (
     ),
     timeElements: queryAll(body, "time").length,
     mentionsDate: DATE_PATTERNS.some((re) => re.test(bodyText)),
+    markdownAlternate,
   };
 };

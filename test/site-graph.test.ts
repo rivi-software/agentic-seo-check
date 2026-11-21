@@ -190,3 +190,94 @@ describe("canonical targets in build output", () => {
     ).toBeUndefined();
   });
 });
+
+/** Words on one topic, so pages on different topics share few shingles. */
+const topic = (name: string): string =>
+  Array.from(
+    { length: 12 },
+    (_, i) =>
+      `Section ${i} on ${name} explains ${name} in plain words for readers.`
+  ).join(" ");
+
+/** A page of its own text whose canonical a shared layout wrote: the home page's. */
+const layoutPage = (title: string, canonical = "/"): Route => ({
+  body: `<!DOCTYPE html><html lang="en"><head><title>${title} at the layout fixture site</title><link rel="canonical" href="__ORIGIN__${canonical}"></head><body><h1>${title}</h1><p>${topic(title)}</p><a href="/">Home</a></body></html>`,
+});
+
+describe("site.canonical-to-one-page on a crawled site", () => {
+  let server: FixtureServer;
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  it("names the pages whose layout points their canonical at the home page", async () => {
+    server = await startFixtureServer({
+      "/": {
+        body: `<!DOCTYPE html><html lang="en"><head><title>Home of the layout fixture site</title><link rel="canonical" href="__ORIGIN__/"></head><body><h1>Home</h1><p>${topic("home")}</p><a href="/pricing">Pricing</a> <a href="/docs">Docs</a> <a href="/blog">Blog</a> <a href="/?sort=new">New</a></body></html>`,
+      },
+      "/pricing": layoutPage("Pricing"),
+      "/docs": layoutPage("Docs"),
+      "/blog": layoutPage("Blog"),
+    });
+
+    const site = await auditSite(server.origin, {
+      maxPages: 10,
+      maxDepth: 2,
+      concurrency: 2,
+    });
+
+    const found = find(site.siteFindings, "site.canonical-to-one-page");
+
+    expect(found?.evidence).toStrictEqual({
+      canonical: `${server.origin}/`,
+      count: 3,
+      pages: [
+        `${server.origin}/pricing`,
+        `${server.origin}/docs`,
+        `${server.origin}/blog`,
+      ],
+    });
+    expect(found?.fix).toMatchObject([
+      {
+        url: `${server.origin}/pricing`,
+        code: `<link rel="canonical" href="${server.origin}/pricing">`,
+      },
+      { url: `${server.origin}/docs` },
+      { url: `${server.origin}/blog` },
+    ]);
+  });
+});
+
+describe("site.canonical-to-one-page stays quiet", () => {
+  let server: FixtureServer;
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  it("on copies of the canonical and on fewer than three pages", async () => {
+    // Colour variants repeat the product's text; two articles on their own topics are too few.
+    server = await startFixtureServer({
+      "/": {
+        body: `<!DOCTYPE html><html lang="en"><head><title>Home of the variant fixture site</title><link rel="canonical" href="__ORIGIN__/"></head><body><h1>Home</h1><p>${topic("home")}</p><a href="/shirt">Shirt</a> <a href="/shirt-red">Red</a> <a href="/shirt-blue">Blue</a> <a href="/shirt-green">Green</a> <a href="/one">One</a> <a href="/two">Two</a></body></html>`,
+      },
+      "/shirt": layoutPage("Shirt", "/shirt"),
+      "/shirt-red": layoutPage("Shirt", "/shirt"),
+      "/shirt-blue": layoutPage("Shirt", "/shirt"),
+      "/shirt-green": layoutPage("Shirt", "/shirt"),
+      "/one": layoutPage("Gardening"),
+      "/two": layoutPage("Cooking"),
+    });
+
+    const site = await auditSite(server.origin, {
+      maxPages: 10,
+      maxDepth: 2,
+      concurrency: 2,
+    });
+
+    expect(
+      find(site.siteFindings, "site.canonical-to-one-page")
+    ).toBeUndefined();
+  });
+});

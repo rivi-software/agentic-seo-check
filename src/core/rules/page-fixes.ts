@@ -12,9 +12,15 @@ import type {
   PageSource,
   TextBlock,
 } from "../types.js";
-import { resolveUrl } from "../url.js";
 import { isLocalHost } from "./canonical.js";
 import { replaceHtml, slot, withContent } from "./fix.js";
+
+/** Temporary redirect statuses, each with the permanent one that keeps its handling of the method. */
+export const PERMANENT_FOR: ReadonlyMap<number, number> = new Map([
+  [302, 301],
+  [303, 301],
+  [307, 308],
+]);
 
 /** An HTTP/1.1 status line: "HTTP/1.1 301 Moved Permanently". */
 export const statusLine = (status: number): string => {
@@ -89,46 +95,6 @@ export const ORIGIN_SLOT_WRITE =
 
 /** Whether a `productionOrigin` is a slot the author fills in. */
 export const isSlot = (text: string): boolean => text.includes("{{");
-
-/**
- * `raw`, a URL as an attribute writes it, without the query parameters `drop` selects (and a
- * `;jsessionid=` path parameter when `drop` selects "jsessionid"), written the way `raw` was:
- * absolute stays absolute, a path stays a path.
- */
-export const withoutParameters = (
-  raw: string,
-  base: string,
-  drop: (name: string) => boolean
-): string => {
-  const absolute = resolveUrl(raw, base);
-
-  if (!absolute) {
-    return raw;
-  }
-
-  const url = new URL(absolute);
-
-  if (drop("jsessionid")) {
-    url.pathname = url.pathname.replaceAll(/;jsessionid=[^/;]*/giu, "");
-  }
-
-  // A copy: deleting while the live iterator runs would skip the parameter after each one deleted.
-  const names = [...url.searchParams.keys()];
-
-  for (const name of names) {
-    if (drop(name)) {
-      url.searchParams.delete(name);
-    }
-  }
-
-  const search = url.searchParams.size > 0 ? url.search : "";
-
-  if (/^[a-z][\d+.a-z-]*:/iu.test(raw) || raw.startsWith("//")) {
-    return `${raw.startsWith("//") ? "//" : `${url.protocol}//`}${url.host}${url.pathname}${search}${url.hash}`;
-  }
-
-  return `${url.pathname}${search}${url.hash}`;
-};
 
 /** Sentences of visible text that end in a full stop, question or exclamation mark. */
 export const sentences = (text: string): string[] =>

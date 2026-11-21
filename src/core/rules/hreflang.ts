@@ -354,4 +354,62 @@ export const hreflangRules = [
       );
     }
   ),
+  defineRule(
+    {
+      id: "hreflang.lang-mismatch",
+      category: "international",
+      severity: "info",
+      description:
+        "The page's own hreflang entry names a different language than its <html lang>, so one of them is wrong: often a shared template that writes the same lang on every language version.",
+      recommendation:
+        "Make <html lang> and the page's own hreflang entry name the language the page is written in. Google reads hreflang to pick the version for a searcher; screen readers and translation tools read <html lang>.",
+      docs: GOOGLE_DOCS.hreflang,
+    },
+    ({ page, source }, make) => {
+      const lang = page.lang ?? "";
+
+      if (page.hreflang.length === 0 || !HREFLANG_CODE.test(lang)) {
+        return null;
+      }
+
+      const pathOnly = source !== "url" || isLocal(page);
+      const self = setKey(page.url, pathOnly);
+
+      // A page may list itself for several regions (en-us, en-gb); one in its language is enough.
+      const own = page.hreflang.filter(
+        (h) =>
+          h.url !== null &&
+          h.lang.toLowerCase() !== "x-default" &&
+          HREFLANG_CODE.test(h.lang) &&
+          setKey(h.url, pathOnly) === self
+      );
+
+      const [entry] = own;
+
+      if (!entry || own.some((h) => languageOf(h.lang) === languageOf(lang))) {
+        return null;
+      }
+
+      return make(
+        `<html lang="${lang}"> differs from the page's own hreflang entry, ${entry.lang}.`,
+        {
+          fix: [
+            setAttributeEdit(
+              page.markup.html,
+              "html",
+              "lang",
+              escapeAttribute(entry.lang),
+              `Only if the page is written in ${entry.lang}. If it is written in ${lang}, change the hreflang of its own entry (${entry.href.slice(0, 120)}) to ${lang} instead, on every page of the set.`
+            ),
+          ],
+          selector: "html",
+          evidence: {
+            htmlLang: lang,
+            hreflang: entry.lang,
+            href: entry.href,
+          },
+        }
+      );
+    }
+  ),
 ];

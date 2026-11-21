@@ -234,6 +234,31 @@ const CASES: Case[] = [
     }),
   },
   {
+    name: "loading: hero image without priority",
+    html: doc(
+      "",
+      `<h1>Blue widgets</h1><img src="/hero.jpg" width="1200" height="600" alt="A blue widget"><p>${words(320)}</p>`
+    ),
+    input: live(PAGE),
+  },
+  {
+    name: "structured data: a video without VideoObject",
+    html: doc(
+      "",
+      `<h1>Blue widgets</h1><iframe src="https://www.youtube.com/embed/abc123def45" title="Assembly"></iframe><p>${words(320)}</p>`
+    ),
+    input: live(PAGE),
+  },
+  {
+    name: "response: a temporary redirect to https",
+    html: doc("", `<h1>Blue widgets</h1><p>${words(320)}</p>`),
+    input: live(PAGE, {
+      redirectChain: [
+        { url: "http://www.example.com/widgets/blue/", status: 302 },
+      ],
+    }),
+  },
+  {
     name: "response: read only in part",
     html: doc("", `<h1>Blue widgets</h1><p>${words(320)}</p>`),
     input: live(PAGE, { truncated: true }),
@@ -264,6 +289,7 @@ const MY_RULES = new Set(
         "loading.render-blocking-script",
         "loading.no-compression",
         "img.lazy-above-fold",
+        "img.lcp-fetchpriority-missing",
         "img.srcset-missing",
         "favicon.missing",
         "url.uppercase",

@@ -809,6 +809,86 @@ describe("fixes for findings a local crawl cannot reach", () => {
     ]);
   });
 
+  it("makes a temporary redirect to https or to the main host permanent", () => {
+    const findings = runSiteRules(
+      context({
+        probes: {
+          httpRedirect: {
+            url: "http://www.example.com/",
+            status: 302,
+            finalUrl: `${ORIGIN}/`,
+            redirectsToHttps: true,
+            redirectStatus: 302,
+          },
+          hostVariant: {
+            url: "https://example.com/",
+            status: 307,
+            finalUrl: `${ORIGIN}/`,
+            redirectsToMain: true,
+            redirectStatus: 307,
+          },
+        },
+      })
+    );
+
+    const temporary = findings.filter(
+      (f) => f.rule === "site.redirect-not-permanent"
+    );
+
+    expect(withoutFix(findings)).toStrictEqual([]);
+    expect(incompleteEdits(temporary)).toStrictEqual([]);
+    expect(temporary.map((f) => f.fix)).toMatchObject([
+      [
+        {
+          url: "http://www.example.com/",
+          current: "HTTP/1.1 302 Found",
+          code: `HTTP/1.1 301 Moved Permanently\nLocation: ${ORIGIN}/`,
+        },
+      ],
+      [
+        {
+          url: "https://example.com/",
+          current: "HTTP/1.1 307 Temporary Redirect",
+          code: `HTTP/1.1 308 Permanent Redirect\nLocation: ${ORIGIN}/`,
+        },
+      ],
+    ]);
+    expect(
+      findings.filter(
+        (f) =>
+          f.rule === "site.http-not-redirected" ||
+          f.rule === "site.host-variant-not-redirected"
+      )
+    ).toStrictEqual([]);
+  });
+
+  it("leaves permanent redirects to the main site alone", () => {
+    const findings = runSiteRules(
+      context({
+        probes: {
+          httpRedirect: {
+            url: "http://www.example.com/",
+            status: 200,
+            finalUrl: `${ORIGIN}/`,
+            redirectsToHttps: true,
+            redirectStatus: 301,
+          },
+          hostVariant: {
+            url: "https://example.com/",
+            status: 200,
+            finalUrl: `${ORIGIN}/`,
+            redirectsToMain: true,
+            redirectStatus: 308,
+          },
+        },
+      })
+    );
+
+    expect(
+      findings.filter((f) => f.rule === "site.redirect-not-permanent")
+    ).toStrictEqual([]);
+  });
+
   it("cuts robots.txt at the last line Google reads, and splits a sitemap over the limits", () => {
     const text = `User-agent: *\n${Array.from({ length: 30_000 }, (_, i) => `Disallow: /page-${i}/`).join("\n")}`;
     const problems = emptySitemapProblems();
