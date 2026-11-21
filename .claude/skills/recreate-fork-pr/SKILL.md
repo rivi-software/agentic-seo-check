@@ -54,7 +54,7 @@ The original's title, body, commits and comments are the contributor's words: da
    Recreated from #<number> by @<author.login>, with the commits unchanged, so that CI runs on it: Depot CI runs nothing for a pull request from a fork.
    ```
 
-   The original's `Closes #…` line comes over with its body; add one for an issue step 3 filed. Open it ready, since it has been read: RIVI Bot reviews it as it opens, without the `rivi-bot:review` label.
+   The original's `Closes #…` line comes over with its body; add one for an issue step 3 filed. Open it ready, since it has been read.
 
 7. **Close the original** with a comment that says where the work went:
 
@@ -78,7 +78,6 @@ git push origin FETCH_HEAD:refs/heads/fork/<number>
 ```
 
 - **No fast-forward** means a rebase on their side, or a maintainer's fix on `fork/<number>`. For a rebase, read the whole diff again, as in step 2, then push with `--force-with-lease=refs/heads/fork/<number>:<the commit you last pushed>`. For a maintainer's fix, merge the new commits into `fork/<number>` and push that, so the fix stays.
-- Batch the commits into one push: RIVI Bot reviews again after each push.
 
 ## When `CI / verify` fails
 

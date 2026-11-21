@@ -1,10 +1,9 @@
 name: rivi-bot
 
 # RIVI Bot (https://github.com/rivi-software/tools/tree/main/rivi-bot#readme): AI on this repository's pull requests and
-# issues, through the reusable workflow in rivi-software/tools. .github/rivi-bot.yml on main says what it does: it
-# reviews a pull request by someone with write access when it opens and after every push, and any other once a
-# maintainer adds the `rivi-bot:review` label; someone with write access asks it for the rest with a comment that
-# speaks to @rivi-bot (`@rivi-bot why does this rule skip noindex pages?`).
+# issues, through the reusable workflow in rivi-software/tools. .github/rivi-bot.yml on main says what it does: its
+# reviews are off, and someone with write access asks it for the rest with a comment that speaks to @rivi-bot
+# (`@rivi-bot why does this rule skip noindex pages?`).
 #
 # It stays on GitHub Actions, not Depot CI with CI (issue #127): Depot CI runs no pull_request_target for a pull
 # request from a fork, which a maintainer's label asks RIVI Bot to review.
