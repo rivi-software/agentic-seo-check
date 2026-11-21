@@ -19,6 +19,7 @@ onCaughtError(hearCaughtError);
 const KNOWN_PATHS = new Set([
   "/",
   "/audit",
+  "/api/share",
   "/rules",
   "/robots.txt",
   "/sitemap.xml",
@@ -35,6 +36,10 @@ const errorRoute = (request: Request): ErrorRoute => {
 
   if (pathname.startsWith("/share/")) {
     return "website:/share/:result";
+  }
+
+  if (pathname.startsWith("/report/")) {
+    return "website:/report/:id";
   }
 
   if (pathname.startsWith(RULES_PREFIX)) {

@@ -38,6 +38,23 @@ export {
 
 export type { CompareOptions } from "./core/compare.js";
 
+export {
+  auditForShare,
+  shareAudits,
+  shareTarget,
+  ShareError,
+  MAX_SHARE_BYTES,
+  SHARE_DAYS,
+  SHARE_ENDPOINT,
+} from "./core/share.js";
+
+export type {
+  ShareAuditOptions,
+  ShareLink,
+  ShareOptions,
+  SharedReport,
+} from "./core/share.js";
+
 export { AI_BOTS } from "./core/aeo/bots.js";
 
 export type { AiBot } from "./core/aeo/bots.js";

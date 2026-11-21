@@ -8,6 +8,7 @@ import {
   MCP_SERVER_NAME,
   PRODUCT_NAME,
   REPOSITORY_URL,
+  WEBSITE_URL,
 } from "./brand.js";
 import {
   auditAeoDirectory,
@@ -26,6 +27,7 @@ import { comparePages } from "./core/compare.js";
 import { runLighthouse } from "./core/lighthouse.js";
 import { performanceFindings } from "./core/performance-rules.js";
 import { assignIds } from "./core/recheck.js";
+import { shareTarget } from "./core/share.js";
 import type {
   AeoAudit,
   Audit,
@@ -52,6 +54,9 @@ import {
   respond,
   respondAeo,
   respondComparison,
+  respondShare,
+  SHARE_ANNOTATIONS,
+  shareDescription,
   toOptions,
 } from "./mcp-shared.js";
 import { instrumentTransport } from "./telemetry/mcp.js";
@@ -630,6 +635,97 @@ export const createMcpServer = (
     }
   );
 
+  server.registerTool(
+    "seo_share_report",
+    {
+      title: SHARE_ANNOTATIONS.title,
+      annotations: SHARE_ANNOTATIONS,
+      description: shareDescription(
+        "local",
+        `The audits run on this machine, so localhost, staging behind \`headers\` and build directories work, and the result is uploaded to ${WEBSITE_URL}: the report then shows the page's text, addresses and findings to anyone with the link. Ask the user before sharing a site that is not public. `
+      ),
+      inputSchema: {
+        url: z
+          .string()
+          .url()
+          .optional()
+          .describe(
+            "Absolute http(s) URL of the page (the start URL with `crawl`): live, staging or http://localhost."
+          ),
+        dir: z
+          .string()
+          .optional()
+          .describe(
+            "Instead of `url`: a build output directory, audited as a site."
+          ),
+        baseUrl: z
+          .string()
+          .url()
+          .optional()
+          .describe(
+            "With `dir`: the origin the files are served from (default http://localhost/)."
+          ),
+        crawl: z
+          .boolean()
+          .default(false)
+          .describe("With `url`: crawl the site and share the site's report."),
+        maxPages: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .default(25)
+          .describe("Crawl or directory: maximum pages to audit."),
+        maxDepth: z
+          .number()
+          .int()
+          .min(0)
+          .max(10)
+          .default(3)
+          .describe("Crawl: maximum link depth from the start URL."),
+        respectRobots: z
+          .boolean()
+          .default(true)
+          .describe("Crawl: obey robots.txt disallow rules."),
+        includeInfo: commonOptions.includeInfo,
+        timeoutMs: commonOptions.timeoutMs,
+        userAgent: commonOptions.userAgent,
+        headers: commonOptions.headers,
+      },
+    },
+    async (input) => {
+      try {
+        if ((input.url === undefined) === (input.dir === undefined)) {
+          throw new InputError("Provide exactly one of `url` or `dir`.", {
+            reason: "target",
+          });
+        }
+
+        const { report, link } = await shareTarget(
+          input.url ?? input.dir ?? "",
+          {
+            crawl: input.crawl,
+            baseUrl: input.baseUrl,
+            maxPages: input.maxPages,
+            maxDepth: input.maxDepth,
+            respectRobots: input.respectRobots,
+            includeInfo: input.includeInfo,
+            pageDetail: "summary",
+            fetch: {
+              timeoutMs: input.timeoutMs,
+              userAgent: input.userAgent,
+              headers: input.headers,
+            },
+          }
+        );
+
+        return respondShare(report, link);
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
   server.registerTool("seo_list_rules", LIST_RULES, (input) =>
     listRules(input)
   );
@@ -645,6 +741,7 @@ export const LOCAL_TOOLS: ReadonlySet<string> = new Set([
   "seo_lighthouse",
   "seo_aeo_audit",
   "seo_compare_pages",
+  "seo_share_report",
   "seo_list_rules",
 ]);
 

@@ -23,6 +23,8 @@ import {
 import { unstable_startWorker } from "wrangler";
 import { z } from "zod";
 
+import { auditAeoHtml } from "../../src/core/aeo/audit.ts";
+import { auditHtml } from "../../src/core/audit.ts";
 import { HOSTED_LIMITS } from "../../src/core/hosted.ts";
 import {
   defines,
@@ -92,6 +94,9 @@ const cruxAnswer = (query: { url?: string; origin?: string }): Response =>
         { error: { code: 404, message: "chrome ux report data not found" } },
         { status: 404 }
       );
+
+/** What seo_share_report answers with: the secret link to the report. */
+const SharedLink = z.object({ url: z.string(), expiresAt: z.string() });
 
 const CruxQuery = z.object({
   url: z.string().optional(),
@@ -501,6 +506,7 @@ describe("the hosted Worker in workerd", () => {
         "seo_compare_pages",
         "seo_crawl_site",
         "seo_list_rules",
+        "seo_share_report",
       ]);
     });
 
@@ -1380,6 +1386,78 @@ describe("the hosted Worker in workerd", () => {
         image.res.status,
         image.res.headers.get("content-type"),
       ]).toStrictEqual([404, 404, "text/html; charset=utf-8"]);
+    });
+
+    it("answers seo_share_report with a secret link on the website", async () => {
+      // Each Worker keeps its own bucket here (persist: false); in production they share one.
+      const { result } = await audit("seo_share_report", {
+        url: "https://shop.example.com/about",
+      });
+
+      expect(SharedLink.parse(result.structuredContent).url).toMatch(
+        /^https:\/\/agentic-seo\.org\/report\/[\w-]{22}$/u
+      );
+    });
+
+    it("keeps an upload at POST /api/share and shows it at its secret link, kept from referrers and search", async () => {
+      const url = "https://shop.example.com/about";
+
+      const about =
+        '<!doctype html><html lang="en"><head><title>About the shop</title></head><body><h1>About the shop</h1><p>Words.</p></body></html>';
+
+      const [seo, aeo] = await Promise.all([
+        auditHtml(about, { url, source: "url", target: url }),
+        auditAeoHtml(about, { url, target: url }),
+      ]);
+
+      const uploaded = await fetchRead(website, `${SITE}/api/share`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ schemaVersion: 1, kind: "page", seo, aeo }),
+      });
+
+      expect(uploaded.res.status).toBe(201);
+
+      const { res, text } = await fetchRead(
+        website,
+        SharedLink.parse(JSON.parse(uploaded.text)).url
+      );
+
+      expect([
+        res.status,
+        res.headers.get("referrer-policy"),
+        res.headers.get("x-robots-tag"),
+        res.headers.get("cache-control"),
+        text.includes("did not request the pages itself or run these audits"),
+      ]).toStrictEqual([
+        200,
+        "no-referrer",
+        "noindex",
+        "private, no-store",
+        true,
+      ]);
+    });
+
+    it("refuses an upload that is no audit, and answers an id nobody issued with the 404 page", async () => {
+      const refused = await fetchRead(website, `${SITE}/api/share`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ schemaVersion: 1, kind: "page", seo: {} }),
+      });
+
+      const gone = await fetchRead(website, `${SITE}/report/${"A".repeat(22)}`);
+
+      const head = await fetchRead(
+        website,
+        `${SITE}/report/${"A".repeat(22)}`,
+        {
+          method: "HEAD",
+        }
+      );
+
+      expect([head.res.status, head.text]).toStrictEqual([404, ""]);
+
+      expect([refused.res.status, gone.res.status]).toStrictEqual([400, 404]);
     });
 
     it("crawls the site for the form when given its homepage, and streams its progress", async () => {

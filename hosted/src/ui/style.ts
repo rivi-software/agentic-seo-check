@@ -530,6 +530,8 @@ const SHARE = `
 .share-url{margin:6px 4px 2px;padding-block:10px;font-size:.75rem}
 .share-url code{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
 .share-panel-note{padding:6px 12px 4px;color:var(--text-muted);font-size:.8125rem;line-height:1.5}
+.shared-head{padding:clamp(24px,4vw,40px) 0 16px}
+.shared-head h1{margin:8px 0 20px;font-size:clamp(1.75rem,3.2vw,2.5rem)}
 .share-title{max-width:100%;font-size:clamp(2.2rem,5.4vw,4rem);overflow-wrap:anywhere}
 .share-scores{width:100%;max-width:760px;margin:48px auto 0}
 .share-actions{margin-top:32px}

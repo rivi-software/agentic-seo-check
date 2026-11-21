@@ -1,12 +1,13 @@
 import { WEBSITE_URL } from "../../src/brand.js";
+import type { RequestGate } from "../../src/core/fetch.js";
+import { LOCAL_SERVER } from "../../src/core/hosted.js";
 /**
  * The hosted server's limits (issue #35, part 4), in the shape `createMcpServer`'s hosted profile
  * asks for them: per caller or platform before a tool call, per site before each request, per day
  * for every request together, and per day for the sites each caller audits (issue #73). A refusal
  * names the limit, says when to try again and points to the local server, which has none.
  */
-import type { RequestGate } from "../../src/core/fetch.js";
-import { LOCAL_SERVER } from "../../src/core/hosted.js";
+import { SHARE_LIMIT_MESSAGE } from "../../src/core/share.js";
 import { CallLimitError } from "../../src/mcp-hosted.js";
 import type {
   HostedCallEnd,
@@ -208,6 +209,8 @@ export interface LimitsEnv extends StateEnv<DayCounter>, CruxEnv {
   CALLER_CRAWLS: RateLimit;
   PLATFORM_CALLS: RateLimit;
   PLATFORM_CRAWLS: RateLimit;
+  /** Reports one address may share a minute: uploads to the website, and seo_share_report. */
+  SHARE_UPLOADS: RateLimit;
   CALLS: AnalyticsEngineDataset;
   /**
    * The Ed25519 keys that sign every request (Web Bot Auth, issue #41), a Worker secret: a JSON
@@ -303,6 +306,16 @@ const admit = async (
 
     if (!crawlAllowed.success) {
       throw new CallLimitError(callsRefusal(caller, true), `${scope}_crawls`);
+    }
+  }
+
+  // An address shares as many reports a minute on the server as it may upload to the website;
+  // claude.ai and ChatGPT, one caller each for all their users, are held by their calls a minute.
+  if (call.shares && !caller.platform) {
+    const shareAllowed = await env.SHARE_UPLOADS.limit({ key: caller.key });
+
+    if (!shareAllowed.success) {
+      throw new CallLimitError(SHARE_LIMIT_MESSAGE, "caller_shares");
     }
   }
 

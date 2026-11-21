@@ -11,6 +11,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { onCaughtError } from "../../src/core/errors.js";
 import { HOSTED_LIMITS } from "../../src/core/hosted.js";
 import { HOSTED_TOOLS } from "../../src/mcp-hosted.js";
+import type { HostedProfile } from "../../src/mcp-hosted.js";
 import { createMcpServer } from "../../src/mcp.js";
 import { instrumentTransport } from "../../src/telemetry/mcp.js";
 import {
@@ -34,6 +35,7 @@ import {
   landingPage,
   notFoundPage,
 } from "./pages.js";
+import { keepReport } from "./shared-reports.js";
 import { DIRECTORY_PATH, directoryResponse, signingKeys } from "./signing.js";
 import { SITE_JS } from "./site/files.js";
 import { fontResponse, shareImageResponse } from "./ui/assets.js";
@@ -58,6 +60,16 @@ const PREFLIGHT = {
   "access-control-allow-headers":
     "content-type, accept, authorization, mcp-protocol-version, mcp-session-id, last-event-id",
   "access-control-max-age": "86400",
+};
+
+/**
+ * How seo_share_report keeps a report (shared-reports.ts): in the bucket, as the server's own
+ * audit. Its limit is the call's, which `admit` checks before the audits run (limits.ts).
+ */
+const reportKeeper = (env: Env): HostedProfile["share"] => {
+  const bucket = env.SHARED_REPORTS;
+
+  return bucket && ((report) => keepReport(bucket, report, "hosted"));
 };
 
 /** OpenAI's ranges as this isolate reads them: from the Durable Object at most once an hour. */
@@ -102,6 +114,7 @@ const handleMcp = async (
         report,
       }),
       connection: tracking?.connection,
+      share: reportKeeper(env),
     },
   });
 

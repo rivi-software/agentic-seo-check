@@ -34,6 +34,7 @@ import { hostedProfile, SITE_ORIGIN } from "../limits.js";
 import type { CallRecord, LimitsEnv } from "../limits.js";
 import type { FailureKind, HomeState } from "./home.js";
 import { renderReport } from "./report.js";
+import type { ShareApiEnv } from "./share-api.js";
 import { shareMenu } from "./share-page.js";
 import { shareResult, signShare } from "./share.js";
 import type { ShareEnv } from "./share.js";
@@ -45,7 +46,8 @@ import {
 } from "./site-report.js";
 
 /** The Worker's bindings and variables the audit form uses, beside the limits' and sharing's. */
-export interface SiteEnv extends LimitsEnv, ShareEnv, AnalyticsEnv {
+export interface SiteEnv
+  extends LimitsEnv, ShareEnv, ShareApiEnv, AnalyticsEnv {
   /** Turnstile's public site key (wrangler.site.jsonc); empty until the widget exists. */
   TURNSTILE_SITE_KEY: string;
   /** Turnstile's secret key, a Worker secret (`wrangler secret put TURNSTILE_SECRET_KEY`). */

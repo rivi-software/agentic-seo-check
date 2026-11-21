@@ -30,6 +30,8 @@ import {
   hostedUrlProblem,
   LOCAL_SERVER,
 } from "./core/hosted.js";
+import { auditForShare } from "./core/share.js";
+import type { ShareLink, SharedReport } from "./core/share.js";
 import type { AeoAudit, Audit, Comparison } from "./core/types.js";
 import {
   commonOptions,
@@ -49,6 +51,9 @@ import {
   respond,
   respondAeo,
   respondComparison,
+  respondShare,
+  SHARE_ANNOTATIONS,
+  shareDescription,
   toOptions,
 } from "./mcp-shared.js";
 import {
@@ -75,6 +80,8 @@ export interface HostedCallInfo {
    * each a site of the day once it is requested.
    */
   competitors?: string[];
+  /** seo_share_report: the call keeps a report on the website, which a limit of its own holds. */
+  shares?: boolean;
 }
 
 /** How a hosted tool call ended. */
@@ -119,6 +126,12 @@ export interface HostedProfile {
    * session (issue #101).
    */
   connection?: string;
+  /**
+   * Keeps a report seo_share_report audited, and answers with its secret link on the website
+   * (hosted/src/shared-reports.ts). Without it, the tool says that sharing is off. What it throws
+   * as an ExpectedError is the caller's answer, such as a limit on shared reports.
+   */
+  share?: (report: SharedReport) => Promise<ShareLink>;
 }
 
 /**
@@ -131,6 +144,7 @@ export type LimitReason =
   | "no_crawls"
   | "caller_calls"
   | "caller_crawls"
+  | "caller_shares"
   | "platform_calls"
   | "platform_crawls"
   | "daily_requests"
@@ -416,6 +430,22 @@ const COMPARE_PAGES_INPUT = {
   timeoutMs: hostedOptions.timeoutMs,
   format,
   detail,
+  ...agentArguments,
+};
+
+/** The arguments of seo_share_report. */
+const SHARE_REPORT_INPUT = {
+  url: url.describe(
+    "The page to audit and share (the start URL with `crawl`): an absolute, public http(s) URL."
+  ),
+  crawl: z
+    .boolean()
+    .default(false)
+    .describe(
+      `Crawl the site from \`url\`, up to ${LIMITS.maxPages} pages, and share the site's report.`
+    ),
+  includeInfo: hostedOptions.includeInfo,
+  timeoutMs: hostedOptions.timeoutMs,
   ...agentArguments,
 };
 
@@ -1018,6 +1048,76 @@ const registerComparePages = (
   );
 };
 
+/** seo_share_report: both audits, kept on the website as a report behind a secret link. */
+const SHARE_REPORT = {
+  title: SHARE_ANNOTATIONS.title,
+  annotations: SHARE_ANNOTATIONS,
+  description: shareDescription(
+    "hosted",
+    `${HOSTED_NOTE}The report says it was audited by this server. `
+  ),
+  inputSchema: SHARE_REPORT_INPUT,
+};
+
+const registerShareReport = (
+  server: McpServer,
+  profile: HostedProfile
+): void => {
+  server.registerTool("seo_share_report", SHARE_REPORT, (input) =>
+    inConversation(profile, input.conversation_id, () => {
+      const { share } = profile;
+
+      if (!share) {
+        return fail(
+          new ExpectedError("Sharing reports is switched off on this server.", {
+            reason: "sharing_off",
+          })
+        );
+      }
+
+      let host: string;
+
+      try {
+        host = allowedHost(input.url);
+      } catch (error) {
+        return fail(error);
+      }
+
+      return runCall(
+        profile,
+        {
+          tool: "seo_share_report",
+          fetches: true,
+          crawl: input.crawl,
+          host,
+          shares: true,
+        },
+        async (fetch) => {
+          const report = await auditForShare(input.url, {
+            crawl: input.crawl,
+            includeInfo: input.includeInfo,
+            fetch: { ...fetch, timeoutMs: input.timeoutMs },
+            maxPages: LIMITS.maxPages,
+            maxDepth: LIMITS.maxDepth,
+            concurrency: LIMITS.concurrency,
+            maxLinkChecks: LIMITS.maxLinkChecks,
+            maxSitemaps: LIMITS.maxSitemaps,
+            maxSitemapBytes: LIMITS.maxSitemapBytes,
+            respectRobots: true,
+            pageDetail: "summary",
+          });
+
+          return {
+            result: respondShare(report, await share(report)),
+            pages: report.kind === "site" ? report.seo.pages.length : 1,
+            audit: report.seo,
+          };
+        }
+      );
+    })
+  );
+};
+
 /** seo_list_rules: the local server's tool, with the arguments for the analytics. */
 const LIST_RULES_TOOL = { ...LIST_RULES, inputSchema: LIST_RULES_INPUT };
 
@@ -1032,6 +1132,7 @@ export const HOSTED_TOOLS: ReadonlyMap<string, CountedTool> = new Map(
     seo_crawl_site: CRAWL_SITE,
     seo_aeo_audit: AEO_AUDIT,
     seo_compare_pages: COMPARE_PAGES,
+    seo_share_report: SHARE_REPORT,
     seo_list_rules: LIST_RULES_TOOL,
     send_feedback: FEEDBACK,
   }).map(([tool, listed]) => [
@@ -1059,6 +1160,7 @@ export const registerHostedTools = (
   registerCrawlSite(server, profile);
   registerAeoAudit(server, profile);
   registerComparePages(server, profile);
+  registerShareReport(server, profile);
 
   server.registerTool("seo_list_rules", LIST_RULES_TOOL, (input) =>
     inConversation(profile, input.conversation_id, () =>

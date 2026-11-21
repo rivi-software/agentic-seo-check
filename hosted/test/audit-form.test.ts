@@ -138,6 +138,7 @@ const formEnv = (overrides: Partial<SiteEnv> = {}) => {
     SITE_REQUESTS: limiter(),
     CALLER_CALLS: limiter(),
     CALLER_CRAWLS: limiter(),
+    SHARE_UPLOADS: limiter(),
     PLATFORM_CALLS: limiter(),
     PLATFORM_CRAWLS: limiter(),
     CALLS: {
