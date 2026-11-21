@@ -47,8 +47,6 @@ EOF
 
 ## 5. After each push
 
-RIVI Bot reviews when the pull request opens or leaves draft, and after every push, and each review spends its budget: push in batches, not commit by commit.
-
 - **Body.** Rewrite "More context for AI agents" to describe the pull request at the new commit, replacing stale bullets, and keep the other sections true: `gh pr view <number> --json body --jq .body`, edit it, then `gh pr edit <number> --body-file -`.
 - **Review.** Work through review comments with the `answer-review` skill.
 - **Report** the pull request's URL and the state of its `CI / verify` check (`gh pr checks <number>`). Approving and merging stay with the code owner.

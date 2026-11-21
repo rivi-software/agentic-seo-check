@@ -1,11 +1,11 @@
 ---
 name: answer-review
-description: Work through the review comments on an agentic-seo-check pull request, RIVI Bot's or a person's: fix or answer each, push once, reply in each thread. Use when a PR has review comments, or when asked to address, answer or fix review feedback.
+description: Work through the review comments on an agentic-seo-check pull request: fix or answer each, push once, reply in each thread. Use when a PR has review comments, or when asked to address, answer or fix review feedback.
 ---
 
 # Answer a review
 
-Every review comment ends fixed, or answered with the reason it does not apply; the template's definition of done holds the pull request to that. RIVI Bot reviews again after every push and each review spends its budget, so all fixes go out in one push.
+Every review comment ends fixed, or answered with the reason it does not apply; the template's definition of done holds the pull request to that. All fixes go out in one push.
 
 ## Steps
 

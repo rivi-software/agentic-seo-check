@@ -28,7 +28,6 @@ Each issue has a type: **Bug** (something does not do what the README says, or a
 | Topic | `false-positive`, `security`, `performance`, `documentation`, `breaking-change` | What else it is about. `breaking-change` needs a major release, and only a maintainer adds it |
 | Triage | `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `duplicate`, `wontfix` | Where an issue stands. `needs-triage` waits for a maintainer, `needs-info` for its author; `ready-for-agent` is specified well enough for a coding agent, `ready-for-human` needs a person |
 | Contributors | `good first issue`, `help wanted` | Ready for someone outside the team to take |
-| Bot | `rivi-bot:review` | A maintainer asks [RIVI Bot](#reviews-by-rivi-bot) to review an outside pull request |
 
 ## Your pull request
 
@@ -77,7 +76,7 @@ Work on a branch in your fork. One pull request makes one change. Two unrelated 
 ### What happens next
 
 1. **CI** runs `verify`, its tests on Node 22, 24 and 26, on [Depot CI](https://depot.dev/docs/ci/overview), and its `CI / verify` check must pass before the pull request can merge. Depot CI runs nothing for a pull request from a fork. Once a maintainer has read yours, they open it again from a branch of this repository, with your commits unchanged, link the new pull request on yours, and close yours. CI, review and the merge happen on the new one, and the merge credits you as co-author. To change something after that, push to your branch as before and say so on the new pull request.
-2. **Review.** A maintainer reviews the pull request. They may also ask [RIVI Bot](#reviews-by-rivi-bot), an automated reviewer that runs on Workers AI, to review it; it only reads the change and comments. Its comments are advice: fix what is right, and reply where it is wrong.
+2. **Review.** A maintainer reviews the pull request.
 3. **Merge.** A maintainer squash-merges the pull request once the code owner ([`.github/CODEOWNERS`](.github/CODEOWNERS)) approves it and `CI / verify` passes.
 4. **Release.** The next release publishes your changeset to npm (see [Changes and releases](#changes-and-releases)).
 
@@ -118,13 +117,13 @@ GitHub's `workflows` permission keeps a token without it from changing `.github/
 - **Secrets.** No workflow runs a fork's code with secrets. RIVI Bot's workflow runs on `pull_request_target`, which has them, and never runs the code it checks out.
 - **Small fixes.** When a pull request lacks only a changeset or a Conventional Commits title, push the changeset to the branch or edit the title yourself. Don't send the contributor round again.
 
-### Reviews by RIVI Bot
+### RIVI Bot
 
-[RIVI Bot](https://github.com/rivi-software/tools/tree/main/rivi-bot#readme) is an AI reviewer and helper on this repository's pull requests and issues, through the reusable workflow in `rivi-software/tools`. [`.github/workflows/rivi-bot.yml`](.github/workflows/rivi-bot.yml) calls it, and [`.github/rivi-bot.yml`](.github/rivi-bot.yml), read from `main`, says what it does here. Its reviews run on Workers AI, through the `github-rivi-monorepo` AI Gateway; the rest of what it does runs on Claude.
+[RIVI Bot](https://github.com/rivi-software/tools/tree/main/rivi-bot#readme) is an AI helper on this repository's pull requests and issues, through the reusable workflow in `rivi-software/tools`. [`.github/workflows/rivi-bot.yml`](.github/workflows/rivi-bot.yml) calls it, and [`.github/rivi-bot.yml`](.github/rivi-bot.yml), read from `main`, says what it does here. It runs on Claude.
 
-It reviews a pull request by someone with write access on its own: when it opens or leaves draft, and after every push. Any other pull request waits for a maintainer, who asks for reviews by adding the `rivi-bot:review` label. Read the pull request first: each review spends the Cloudflare account's budget, and the model reads everything in the pull request. Reviews of outside pull requests comment and never approve. Someone with write access can also ask it for more in a comment: `@rivi-bot describe`, `@rivi-bot triage`, or a question or a fix in plain words.
+Its reviews are off (`review.enabled: false`): it reviews no pull request. Someone with write access can ask it for the rest in a comment: `@rivi-bot describe`, `@rivi-bot triage`, or a question or a fix in plain words.
 
-The reviews need the `CLOUDFLARE_ACCOUNT_ID` variable, the `CLOUDFLARE_AI_API_TOKEN` secret (Workers AI Read and AI Gateway Read) and the gateway's `CLOUDFLARE_AI_GATEWAY_TOKEN` secret. The rest needs the `ANTHROPIC_REVIEW_API_KEY` secret. For RIVI Bot's own name it needs the `AUTOMATION_APP_PRIVATE_KEY` secret of the RIVI Bot App.
+It needs the `ANTHROPIC_REVIEW_API_KEY` secret; reviews, if they come back on, also need the `CLOUDFLARE_ACCOUNT_ID` variable, the `CLOUDFLARE_AI_API_TOKEN` secret (Workers AI Read and AI Gateway Read) and the gateway's `CLOUDFLARE_AI_GATEWAY_TOKEN` secret. For RIVI Bot's own name it needs the `AUTOMATION_APP_PRIVATE_KEY` secret of the RIVI Bot App.
 
 ### Changes and releases
 
@@ -141,7 +140,7 @@ npm takes the publish only from this repository's `release.yml`: on npmjs.com, t
 GitHub enforces the repository's rulesets; [`.github/rulesets/`](.github/rulesets) holds them and is their source of truth.
 
 - **`main.json`.** `main` changes only through pull requests, squashed, once the `CI / verify` check passes and the code owner approves. That check is CI's job that passes when the checks and every Node version passed, from the Depot Code Access app (integration id `219785`), so a check of the same name from elsewhere does not count. Nobody pushes to `main` directly, force-pushes or deletes it.
-  - [`.github/CODEOWNERS`](.github/CODEOWNERS) makes `rikvisser-dev` the owner of every file, so every pull request needs their approval. A review by anyone else, RIVI Bot's included, is advice.
+  - [`.github/CODEOWNERS`](.github/CODEOWNERS) makes `rikvisser-dev` the owner of every file, so every pull request needs their approval. A review by anyone else is advice.
   - `rikvisser-dev` can bypass the rules in a pull request only. GitHub does not let an author approve their own pull request, so they bypass the approval to merge their own. A bypass merges without waiting for any rule, `CI / verify` included, so wait for `CI / verify` first.
 - **`release-tags.json`.** A release tag (`v*`) is created once and is never moved or deleted, because users pin to it.
 
