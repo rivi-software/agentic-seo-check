@@ -1,7 +1,7 @@
 /**
  * The share image of each hostname, which a link to one of its pages shows in a chat, a post or a
  * search result. scripts/og-image.ts draws each card as rivi.software draws its own (the lockup,
- * a pill, a two-tone heading, the mark's level bars and the domain) into assets/. The website's
+ * a pill, a two-tone heading, the icon's lens and AI spark, and the domain) into assets/. The website's
  * pages and the server's share one hostname (issue #168), so each card has a path of its own, which
  * the website serves. The words are here so the frame can describe them.
  */

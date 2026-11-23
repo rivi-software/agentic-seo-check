@@ -58,8 +58,8 @@ export const GITHUB_MARK =
   '<svg class="icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
 
 /**
- * The RIVI Software mark (assets/rivi-mark-on-dark.svg) as rivi.software's header draws it: a
- * light tile, ink bars and the middle one lit.
+ * The Agentic SEO Check mark (assets/icon-on-dark.svg) as the website's header draws it: a light
+ * tile, an ink search lens and a signal-green AI spark.
  */
 export const MARK =
-  '<svg viewBox="0 0 40 40" width="28" height="28" aria-hidden="true"><rect width="40" height="40" rx="9" fill="var(--logo-tile)"/><g fill="var(--logo-bars)"><rect x="8" y="16" width="3" height="8" rx="1.5"/><rect x="13.25" y="11" width="3" height="18" rx="1.5"/><rect x="18.5" y="7" width="3" height="26" rx="1.5" fill="var(--signal-cue)"/><rect x="23.75" y="12" width="3" height="16" rx="1.5"/><rect x="29" y="16" width="3" height="8" rx="1.5"/></g></svg>';
+  '<svg viewBox="0 0 40 40" width="28" height="28" aria-hidden="true"><rect width="40" height="40" rx="9" fill="var(--logo-tile)"/><g fill="none" stroke="var(--logo-ink)" stroke-linecap="round"><circle cx="17.5" cy="17.5" r="9.4" stroke-width="3"/><path d="M24.6 24.6 L31.2 31.2" stroke-width="3.5"/></g><path d="M17.5 11.3 C18.1 15.1 19.9 16.9 23.7 17.5 C19.9 18.1 18.1 19.9 17.5 23.7 C16.9 19.9 15.1 18.1 11.3 17.5 C15.1 16.9 16.9 15.1 17.5 11.3 Z" fill="var(--signal-cue)"/></svg>';
