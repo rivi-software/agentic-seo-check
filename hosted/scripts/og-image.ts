@@ -1,6 +1,6 @@
 /**
  * Draws the share images of both hostnames (src/ui/og.ts) into assets/, as rivi.software draws
- * its own: the lockup, a pill, the two-tone heading, the mark's level bars with the middle one lit,
+ * its own: the lockup, a pill, the two-tone heading, the icon's search lens with its AI spark lit,
  * a hairline and the domain, in Geist on the ink ground. Run it after changing a card, and commit
  * the PNGs it writes:
  *   pnpm run hosted:og
@@ -28,21 +28,11 @@ const HEADING_WIDTH = 740;
 const HEADING_SIZE = 76;
 
 /**
- * The mark's five bars (assets/rivi-mark.svg), eleven times their size, where rivi.software's
- * cards draw them: left, top and height in pixels.
+ * The icon's search lens and AI spark (assets/icon.svg) enlarged for the right side of the card,
+ * with the spark lit in the signal green.
  */
-const BARS = [
-  [0, 99, 88],
-  [57.75, 44, 198],
-  [115.5, 0, 286],
-  [173.25, 55, 176],
-  [231, 99, 88],
-]
-  .map(
-    ([left, top, height], index) =>
-      `<i${index === 2 ? ' class="lit"' : ""} style="left:${left}px;top:${top}px;height:${height}px"></i>`
-  )
-  .join("");
+const MOTIF =
+  '<svg class="motif" viewBox="6 6 28 28" aria-hidden="true"><g fill="none" stroke="#ffffff" stroke-linecap="round" opacity="0.09"><circle cx="17.5" cy="17.5" r="9.4" stroke-width="2.9"/><path d="M24.6 24.6 L31.2 31.2" stroke-width="3.3"/></g><path class="lit" d="M17.5 11.3 C18.1 15.1 19.9 16.9 23.7 17.5 C19.9 18.1 18.1 19.9 17.5 23.7 C16.9 19.9 15.1 18.1 11.3 17.5 C15.1 16.9 16.9 15.1 17.5 11.3 Z" fill="#3be08a"/></svg>';
 
 const cardHtml = (card: ShareCard): string => `<!doctype html>
 <html lang="en">
@@ -51,7 +41,7 @@ const cardHtml = (card: ShareCard): string => `<!doctype html>
 <style>
 @font-face{font-family:"Geist";font-weight:100 900;src:url("${fontUrl("geist-latin.woff2")}") format("woff2")}
 @font-face{font-family:"Geist Mono";font-weight:100 900;src:url("${fontUrl("geist-mono-latin.woff2")}") format("woff2")}
-:root{--logo-tile:#f7f8f8;--logo-bars:#08090a;--signal-cue:#0e9f55}
+:root{--logo-tile:#f7f8f8;--logo-ink:#08090a;--signal-cue:#0e9f55}
 *{box-sizing:border-box}
 html,body{width:${OG_IMAGE.width}px;height:${OG_IMAGE.height}px;margin:0;background:#08090a}
 body{position:relative;overflow:hidden;color:#f7f8f8;font-family:"Geist",sans-serif;-webkit-font-smoothing:antialiased}
@@ -63,9 +53,8 @@ body::after{content:"";position:absolute;inset:0 0 auto;height:1px;background:li
 .dot{width:10px;height:10px;border-radius:50%;background:#3be08a;box-shadow:0 0 0 4px #3be08a33}
 h1{position:absolute;left:72px;top:262px;margin:0;font-size:${HEADING_SIZE}px;font-weight:500;line-height:1.06;letter-spacing:-.035em;white-space:nowrap}
 h1 span{display:block;color:#8a8f98}
-.bars{position:absolute;left:864px;top:172px;width:264px;height:286px}
-.bars i{position:absolute;width:33px;border-radius:17px;background:#ffffff12}
-.bars i.lit{background:#3be08a;box-shadow:0 0 48px #3be08a73,0 0 120px #3be08a33}
+.motif{position:absolute;left:842px;top:157px;width:308px;height:308px;overflow:visible}
+.motif .lit{filter:drop-shadow(0 0 24px #3be08a80) drop-shadow(0 0 64px #3be08a40)}
 .rule{position:absolute;left:72px;right:72px;top:517px;height:1px;background:#ffffff14}
 .foot{position:absolute;left:72px;right:72px;top:546px;display:flex;align-items:baseline;justify-content:space-between;gap:32px}
 .note{color:#8a8f98;font-family:"Geist Mono",monospace;font-size:19px}
@@ -76,7 +65,7 @@ h1 span{display:block;color:#8a8f98}
 <div class="lockup">${MARK}<span>RIVI ${PRODUCT_NAME}</span></div>
 <p class="pill"><span class="dot"></span>${esc(card.pill)}</p>
 <h1>${esc(card.title)}<span>${esc(card.accent)}</span></h1>
-<div class="bars">${BARS}</div>
+${MOTIF}
 <div class="rule"></div>
 <div class="foot"><span class="note">${esc(card.note)}</span><span class="domain">${esc(card.domain)}</span></div>
 </body>

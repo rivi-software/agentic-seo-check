@@ -1,7 +1,7 @@
 /**
- * The tool's name, and RIVI Software's name, site and mark, as the CLI, the MCP server and the Markdown report show
- * them. The marks are copies of assets/rivi-mark.svg and assets/rivi-mark-on-dark.svg, inlined
- * because npm ships dist/ without assets/.
+ * The tool's name and icon, and RIVI Software's name and site, as the CLI, the MCP server, the
+ * website and the reports show them. The marks are copies of assets/icon.svg and
+ * assets/icon-on-dark.svg, inlined because npm ships dist/ without assets/.
  */
 import type { Icon } from "@modelcontextprotocol/sdk/types.js";
 
@@ -30,11 +30,11 @@ export const WEBSITE_URL = "https://agentic-seo.org";
 export const MCP_URL = `${WEBSITE_URL}/mcp`;
 
 export const MARK_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" role="img" aria-label="RIVI Software"><rect width="40" height="40" rx="9" fill="#15171a"/><g fill="#f5f6f7"><rect x="8" y="16" width="3" height="8" rx="1.5"/><rect x="13.25" y="11" width="3" height="18" rx="1.5"/><rect x="18.5" y="7" width="3" height="26" rx="1.5" fill="#3be08a"/><rect x="23.75" y="12" width="3" height="16" rx="1.5"/><rect x="29" y="16" width="3" height="8" rx="1.5"/></g></svg>';
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" role="img" aria-label="Agentic SEO Check"><rect width="40" height="40" rx="9" fill="#15171a"/><g fill="none" stroke="#f5f6f7" stroke-linecap="round"><circle cx="17.5" cy="17.5" r="9.4" stroke-width="3"/><path d="M24.6 24.6 L31.2 31.2" stroke-width="3.5"/></g><path d="M17.5 11.3 C18.1 15.1 19.9 16.9 23.7 17.5 C19.9 18.1 18.1 19.9 17.5 23.7 C16.9 19.9 15.1 18.1 11.3 17.5 C15.1 16.9 16.9 15.1 17.5 11.3 Z" fill="#3be08a"/></svg>';
 
-/** The mark on a dark ground: the light tile, as rivi.software's header and a PDF report's cover draw it. */
+/** The icon on a dark ground: the light tile, as the website's header and a PDF report's cover draw it. */
 export const MARK_ON_DARK_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" role="img" aria-label="RIVI Software"><rect width="40" height="40" rx="9" fill="#f5f6f7"/><g fill="#15171a"><rect x="8" y="16" width="3" height="8" rx="1.5"/><rect x="13.25" y="11" width="3" height="18" rx="1.5"/><rect x="18.5" y="7" width="3" height="26" rx="1.5" fill="#0e9f55"/><rect x="23.75" y="12" width="3" height="16" rx="1.5"/><rect x="29" y="16" width="3" height="8" rx="1.5"/></g></svg>';
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" role="img" aria-label="Agentic SEO Check"><rect width="40" height="40" rx="9" fill="#f5f6f7"/><g fill="none" stroke="#15171a" stroke-linecap="round"><circle cx="17.5" cy="17.5" r="9.4" stroke-width="3"/><path d="M24.6 24.6 L31.2 31.2" stroke-width="3.5"/></g><path d="M17.5 11.3 C18.1 15.1 19.9 16.9 23.7 17.5 C19.9 18.1 18.1 19.9 17.5 23.7 C16.9 19.9 15.1 18.1 11.3 17.5 C15.1 16.9 16.9 15.1 17.5 11.3 Z" fill="#0e9f55"/></svg>';
 
 const dataUri = (svg: string) =>
   `data:image/svg+xml;base64,${Buffer.from(svg, "utf-8").toString("base64")}`;

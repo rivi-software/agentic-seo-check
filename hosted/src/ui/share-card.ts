@@ -59,8 +59,8 @@ const SEVERITY_TEXT: Record<keyof SeverityCounts, string> = {
   info: "#8dbaf7",
 };
 
-/** The RIVI Software mark as the static cards draw it, on the dark ground. */
-const MARK = `<svg x="${MARGIN}" y="64" width="44" height="44" viewBox="0 0 40 40"><rect width="40" height="40" rx="9" fill="#f7f8f8"/><g fill="#08090a"><rect x="8" y="16" width="3" height="8" rx="1.5"/><rect x="13.25" y="11" width="3" height="18" rx="1.5"/><rect x="18.5" y="7" width="3" height="26" rx="1.5" fill="#0e9f55"/><rect x="23.75" y="12" width="3" height="16" rx="1.5"/><rect x="29" y="16" width="3" height="8" rx="1.5"/></g></svg>`;
+/** The Agentic SEO Check mark as the static cards draw it, on the dark ground. */
+const MARK = `<svg x="${MARGIN}" y="64" width="44" height="44" viewBox="0 0 40 40"><rect width="40" height="40" rx="9" fill="#f7f8f8"/><g fill="none" stroke="#08090a" stroke-linecap="round"><circle cx="17.5" cy="17.5" r="9.4" stroke-width="3"/><path d="M24.6 24.6 L31.2 31.2" stroke-width="3.5"/></g><path d="M17.5 11.3 C18.1 15.1 19.9 16.9 23.7 17.5 C19.9 18.1 18.1 19.9 17.5 23.7 C16.9 19.9 15.1 18.1 11.3 17.5 C15.1 16.9 16.9 15.1 17.5 11.3 Z" fill="#0e9f55"/></svg>`;
 
 const options = (fonts: Uint8Array[]): ResvgRenderOptions => ({
   fitTo: { mode: "original" },

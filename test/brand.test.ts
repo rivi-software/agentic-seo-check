@@ -12,20 +12,28 @@ const decoded = (src: string) =>
     "utf-8"
   );
 
+const inner = (svg: string) =>
+  svg.replace(/^<svg[^>]*>/u, "").replace(/<\/svg>$/u, "");
+
 describe("brand", () => {
-  it("inlines the light-theme mark exactly as assets/rivi-mark.svg draws it", () => {
+  it("inlines the light-theme icon exactly as assets/icon.svg draws it", () => {
     const light = MCP_ICONS.find((icon) => icon.theme === "light");
 
-    expect(light && decoded(light.src)).toBe(asset("rivi-mark.svg"));
+    expect(light && decoded(light.src)).toBe(asset("icon.svg"));
   });
 
-  it("inlines the dark-theme mark exactly as assets/rivi-mark-on-dark.svg draws it", () => {
+  it("inlines the dark-theme icon exactly as assets/icon-on-dark.svg draws it", () => {
     const dark = MCP_ICONS.find((icon) => icon.theme === "dark");
 
-    expect(dark && decoded(dark.src)).toBe(asset("rivi-mark-on-dark.svg"));
+    expect(dark && decoded(dark.src)).toBe(asset("icon-on-dark.svg"));
   });
 
-  it("keeps assets/icon.svg a copy of the light-theme mark", () => {
-    expect(asset("icon.svg")).toBe(asset("rivi-mark.svg"));
+  it("embeds the same icon geometry in both README lockups", () => {
+    expect(asset("rivi-agentic-seo-check.svg")).toContain(
+      inner(asset("icon.svg"))
+    );
+    expect(asset("rivi-agentic-seo-check-on-dark.svg")).toContain(
+      inner(asset("icon-on-dark.svg"))
+    );
   });
 });
