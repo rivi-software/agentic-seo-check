@@ -1,0 +1,38 @@
+.changeset/dedicated-agentic-seo-icon.md
+  h_dae04dab58d73e 1-5
+assets/README.md
+  h_dae04dab58d73e 7-8,11
+assets/icon-on-dark.svg
+  h_dae04dab58d73e 1
+assets/icon.svg
+  h_dae04dab58d73e 1
+assets/rivi-agentic-seo-check-on-dark.svg
+  h_dae04dab58d73e 1
+assets/rivi-agentic-seo-check.svg
+  h_dae04dab58d73e 1
+hosted/scripts/og-image.ts
+  h_dae04dab58d73e 3,31-32,34-35,44,56-57,68
+hosted/src/ui/icons.ts
+  h_dae04dab58d73e 61-62,65
+hosted/src/ui/og.ts
+  h_dae04dab58d73e 4
+hosted/src/ui/share-card.ts
+  h_dae04dab58d73e 62-63
+hosted/src/ui/style.ts
+  h_dae04dab58d73e 31
+src/brand.ts
+  h_dae04dab58d73e 2-4,33,35,37
+test/brand.test.ts
+  h_dae04dab58d73e 15-17,19,22,25,28,31-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9771807831feb93f9bbf4eaf83d3299d189bc714",
+  "prompts": {},
+  "humans": {
+    "h_dae04dab58d73e": {
+      "author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
