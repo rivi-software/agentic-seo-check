@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+import type { Browser } from "playwright";
+
 import { crawlSite, failedPageFindings, userPatterns } from "./crawl.js";
 import type {
   CrawlOptions as InternalCrawlOptions,
@@ -36,6 +38,8 @@ import {
   ruleRanWith,
 } from "./recheck.js";
 import type { Baseline } from "./recheck.js";
+import { trackRefusals } from "./refusals.js";
+import { fetchThroughOptions } from "./render-fetch.js";
 import { compareRender } from "./render-rules.js";
 import { renderPage, RenderUnavailableError } from "./render.js";
 import {
@@ -73,6 +77,11 @@ export interface AuditOptions {
   keyword?: string;
   /** Render with headless Chromium (Playwright) and compare against the server HTML. */
   render?: boolean;
+  /**
+   * A browser the caller supplies for `render` (the hosted server's, issue #230). The browser then
+   * fetches nothing itself: each of its requests goes through `fetch`'s gate and signature.
+   */
+  browser?: { launch: () => Promise<Browser> };
   /** Run Lighthouse (performance + SEO + agentic-browsing categories). */
   lighthouse?: boolean;
   formFactor?: "mobile" | "desktop";
@@ -425,11 +434,17 @@ const renderFindings = async (
     message: `Rendering ${url} with Playwright`,
   });
 
+  const refusals = trackRefusals();
+
   try {
     const rendered = await renderPage(url, {
       timeoutMs: Math.max(options.fetch?.timeoutMs ?? 0, 30_000),
       userAgent: options.fetch?.userAgent,
       headers: options.fetch?.headers,
+      ...(options.browser && {
+        launch: options.browser.launch,
+        fetchThrough: fetchThroughOptions(options.fetch ?? {}, url, refusals),
+      }),
     });
 
     const rawPage = extractPage(await rawHtmlFor(audit, options), {
@@ -455,6 +470,14 @@ const renderFindings = async (
 
     return findings;
   } catch (error) {
+    // The page itself was refused: the browser saw a blocked navigation, and the site's answer is
+    // what a refused fetch gives, not a finding about the render.
+    const refusal = options.browser ? refusals.of(url) : undefined;
+
+    if (refusal) {
+      throw refusal;
+    }
+
     // A finding for the user, and maybe a bug of ours (issue #60): the CLI's and the MCP server's
     // error tracking hears it, unless it is an expected failure.
     caughtError(error);
