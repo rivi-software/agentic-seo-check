@@ -1,0 +1,19 @@
+docs/superpowers/notes/2026-11-24-browser-run-spike.md
+  s_46ac76d26da34b::t_4c9bc40f6e976f 1-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "13d180b20dd398c5c45b2e09f78e1044242044e9",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
