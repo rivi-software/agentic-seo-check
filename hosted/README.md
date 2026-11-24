@@ -92,9 +92,9 @@ An account ([issue #229](https://github.com/rivi-software/agentic-seo-check/issu
 
 The deploy fails until these exist:
 
-1. **The database and the namespace**, once, with their ids in the configurations:
-   - `pnpm exec wrangler d1 create agentic-seo-check-accounts --location weur --jurisdiction eu`, its id in `wrangler.site.jsonc` and in `wrangler.jsonc`.
-   - `pnpm exec wrangler kv namespace create OAUTH_KV --jurisdiction=eu`, its id in `wrangler.jsonc`.
+1. **The database and the namespace**, created once in the EU, with their ids in the configurations (done):
+   - `pnpm exec wrangler d1 create agentic-seo-check-accounts --jurisdiction eu`, its id in `wrangler.site.jsonc` and in `wrangler.jsonc`.
+   - `pnpm exec wrangler kv namespace create agentic-seo-check-oauth --jurisdiction eu`, its id in `wrangler.jsonc`.
    - The deploy job applies the database's migrations before the website (`pnpm run site:migrate-accounts`); run it by hand once before the first deploy to check it.
 2. **The custom domain `premium.agentic-seo.org`**: `wrangler.jsonc` asks for it, and the first deploy creates the record, so the name must be free.
 3. **The Turnstile widget** of step 7 gets `premium.agentic-seo.org` in its hostnames: the premium sign-in uses it.

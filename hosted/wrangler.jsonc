@@ -93,9 +93,8 @@
     {
       "binding": "ACCOUNTS",
       "database_name": "agentic-seo-check-accounts",
-      // A placeholder until RIVI creates the database (`wrangler d1 create
-      // agentic-seo-check-accounts --jurisdiction eu`) and puts its id here. Local runs take any id.
-      "database_id": "00000000-0000-4000-8000-000000000000",
+      // In the EU jurisdiction (`wrangler d1 create agentic-seo-check-accounts --jurisdiction eu`).
+      "database_id": "9136b689-56af-4781-aeb0-0a2be3381955",
       "migrations_dir": "migrations-accounts"
     }
   ],
@@ -104,9 +103,9 @@
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
-      // A placeholder until RIVI creates the namespace in the EU (`wrangler kv namespace create
-      // agentic-seo-check-oauth --jurisdiction=eu`) and puts its id here. Local runs take any id.
-      "id": "00000000000000000000000000000000"
+      // In the EU jurisdiction (`wrangler kv namespace create agentic-seo-check-oauth
+      // --jurisdiction=eu`).
+      "id": "38e1d186ebd643659564aee9f6e5fc01"
     }
   ],
   // Cloudflare Email Service, for the premium server's sign-in codes. Locally, Wrangler keeps each
