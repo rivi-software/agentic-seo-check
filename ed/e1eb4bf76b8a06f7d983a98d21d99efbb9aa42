@@ -1,0 +1,37 @@
+hosted/src/index.ts
+  s_e92caf351f3c51::t_6d3cd0b130f746 121
+hosted/test/crawls.test.ts
+  s_e92caf351f3c51::t_8726142bdfef6b 305-307
+  s_e92caf351f3c51::t_a5a2fd79a26984 2-3,7-16,26,28,31,38,217-273,275-304,308-329
+  s_e92caf351f3c51::t_6e5ca7cbeeeb79 5-6,274
+hosted/test/stubs/cloudflare-workflows.ts
+  s_e92caf351f3c51::t_6e5ca7cbeeeb79 6
+  s_e92caf351f3c51::t_dd9c17b3568bfd 1-5,7
+hosted/src/analytics.ts
+  s_e92caf351f3c51::t_6d3cd0b130f746 179,182
+hosted/src/crawls.ts
+  s_e92caf351f3c51::t_6d3cd0b130f746 12,33,250-251,253,258-259,276-278,281,314-316,318-319,321-331,333-335,337-340,342-359,361-362,364-367,369-374,376,378-394,396,398-399,401-403,409-413,416-417,419-453,455-460
+  s_e92caf351f3c51::t_8726142bdfef6b 454
+  s_e92caf351f3c51::t_26bdb7709e5ff5 418
+  s_e92caf351f3c51::t_d8b9035dbdaddc 254-257
+  s_e92caf351f3c51::t_6e5ca7cbeeeb79 279-280,414-415
+hosted/vitest.config.ts
+  s_e92caf351f3c51::t_dd9c17b3568bfd 12,19-20
+  s_e92caf351f3c51::t_6e760ca3c6913c 21-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ede1eb4bf76b8a06f7d983a98d21d99efbb9aa42",
+  "prompts": {},
+  "sessions": {
+    "s_e92caf351f3c51": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48178603-ca61-4e8c-85b4-313a5de7ff44",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
