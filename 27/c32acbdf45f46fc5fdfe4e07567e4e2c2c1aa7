@@ -1,0 +1,27 @@
+.changeset/premium-render.md
+  s_46ac76d26da34b::t_a76d58667ff712 1-7
+README.md
+  s_46ac76d26da34b::t_a76d58667ff712 218-220
+AGENTS.md
+  s_46ac76d26da34b::t_a76d58667ff712 15
+skills/seo-audit/SKILL.md
+  s_46ac76d26da34b::t_a76d58667ff712 10
+hosted/README.md
+  s_46ac76d26da34b::t_a76d58667ff712 19,86,91-100,118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "27c32acbdf45f46fc5fdfe4e07567e4e2c2c1aa7",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
