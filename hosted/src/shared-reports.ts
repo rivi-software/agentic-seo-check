@@ -8,6 +8,7 @@
 import { SHARE_DAYS } from "../../src/core/share.js";
 import type { ShareLink, SharedReport } from "../../src/core/share.js";
 import { ORIGIN } from "./limits.js";
+import { randomSecret } from "./secrets.js";
 import { SharedReportSchema } from "./shared-schema.js";
 import type { CheckedReport } from "./shared-schema.js";
 
@@ -68,9 +69,7 @@ export const keepReport = async (
   source: ReportSource,
   now = new Date()
 ): Promise<ShareLink> => {
-  const id = Buffer.from(
-    crypto.getRandomValues(new Uint8Array(ID_BYTES))
-  ).toString("base64url");
+  const id = randomSecret(ID_BYTES);
 
   const expiresAt = new Date(now.getTime() + SHARE_DAYS * DAY_MS).toISOString();
 

@@ -74,6 +74,8 @@ export interface FramePage {
   image?: { url: string; alt: string };
   /** Keeps the page out of search: it says little of its own (a shared result). */
   noindex?: boolean;
+  /** Rules only this page uses, after the stylesheet every page carries. */
+  style?: string;
 }
 
 /**
@@ -92,6 +94,7 @@ const FOOTER: [heading: string, links: [href: string, label: string][]][] = [
       [`${SITE_ORIGIN}/`, "Audit a page or site"],
       [`${SITE_ORIGIN}/rules`, "The rules"],
       [MCP_URL, "Hosted MCP server"],
+      [`${SITE_ORIGIN}/premium`, "Premium waitlist"],
       [CLAUDE_DIRECTORY_URL, "In the Claude Directory"],
       [`${SITE_ORIGIN}/crawler`, "For site owners"],
     ],
@@ -231,7 +234,7 @@ export const frame = (host: Host, page: FramePage): string => {
       "@graph": [organization, page.data],
     })
   )}</script>
-<style>${STYLE}</style>
+<style>${STYLE}${page.style ?? ""}</style>
 <script src="/site.js" defer></script>${
     page.turnstile
       ? '\n<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'

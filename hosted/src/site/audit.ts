@@ -5,7 +5,6 @@
  * count the run for its address, and every request goes through the hosted gate. The answer is the
  * homepage with the report, or with the reason there is none. Nothing of it is stored.
  */
-import { z } from "zod";
 
 import { auditAeoUrl, auditSiteBoth } from "../../../src/core/aeo/audit.js";
 import type { SiteAudits } from "../../../src/core/aeo/audit.js";
@@ -32,6 +31,8 @@ import { callerOf } from "../callers.js";
 import { cruxOptions } from "../crux.js";
 import { hostedProfile, SITE_ORIGIN } from "../limits.js";
 import type { CallRecord, LimitsEnv } from "../limits.js";
+import { field, fromThisSite, personSent, readForm } from "./forms.js";
+import type { TurnstileEnv } from "./forms.js";
 import type { FailureKind, HomeState } from "./home.js";
 import { renderReport } from "./report.js";
 import type { ShareApiEnv } from "./share-api.js";
@@ -44,27 +45,23 @@ import {
   progressOpen,
   renderSiteReport,
 } from "./site-report.js";
+import type { WaitlistEnv } from "./waitlist.js";
 
 /** The Worker's bindings and variables the audit form uses, beside the limits' and sharing's. */
 export interface SiteEnv
-  extends LimitsEnv, ShareEnv, ShareApiEnv, AnalyticsEnv {
-  /** Turnstile's public site key (wrangler.site.jsonc); empty until the widget exists. */
-  TURNSTILE_SITE_KEY: string;
-  /** Turnstile's secret key, a Worker secret (`wrangler secret put TURNSTILE_SECRET_KEY`). */
-  TURNSTILE_SECRET_KEY?: string;
-}
+  extends
+    LimitsEnv,
+    ShareEnv,
+    ShareApiEnv,
+    WaitlistEnv,
+    TurnstileEnv,
+    AnalyticsEnv {}
 
 /** The name the record of a run has where a tool call's has the tool. */
 export const WEB_AUDIT = "web_audit_page";
 
 /** The name the record of a crawl from the form has. */
 export const WEB_CRAWL = "web_crawl_site";
-
-const SITEVERIFY_URL =
-  "https://challenges.cloudflare.com/turnstile/v0/siteverify";
-
-/** A form with one URL in it is small; a larger body is not the form. */
-const MAX_FORM_BYTES = 16_384;
 
 const MAX_URL_CHARS = 2048;
 
@@ -96,34 +93,6 @@ const SITE_CRAWL = {
   respectRobots: true,
   pageDetail: "summary",
 } as const;
-
-const Siteverify = z.object({ success: z.boolean() });
-
-/** Asks Turnstile whether `token` is one it gave this site's form, and has not been used. */
-const personSent = async (
-  env: SiteEnv,
-  token: string,
-  ip: string | null
-): Promise<boolean> => {
-  const body = new URLSearchParams({
-    secret: env.TURNSTILE_SECRET_KEY ?? "",
-    response: token,
-  });
-
-  if (ip) {
-    body.set("remoteip", ip);
-  }
-
-  try {
-    const res = await fetch(SITEVERIFY_URL, { method: "POST", body });
-    const answer = Siteverify.safeParse(await res.json());
-
-    return res.ok && answer.success && answer.data.success;
-  } catch {
-    // Turnstile not answering is not a person passing the check.
-    return false;
-  }
-};
 
 /** What the form's answer shows, and the HTTP status it comes with. */
 export interface AuditAnswer {
@@ -358,46 +327,13 @@ const runCrawl = async (
   };
 };
 
-/** The field `name` of a form, when it is text. */
-const field = (form: FormData, name: string): string => {
-  const value = z.string().safeParse(form.get(name));
-
-  return value.success ? value.data.trim() : "";
-};
-
-/**
- * Reads the form, or null for a body that is not one. A browser sends a form with its length; a
- * body without a length, or with one that is not a number, could be any size, and reading it
- * would buffer all of it before Turnstile or a limit has had a say.
- */
-export const readForm = async (request: Request): Promise<FormData | null> => {
-  const length = request.headers.get("content-length");
-
-  if (
-    length === null ||
-    !/^\d+$/u.test(length) ||
-    Number(length) > MAX_FORM_BYTES
-  ) {
-    return null;
-  }
-
-  try {
-    return await request.formData();
-  } catch {
-    return null;
-  }
-};
-
 /** Answers the audit form: checks it, runs the audits within the hosted limits, renders the report. */
 export const answerAudit = async (
   request: Request,
   env: SiteEnv,
   ctx: Pick<ExecutionContext, "waitUntil">
 ): Promise<AuditAnswer> => {
-  // A browser names the page a form was sent from: only this site's own form is answered.
-  const origin = request.headers.get("origin");
-
-  if (origin && origin !== new URL(request.url).origin) {
+  if (!fromThisSite(request)) {
     return refuse(403, "The audit form answers this site's own page only.");
   }
 
@@ -439,7 +375,7 @@ export const answerAudit = async (
 
   const ip = request.headers.get("cf-connecting-ip");
 
-  if (!(await personSent(env, field(form, "cf-turnstile-response"), ip))) {
+  if (!(await personSent(env, form, ip))) {
     return refuse(
       403,
       "The check that keeps bots out did not pass, or it ran out. Run the audit again.",

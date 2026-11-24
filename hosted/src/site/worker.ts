@@ -11,6 +11,7 @@ import type { ErrorRoute } from "../analytics.js";
 import type { SiteEnv } from "./audit.js";
 import { siteRoute } from "./routes.js";
 import { RULES_PREFIX } from "./rule-info.js";
+import { secretPathName } from "./secret-paths.js";
 
 // The errors the core catches in the form's audits reach error tracking, with their run (issue #96).
 onCaughtError(hearCaughtError);
@@ -20,6 +21,7 @@ const KNOWN_PATHS = new Set([
   "/",
   "/audit",
   "/api/share",
+  "/premium",
   "/rules",
   "/robots.txt",
   "/sitemap.xml",
@@ -34,12 +36,10 @@ const KNOWN_PATHS = new Set([
 const errorRoute = (request: Request): ErrorRoute => {
   const { pathname } = new URL(request.url);
 
-  if (pathname.startsWith("/share/")) {
-    return "website:/share/:result";
-  }
+  const secret = secretPathName(pathname);
 
-  if (pathname.startsWith("/report/")) {
-    return "website:/report/:id";
+  if (secret) {
+    return `website:${secret}`;
   }
 
   if (pathname.startsWith(RULES_PREFIX)) {
