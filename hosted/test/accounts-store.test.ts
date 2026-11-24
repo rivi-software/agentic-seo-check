@@ -71,6 +71,26 @@ describe("accounts store", () => {
     expect(account?.currentPeriodEnd).toBe(1_800_000_000);
   });
 
+  it("applies a second event of the same second", async () => {
+    const d1 = d1Of(db);
+    const { id } = await accountForSignIn(d1, "ann@example.com", NOW);
+
+    await applySubscription(d1, {
+      ...subscription("incomplete", 200),
+      accountId: id,
+    });
+
+    const wrote = await applySubscription(d1, {
+      ...subscription("active", 200),
+      accountId: id,
+    });
+
+    const account = await accountById(d1, id);
+
+    expect(wrote).toBeTruthy();
+    expect(account?.subscriptionStatus).toBe("active");
+  });
+
   it("finds an account by its Stripe customer once linked", async () => {
     const d1 = d1Of(db);
     const { id } = await accountForSignIn(d1, "ann@example.com", NOW);

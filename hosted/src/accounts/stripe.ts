@@ -269,21 +269,21 @@ const StripeEvent = z.object({
     object: z.object({
       id: z.string().optional(),
       customer: z.string().nullish(),
-      status: z.string().optional(),
-      metadata: z.object({ account_id: z.string().optional() }).nullish(),
       client_reference_id: z.string().nullish(),
-      items: z
-        .object({
-          data: z.array(
-            z.object({ current_period_end: z.number().int().optional() })
-          ),
-        })
-        .optional(),
     }),
   }),
 });
 
-type StripeObject = z.infer<typeof StripeEvent>["data"]["object"];
+/** A subscription as Stripe holds it now; since basil its period is on its items. */
+const HeldSubscription = z.object({
+  id: z.string(),
+  customer: z.string(),
+  status: z.string(),
+  metadata: z.object({ account_id: z.string().optional() }).nullish(),
+  items: z.object({
+    data: z.array(z.object({ current_period_end: z.number().int() })),
+  }),
+});
 
 const SUBSCRIPTION_EVENTS = new Set([
   "customer.subscription.created",
@@ -291,28 +291,31 @@ const SUBSCRIPTION_EVENTS = new Set([
   "customer.subscription.deleted",
 ]);
 
-/** The account an event is about: the id Checkout put in the metadata, or else the customer's. */
+/** The account a subscription is for: the id Checkout put in its metadata, or else the customer's. */
 const accountOfSubscription = (
   db: D1Like,
-  object: StripeObject
+  subscription: z.infer<typeof HeldSubscription>
 ): Promise<Account | null> => {
-  const accountId = object.metadata?.account_id;
+  const accountId = subscription.metadata?.account_id;
 
-  if (accountId !== undefined) {
-    return accountById(db, accountId);
-  }
-
-  return object.customer
-    ? accountByCustomer(db, object.customer)
-    : Promise.resolve(null);
+  return accountId === undefined
+    ? accountByCustomer(db, subscription.customer)
+    : accountById(db, accountId);
 };
 
 /**
  * Applies a webhook's event to the account it names. Anything else (another type, an account
  * deleted since, an event older than the row's) is `ignored`, which the webhook still answers 2xx,
  * so Stripe does not retry it.
+ *
+ * A subscription event writes the subscription as Stripe holds it now, read from the API, not the
+ * event's payload: Stripe does not deliver in order, and `created` is whole seconds, so two events
+ * of one second (`.created` then `.updated`, or `.updated` then `.deleted`) cannot be ordered by
+ * it. Whichever arrives last writes the current state. A failed read throws BillingUnavailableError,
+ * so the webhook answers non-2xx and Stripe retries.
  */
 export const applyStripeEvent = async (
+  env: StripeEnv,
   db: D1Like,
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the webhook's JSON, parsed here
   event: unknown
@@ -343,42 +346,51 @@ export const applyStripeEvent = async (
     return "applied";
   }
 
-  if (!SUBSCRIPTION_EVENTS.has(type)) {
+  if (!SUBSCRIPTION_EVENTS.has(type) || !object.id) {
     return "ignored";
   }
 
-  const periodEnd = object.items?.data[0]?.current_period_end;
-  const account = await accountOfSubscription(db, object);
+  const subscription = await stripe(
+    env,
+    {
+      method: "GET",
+      path: `/v1/subscriptions/${encodeURIComponent(object.id)}`,
+    },
+    HeldSubscription
+  );
 
-  if (
-    account === null ||
-    !object.id ||
-    !object.customer ||
-    object.status === undefined ||
-    periodEnd === undefined
-  ) {
+  const periodEnd = subscription.items.data[0]?.current_period_end;
+  const account = await accountOfSubscription(db, subscription);
+
+  if (account === null || periodEnd === undefined) {
     return "ignored";
   }
 
   const written = await applySubscription(db, {
     accountId: account.id,
     currentPeriodEnd: periodEnd,
-    customerId: object.customer,
+    customerId: subscription.customer,
     eventAt: created,
-    status:
-      type === "customer.subscription.deleted" ? "canceled" : object.status,
-    subscriptionId: object.id,
+    status: subscription.status,
+    subscriptionId: subscription.id,
   });
 
   return written ? "applied" : "ignored";
 };
 
+const Invoice = z.object({
+  id: z.string(),
+  status: z.string().nullable(),
+  total: z.number().int(),
+  amount_paid: z.number().int(),
+  currency: z.string(),
+});
+
 const Subscription = z.object({
   status: z.string(),
   customer: z.string(),
-  latest_invoice: z
-    .object({ id: z.string(), total: z.number().int(), currency: z.string() })
-    .nullable(),
+  metadata: z.object({ refund_invoice: z.string().optional() }).nullish(),
+  latest_invoice: Invoice.nullable(),
 });
 
 const Customer = z.object({
@@ -386,14 +398,20 @@ const Customer = z.object({
   currency: z.string().nullable(),
 });
 
-const Invoices = z.object({
-  data: z.array(z.object({ id: z.string(), amount_paid: z.number().int() })),
-});
-
 const InvoicePayments = z.object({
   data: z.array(
     z.object({
+      amount_paid: z.number().int().nullable(),
       payment: z.object({ payment_intent: z.string().optional() }),
+    })
+  ),
+});
+
+const Refunds = z.object({
+  data: z.array(
+    z.object({
+      amount: z.number().int(),
+      metadata: z.object({ subscription: z.string().optional() }).nullish(),
     })
   ),
 });
@@ -409,22 +427,25 @@ const Created = z.object({ id: z.string() });
  * - `DELETE /v1/subscriptions/{id}` cancels now; `prorate=true` "will generate a proration
  *   invoice item that credits remaining unused time until the subscription period end" and
  *   `invoice_now=true` puts it on a final invoice (https://docs.stripe.com/api/subscriptions/cancel).
- *   This reads the subscription first and cancels only one that is not canceled yet, so a retry
- *   after a later step failed does not fail on the cancellation.
  * - The credit lands on the customer's balance, not the card: "To refund your customer, issue
  *   refunds and then adjust their account balance back to zero"
  *   (https://docs.stripe.com/billing/subscriptions/cancel#prorate-for-usage-based-billing, and
- *   https://support.stripe.com/questions/refunding-credit-balance-to-customer-after-subscription-downgrade-or-cancellation,
- *   which refunds the subscription's paid invoices' charges up to the credit).
+ *   https://support.stripe.com/questions/refunding-credit-balance-to-customer-after-subscription-downgrade-or-cancellation).
  * - Since basil an invoice's payment is in `GET /v1/invoice_payments?invoice=`
  *   (https://docs.stripe.com/api/invoice-payment/list), and `POST /v1/refunds` takes its
- *   `payment_intent` and an `amount` (https://docs.stripe.com/refunds).
+ *   `payment_intent`, an `amount` and `metadata`; `GET /v1/refunds?payment_intent=` lists a
+ *   payment's refunds (https://docs.stripe.com/refunds, https://docs.stripe.com/api/refunds/list).
  * - `POST /v1/customers/{id}/balance_transactions` with a positive `amount` takes the credit back
  *   off the balance (https://docs.stripe.com/billing/customer/balance#modifying).
  *
- * The credit refunded is the final invoice's, and only while the balance still holds it: a retry
- * after the balance was cleared refunds nothing, and the idempotency keys make a retry within
- * Stripe's 24 hours of a refund or an adjustment that went through do nothing new.
+ * Only the current period is refunded, and only when its invoice (the subscription's latest, read
+ * before the cancellation) is paid: a past_due subscription is canceled without proration, since
+ * nobody paid for the time it would credit. That invoice's id is written to the subscription's
+ * metadata before it is canceled, so a retry finds it on the canceled subscription; one canceled
+ * elsewhere (at link.com, or by Stripe after failed payments) has none, and is refunded nothing.
+ * A retry is safe at any time: the refund carries the subscription's id in its metadata and is not
+ * made again when the payment already has it, and the balance step runs only while the balance
+ * still holds the credit.
  */
 export const cancelAndRefund = async (
   env: StripeEnv,
@@ -437,23 +458,48 @@ export const cancelAndRefund = async (
   }
 
   const path = `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`;
-  const expand = new URLSearchParams({ "expand[]": "latest_invoice" });
 
   let subscription = await stripe(
     env,
-    { method: "GET", params: expand, path },
+    {
+      method: "GET",
+      params: new URLSearchParams({ "expand[]": "latest_invoice" }),
+      path,
+    },
     Subscription
   );
 
+  let refundInvoice = subscription.metadata?.refund_invoice;
+
   if (subscription.status !== "canceled") {
+    const current = subscription.latest_invoice;
+
+    const paid =
+      current !== null && current.status === "paid" && current.amount_paid > 0;
+
+    if (paid) {
+      refundInvoice = current.id;
+      await stripe(
+        env,
+        {
+          method: "POST",
+          params: new URLSearchParams({
+            "metadata[refund_invoice]": current.id,
+          }),
+          path,
+        },
+        Created
+      );
+    }
+
     subscription = await stripe(
       env,
       {
         method: "DELETE",
         params: new URLSearchParams({
           "expand[]": "latest_invoice",
-          invoice_now: "true",
-          prorate: "true",
+          invoice_now: String(paid),
+          prorate: String(paid),
         }),
         path,
       },
@@ -463,7 +509,11 @@ export const cancelAndRefund = async (
 
   const finalInvoice = subscription.latest_invoice;
 
-  if (finalInvoice === null || finalInvoice.total >= 0) {
+  if (
+    refundInvoice === undefined ||
+    finalInvoice === null ||
+    finalInvoice.total >= 0
+  ) {
     return;
   }
 
@@ -479,66 +529,79 @@ export const cancelAndRefund = async (
     return;
   }
 
-  const credit = Math.min(-finalInvoice.total, -customer.balance);
-
-  const invoices = await stripe(
-    env,
-    {
-      method: "GET",
-      params: new URLSearchParams({
-        limit: "10",
-        status: "paid",
-        subscription: subscriptionId,
-      }),
-      path: "/v1/invoices",
-    },
-    Invoices
-  );
-
-  // Stripe lists the newest first; the final invoice paid nothing, so this is the last payment.
-  const paid = invoices.data.find((invoice) => invoice.amount_paid > 0);
-
-  if (paid === undefined) {
-    return;
-  }
-
   const payments = await stripe(
     env,
     {
       method: "GET",
-      params: new URLSearchParams({ invoice: paid.id, status: "paid" }),
+      params: new URLSearchParams({ invoice: refundInvoice, status: "paid" }),
       path: "/v1/invoice_payments",
     },
     InvoicePayments
   );
 
-  const paymentIntent = payments.data.find(
-    (payment) => payment.payment.payment_intent !== undefined
-  )?.payment.payment_intent;
+  const payment = payments.data.find(
+    (each) => each.payment.payment_intent !== undefined
+  );
+
+  const paymentIntent = payment?.payment.payment_intent;
 
   if (paymentIntent === undefined) {
     return;
   }
 
-  const amount = String(Math.min(credit, paid.amount_paid));
-
-  await stripe(
+  const refunds = await stripe(
     env,
     {
-      idempotencyKey: `refund-${subscriptionId}`,
-      method: "POST",
-      params: new URLSearchParams({ amount, payment_intent: paymentIntent }),
+      method: "GET",
+      params: new URLSearchParams({
+        limit: "100",
+        payment_intent: paymentIntent,
+      }),
       path: "/v1/refunds",
     },
-    Created
+    Refunds
   );
+
+  const refunded = refunds.data.find(
+    (refund) => refund.metadata?.subscription === subscriptionId
+  );
+
+  let amount = refunded?.amount;
+
+  if (amount === undefined) {
+    amount = Math.min(
+      -finalInvoice.total,
+      -customer.balance,
+      payment?.amount_paid ?? 0
+    );
+
+    if (amount <= 0) {
+      return;
+    }
+
+    await stripe(
+      env,
+      {
+        idempotencyKey: `refund-${subscriptionId}`,
+        method: "POST",
+        params: new URLSearchParams({
+          amount: String(amount),
+          "metadata[subscription]": subscriptionId,
+          payment_intent: paymentIntent,
+        }),
+        path: "/v1/refunds",
+      },
+      Created
+    );
+  }
+
   await stripe(
     env,
     {
       idempotencyKey: `balance-${subscriptionId}`,
       method: "POST",
       params: new URLSearchParams({
-        amount,
+        amount: String(Math.min(amount, -customer.balance)),
         currency: customer.currency ?? finalInvoice.currency,
       }),
       path: `${customerPath}/balance_transactions`,

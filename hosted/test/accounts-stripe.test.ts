@@ -84,19 +84,19 @@ interface EventFixture {
   data: { object: { [key: string]: StripeJson } };
 }
 
+/** An event as Stripe sends it; its payload's status may be older than the subscription's. */
 const subscriptionEvent = (
   type: string,
   created: number,
-  status: string,
-  metadata: Record<string, string>
+  status: string
 ): EventFixture => ({
   created,
   data: {
     object: {
       customer: "cus_1",
       id: "sub_1",
-      items: { data: [{ current_period_end: 1_800_000_000 }] },
-      metadata,
+      items: { data: [{ current_period_end: 1_700_000_000 }] },
+      metadata: {},
       object: "subscription",
       status,
     },
@@ -118,6 +118,35 @@ const checkoutEvent = (accountId: string): EventFixture => ({
   type: "checkout.session.completed",
 });
 
+/** The subscription as Stripe holds it now, which the webhook reads for each event. */
+const heldSubscription = (
+  status: string,
+  metadata: Record<string, string>
+): StripeJson => ({
+  customer: "cus_1",
+  id: "sub_1",
+  items: { data: [{ current_period_end: 1_800_000_000 }] },
+  metadata,
+  object: "subscription",
+  status,
+});
+
+const PAID_INVOICE = {
+  amount_paid: 2000,
+  currency: "eur",
+  id: "in_paid",
+  status: "paid",
+  total: 2000,
+};
+
+const FINAL_INVOICE = {
+  amount_paid: 0,
+  currency: "eur",
+  id: "in_final",
+  status: "paid",
+  total: -1500,
+};
+
 /** Stripe as it answers an active subscription with 1500 of unused time on a 2000 payment. */
 const stripeAnswers =
   (overrides: Record<string, Answer> = {}): Answer =>
@@ -134,7 +163,8 @@ const stripeAnswers =
         return reply({
           customer: "cus_1",
           id: "sub_1",
-          latest_invoice: { currency: "eur", id: "in_paid", total: 2000 },
+          latest_invoice: PAID_INVOICE,
+          metadata: {},
           status: "active",
         });
       }
@@ -143,22 +173,14 @@ const stripeAnswers =
         return reply({
           customer: "cus_1",
           id: "sub_1",
-          latest_invoice: { currency: "eur", id: "in_final", total: -1500 },
+          latest_invoice: FINAL_INVOICE,
+          metadata: { refund_invoice: "in_paid" },
           status: "canceled",
         });
       }
 
       case "GET /v1/customers/cus_1": {
         return reply({ balance: -1500, currency: "eur", id: "cus_1" });
-      }
-
-      case "GET /v1/invoices": {
-        return reply({
-          data: [
-            { amount_paid: 0, currency: "eur", id: "in_final" },
-            { amount_paid: 2000, currency: "eur", id: "in_paid" },
-          ],
-        });
       }
 
       case "GET /v1/invoice_payments": {
@@ -173,11 +195,25 @@ const stripeAnswers =
         });
       }
 
+      case "GET /v1/refunds": {
+        return reply({ data: [] });
+      }
+
       default: {
         return reply({ id: "ok" });
       }
     }
   };
+
+/** A retry: the subscription is canceled already, stamped with the invoice to refund. */
+const canceledEarlier: Answer = () =>
+  reply({
+    customer: "cus_1",
+    id: "sub_1",
+    latest_invoice: FINAL_INVOICE,
+    metadata: { refund_invoice: "in_paid" },
+    status: "canceled",
+  });
 
 describe("stripe", () => {
   let sent: Sent[] = [];
@@ -354,8 +390,12 @@ describe("stripe", () => {
   describe(applyStripeEvent, () => {
     let db: DatabaseSync;
     let id = "";
+    let held: StripeJson = null;
 
     const row = (): Promise<Account | null> => accountById(d1Of(db), id);
+
+    const apply = (event: StripeJson | EventFixture): Promise<string> =>
+      applyStripeEvent(ENV, d1Of(db), event);
 
     beforeEach(async () => {
       db = new DatabaseSync(":memory:");
@@ -373,44 +413,32 @@ describe("stripe", () => {
       );
 
       ({ id } = created);
+
+      held = heldSubscription("active", { account_id: id });
+      answer = (request) =>
+        request.path === "/v1/subscriptions/sub_1"
+          ? reply(held)
+          : reply({ error: { message: "No such object" } }, 404);
     });
 
     it("links the customer when a checkout completes", async () => {
-      await expect(applyStripeEvent(d1Of(db), checkoutEvent(id))).resolves.toBe(
-        "applied"
-      );
+      await expect(apply(checkoutEvent(id))).resolves.toBe("applied");
       const linked = await row();
 
       expect(linked?.stripeCustomerId).toBe("cus_1");
+      expect(sent).toHaveLength(0);
     });
 
-    it("keeps the newer status when an older update arrives late", async () => {
-      const metadata = { account_id: id };
-
+    it("writes the subscription as Stripe holds it, not as the event had it", async () => {
       await expect(
-        applyStripeEvent(
-          d1Of(db),
-          subscriptionEvent(
-            "customer.subscription.updated",
-            200,
-            "active",
-            metadata
-          )
+        apply(
+          subscriptionEvent("customer.subscription.updated", 200, "incomplete")
         )
       ).resolves.toBe("applied");
-      await expect(
-        applyStripeEvent(
-          d1Of(db),
-          subscriptionEvent(
-            "customer.subscription.updated",
-            100,
-            "incomplete",
-            metadata
-          )
-        )
-      ).resolves.toBe("ignored");
       const updated = await row();
 
+      expect(routesOf(sent)).toStrictEqual(["GET /v1/subscriptions/sub_1"]);
+      expect(sent[0]?.headers.get("Stripe-Version")).toBe(STRIPE_VERSION);
       expect(updated).toMatchObject({
         currentPeriodEnd: 1_800_000_000,
         stripeCustomerId: "cus_1",
@@ -420,41 +448,39 @@ describe("stripe", () => {
       });
     });
 
-    it("writes a new subscription", async () => {
+    it("ends active when two events of one second arrive in the wrong order", async () => {
+      await apply(
+        subscriptionEvent("customer.subscription.updated", 100, "active")
+      );
       await expect(
-        applyStripeEvent(
-          d1Of(db),
-          subscriptionEvent("customer.subscription.created", 100, "active", {
-            account_id: id,
-          })
+        apply(
+          subscriptionEvent("customer.subscription.created", 100, "incomplete")
         )
       ).resolves.toBe("applied");
-      const created = await row();
+      const updated = await row();
 
-      expect(created?.subscriptionStatus).toBe("active");
+      expect(updated?.subscriptionStatus).toBe("active");
+    });
+
+    it("ignores an event older than the one applied", async () => {
+      await apply(
+        subscriptionEvent("customer.subscription.updated", 200, "active")
+      );
+
+      await expect(
+        apply(subscriptionEvent("customer.subscription.updated", 100, "active"))
+      ).resolves.toBe("ignored");
     });
 
     it("marks a deleted subscription canceled", async () => {
-      const metadata = { account_id: id };
-
-      await applyStripeEvent(
-        d1Of(db),
-        subscriptionEvent(
-          "customer.subscription.updated",
-          100,
-          "active",
-          metadata
-        )
+      await apply(
+        subscriptionEvent("customer.subscription.updated", 100, "active")
       );
+      held = heldSubscription("canceled", { account_id: id });
+
       await expect(
-        applyStripeEvent(
-          d1Of(db),
-          subscriptionEvent(
-            "customer.subscription.deleted",
-            200,
-            "canceled",
-            metadata
-          )
+        apply(
+          subscriptionEvent("customer.subscription.deleted", 100, "canceled")
         )
       ).resolves.toBe("applied");
       const deleted = await row();
@@ -463,49 +489,47 @@ describe("stripe", () => {
     });
 
     it("ignores an event for an account that does not exist", async () => {
+      held = heldSubscription("active", { account_id: "acc_gone" });
+
       await expect(
-        applyStripeEvent(
-          d1Of(db),
-          subscriptionEvent("customer.subscription.updated", 100, "active", {
-            account_id: "acc_gone",
-          })
-        )
+        apply(subscriptionEvent("customer.subscription.updated", 100, "active"))
       ).resolves.toBe("ignored");
-      await expect(
-        applyStripeEvent(d1Of(db), checkoutEvent("acc_gone"))
-      ).resolves.toBe("ignored");
+      await expect(apply(checkoutEvent("acc_gone"))).resolves.toBe("ignored");
     });
 
     it("finds the account by its customer when the metadata lacks it", async () => {
-      await applyStripeEvent(d1Of(db), checkoutEvent(id));
+      held = heldSubscription("past_due", {});
+      await apply(checkoutEvent(id));
 
       await expect(
-        applyStripeEvent(
-          d1Of(db),
-          subscriptionEvent(
-            "customer.subscription.updated",
-            100,
-            "past_due",
-            {}
-          )
-        )
+        apply(subscriptionEvent("customer.subscription.updated", 100, "active"))
       ).resolves.toBe("applied");
       const updated = await row();
 
       expect(updated?.subscriptionStatus).toBe("past_due");
     });
 
+    it("throws BillingUnavailableError when Stripe cannot be read, so Stripe retries", async () => {
+      answer = failing(500);
+
+      await expect(
+        apply(subscriptionEvent("customer.subscription.updated", 100, "active"))
+      ).rejects.toBeInstanceOf(BillingUnavailableError);
+      const unchanged = await row();
+
+      expect(unchanged?.subscriptionStatus).toBeNull();
+    });
+
     it("ignores an event type it does not handle, and a malformed one", async () => {
       await expect(
-        applyStripeEvent(d1Of(db), {
+        apply({
           created: 100,
           data: { object: { id: "in_1" } },
           type: "invoice.paid",
         })
       ).resolves.toBe("ignored");
-      await expect(applyStripeEvent(d1Of(db), "nonsense")).resolves.toBe(
-        "ignored"
-      );
+      await expect(apply("nonsense")).resolves.toBe("ignored");
+      expect(sent).toHaveLength(0);
     });
   });
 
@@ -523,10 +547,11 @@ describe("stripe", () => {
 
       expect(routesOf(sent)).toStrictEqual([
         "GET /v1/subscriptions/sub_1",
+        "POST /v1/subscriptions/sub_1",
         "DELETE /v1/subscriptions/sub_1",
         "GET /v1/customers/cus_1",
-        "GET /v1/invoices",
         "GET /v1/invoice_payments",
+        "GET /v1/refunds",
         "POST /v1/refunds",
         "POST /v1/customers/cus_1/balance_transactions",
       ]);
@@ -537,13 +562,16 @@ describe("stripe", () => {
       ).toBeTruthy();
     });
 
-    it("asks Stripe to prorate and invoice now, and reads the final invoice", async () => {
+    it("stamps the paid invoice, then cancels with proration and reads the final invoice", async () => {
       answer = stripeAnswers();
 
       await cancelAndRefund(ENV, subscribed);
-      const [read, cancel] = sent;
+      const [read, stamp, cancel] = sent;
 
       expect(read?.query.getAll("expand[]")).toStrictEqual(["latest_invoice"]);
+      expect(Object.fromEntries(stamp?.form ?? [])).toStrictEqual({
+        "metadata[refund_invoice]": "in_paid",
+      });
       expect(Object.fromEntries(cancel?.query ?? [])).toStrictEqual({
         "expand[]": "latest_invoice",
         invoice_now: "true",
@@ -551,32 +579,25 @@ describe("stripe", () => {
       });
     });
 
-    it("finds the payment of the last paid invoice", async () => {
+    it("refunds from the current period's invoice, once, and clears the balance", async () => {
       answer = stripeAnswers();
 
       await cancelAndRefund(ENV, subscribed);
-      const invoices = sent.at(3);
       const payments = sent.at(4);
+      const refunds = sent.at(5);
+      const [refund, balance] = sent.slice(-2);
 
-      expect(Object.fromEntries(invoices?.query ?? [])).toStrictEqual({
-        limit: "10",
-        status: "paid",
-        subscription: "sub_1",
-      });
       expect(Object.fromEntries(payments?.query ?? [])).toStrictEqual({
         invoice: "in_paid",
         status: "paid",
       });
-    });
-
-    it("refunds the credit once and clears it from the balance", async () => {
-      answer = stripeAnswers();
-
-      await cancelAndRefund(ENV, subscribed);
-      const [refund, balance] = sent.slice(-2);
-
+      expect(Object.fromEntries(refunds?.query ?? [])).toStrictEqual({
+        limit: "100",
+        payment_intent: "pi_1",
+      });
       expect(Object.fromEntries(refund?.form ?? [])).toStrictEqual({
         amount: "1500",
+        "metadata[subscription]": "sub_1",
         payment_intent: "pi_1",
       });
       expect(refund?.headers.get("Idempotency-Key")).toBe("refund-sub_1");
@@ -584,18 +605,64 @@ describe("stripe", () => {
         amount: "1500",
         currency: "eur",
       });
-      expect(balance?.headers.get("Idempotency-Key")).toBe("balance-sub_1");
     });
 
-    it("does not cancel twice when a retry finds the subscription canceled", async () => {
+    it("cancels a past_due subscription without proration and refunds nothing", async () => {
       answer = stripeAnswers({
+        "DELETE /v1/subscriptions/sub_1": () =>
+          reply({
+            customer: "cus_1",
+            id: "sub_1",
+            latest_invoice: { ...PAID_INVOICE, amount_paid: 0, status: "open" },
+            metadata: {},
+            status: "canceled",
+          }),
         "GET /v1/subscriptions/sub_1": () =>
           reply({
             customer: "cus_1",
             id: "sub_1",
-            latest_invoice: { currency: "eur", id: "in_final", total: -1500 },
-            status: "canceled",
+            latest_invoice: { ...PAID_INVOICE, amount_paid: 0, status: "open" },
+            metadata: {},
+            status: "past_due",
           }),
+      });
+
+      await expect(cancelAndRefund(ENV, subscribed)).resolves.toBeUndefined();
+      expect(routesOf(sent)).toStrictEqual([
+        "GET /v1/subscriptions/sub_1",
+        "DELETE /v1/subscriptions/sub_1",
+      ]);
+      expect(sent[1]?.query.get("prorate")).toBe("false");
+      expect(sent[1]?.query.get("invoice_now")).toBe("false");
+    });
+
+    it("on a retry after the refund went through, only clears the balance", async () => {
+      answer = stripeAnswers({
+        "GET /v1/refunds": () =>
+          reply({
+            data: [
+              { amount: 900, id: "re_other", metadata: {} },
+              { amount: 1500, id: "re_1", metadata: { subscription: "sub_1" } },
+            ],
+          }),
+        "GET /v1/subscriptions/sub_1": canceledEarlier,
+      });
+
+      await cancelAndRefund(ENV, subscribed);
+
+      expect(routesOf(sent)).toStrictEqual([
+        "GET /v1/subscriptions/sub_1",
+        "GET /v1/customers/cus_1",
+        "GET /v1/invoice_payments",
+        "GET /v1/refunds",
+        "POST /v1/customers/cus_1/balance_transactions",
+      ]);
+      expect(sent.at(-1)?.form.get("amount")).toBe("1500");
+    });
+
+    it("on a retry before the refund, refunds without cancelling again", async () => {
+      answer = stripeAnswers({
+        "GET /v1/subscriptions/sub_1": canceledEarlier,
       });
 
       await cancelAndRefund(ENV, subscribed);
@@ -604,7 +671,24 @@ describe("stripe", () => {
       expect(routesOf(sent)).toContain("POST /v1/refunds");
     });
 
-    it("refunds nothing when the credit was already refunded", async () => {
+    it("refunds nothing for a subscription canceled elsewhere", async () => {
+      answer = stripeAnswers({
+        "GET /v1/subscriptions/sub_1": () =>
+          reply({
+            customer: "cus_1",
+            id: "sub_1",
+            latest_invoice: FINAL_INVOICE,
+            metadata: {},
+            status: "canceled",
+          }),
+      });
+
+      await cancelAndRefund(ENV, subscribed);
+
+      expect(routesOf(sent)).toStrictEqual(["GET /v1/subscriptions/sub_1"]);
+    });
+
+    it("refunds nothing when the credit was already cleared", async () => {
       answer = stripeAnswers({
         "GET /v1/customers/cus_1": () =>
           reply({ balance: 0, currency: "eur", id: "cus_1" }),
@@ -612,7 +696,7 @@ describe("stripe", () => {
 
       await cancelAndRefund(ENV, subscribed);
 
-      expect(routesOf(sent)).not.toContain("POST /v1/refunds");
+      expect(routesOf(sent).at(-1)).toBe("GET /v1/customers/cus_1");
     });
 
     it("refunds nothing when the cancellation left no credit", async () => {
@@ -621,14 +705,15 @@ describe("stripe", () => {
           reply({
             customer: "cus_1",
             id: "sub_1",
-            latest_invoice: { currency: "eur", id: "in_final", total: 0 },
+            latest_invoice: { ...FINAL_INVOICE, total: 0 },
+            metadata: { refund_invoice: "in_paid" },
             status: "canceled",
           }),
       });
 
       await cancelAndRefund(ENV, subscribed);
 
-      expect(sent).toHaveLength(2);
+      expect(routesOf(sent).at(-1)).toBe("DELETE /v1/subscriptions/sub_1");
     });
 
     it("sends nothing for an account without a subscription", async () => {

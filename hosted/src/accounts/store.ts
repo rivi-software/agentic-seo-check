@@ -108,7 +108,9 @@ export const linkCustomer = async (
 
 /**
  * Writes a subscription from a Stripe event, unless a newer event already did (Stripe does not
- * deliver in order). Returns whether it wrote. Times are Stripe's, in seconds.
+ * deliver in order). Returns whether it wrote. Times are Stripe's, in seconds, so two events can
+ * share one: an event of the same second still writes, since the caller writes the subscription
+ * as Stripe holds it now, not as the event's payload had it.
  */
 export const applySubscription = async (
   db: D1Like,
@@ -126,7 +128,7 @@ export const applySubscription = async (
       `UPDATE accounts
        SET stripe_customer_id = ?, subscription_id = ?, subscription_status = ?,
            current_period_end = ?, stripe_event_at = ?, updated_at = ?
-       WHERE id = ? AND (stripe_event_at IS NULL OR stripe_event_at < ?)
+       WHERE id = ? AND (stripe_event_at IS NULL OR stripe_event_at <= ?)
        RETURNING id`
     )
     .bind(
