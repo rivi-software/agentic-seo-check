@@ -1,0 +1,42 @@
+hosted/src/refused-requests.ts
+  s_96818531f17a0e::t_33461d03bdc140 2-5,10,41-42,44,51-54,56,59-60,63-75
+hosted/README.md
+  s_96818531f17a0e::t_73db2052acdcc7 16,19,161
+hosted/src/analytics.ts
+  s_96818531f17a0e::t_3e2db988dd38f4 87-88,540-541
+  s_96818531f17a0e::t_33461d03bdc140 44,53
+  s_96818531f17a0e::t_c3226693b8ba5f 542
+hosted/src/index.ts
+  s_96818531f17a0e::t_33461d03bdc140 39,148,151-155
+src/telemetry/mcp.ts
+  s_96818531f17a0e::t_3e2db988dd38f4 838-867
+AGENTS.md
+  s_96818531f17a0e::t_73db2052acdcc7 26
+hosted/test/refused-requests.test.ts
+  s_96818531f17a0e::t_60488d95923a83 2-3,6-10,56-63,66-69,80-86,92,104,111,118,121-122,126-127,129-133,137-139,146,150,153-156,159-161,163-170,173-176,178-210
+  s_0055da72d5fb30::t_ac0c6e2ec0567c 211-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f2e8b304aa835e336e14262032ac0d790a7c046d",
+  "prompts": {},
+  "sessions": {
+    "s_0055da72d5fb30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65706c69-c061-48f3-9a23-ea87997369c8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    },
+    "s_96818531f17a0e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ff3668c9-50c0-4cb3-8280-2d09ec2c7efa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
