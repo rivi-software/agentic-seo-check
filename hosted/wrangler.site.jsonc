@@ -74,8 +74,8 @@
     }
   ],
   // The premium waitlist (issue #232): the addresses, their answers and when each was confirmed, in
-  // the EU. Its tables are in migrations/: apply a new one before the deploy that needs it, with
-  // `wrangler d1 migrations apply agentic-seo-check-waitlist --remote -c wrangler.site.jsonc`.
+  // the EU. Its tables are in migrations/, which the deploy job applies before it deploys the
+  // website (`pnpm run site:migrate`).
   "d1_databases": [
     {
       "binding": "WAITLIST",
@@ -84,6 +84,8 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Once a day: the waitlist's unconfirmed addresses whose link has run out are deleted (worker.ts).
+  "triggers": { "crons": ["17 3 * * *"] },
   // Cloudflare Email Service, for the waitlist's emails: the link that confirms an address. It may
   // send from WAITLIST_FROM only. Locally, Wrangler writes each email to a file instead.
   "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["premium@rivi.software"] }],

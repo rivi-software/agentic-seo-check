@@ -20,9 +20,10 @@ const config = (): string => {
   return (at === -1 ? undefined : rest[at + 1]) ?? SERVER_CONFIG;
 };
 
-// `wrangler types` only reads the configuration; the commands that bundle the Worker take defines.
+// `wrangler types` only reads the configuration, and `wrangler d1` (`site:migrate`) only talks to
+// the database; the commands that bundle the Worker take defines.
 const built =
-  command === "types"
+  command === "types" || command === "d1"
     ? []
     : Object.entries(defines(config())).flatMap(([name, value]) => [
         "--define",

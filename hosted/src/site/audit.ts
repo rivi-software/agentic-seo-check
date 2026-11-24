@@ -375,7 +375,7 @@ export const answerAudit = async (
 
   const ip = request.headers.get("cf-connecting-ip");
 
-  if (!(await personSent(env, form, ip))) {
+  if (!(await personSent(env, form, ip, "audit"))) {
     return refuse(
       403,
       "The check that keeps bots out did not pass, or it ran out. Run the audit again.",

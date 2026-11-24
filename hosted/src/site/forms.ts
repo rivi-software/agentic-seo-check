@@ -55,13 +55,24 @@ export const readForm = async (request: Request): Promise<FormData | null> => {
   }
 };
 
-const Siteverify = z.object({ success: z.boolean() });
+const Siteverify = z.object({
+  success: z.boolean(),
+  action: z.string().optional(),
+});
 
-/** Asks Turnstile whether the form's token is one it gave this site's forms, and has not been used. */
+/** The widget's `data-action` on each form, which a token carries back. */
+export type FormAction = "audit" | "waitlist";
+
+/**
+ * Asks Turnstile whether the form's token is one it gave this form's widget, and has not been
+ * used: a token from the other form's widget carries the other action and does not pass. Cloudflare's
+ * test keys answer without an action, which passes, as every answer to them does.
+ */
 export const personSent = async (
   env: TurnstileEnv,
   form: FormData,
-  ip: string | null
+  ip: string | null,
+  action: FormAction
 ): Promise<boolean> => {
   const body = new URLSearchParams({
     secret: env.TURNSTILE_SECRET_KEY ?? "",
@@ -76,7 +87,12 @@ export const personSent = async (
     const res = await fetch(SITEVERIFY_URL, { method: "POST", body });
     const answer = Siteverify.safeParse(await res.json());
 
-    return res.ok && answer.success && answer.data.success;
+    return (
+      res.ok &&
+      answer.success &&
+      answer.data.success &&
+      (answer.data.action === undefined || answer.data.action === action)
+    );
   } catch {
     // Turnstile not answering is not a person passing the check.
     return false;

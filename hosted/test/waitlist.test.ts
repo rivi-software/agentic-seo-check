@@ -14,6 +14,7 @@ import { waitlistRoute } from "../src/site/waitlist-routes.ts";
 import {
   followLink,
   normalEmail,
+  purgeExpired,
   RESEND_AFTER_MS,
   signUp,
   tokenHash,
@@ -69,6 +70,7 @@ let db: DatabaseSync;
 let sent: Sent[];
 let mailFails: boolean;
 let turnstilePasses: boolean;
+let turnstileAction: string;
 let limited: boolean;
 
 const env = (): WaitlistSiteEnv => ({
@@ -188,9 +190,12 @@ describe("the premium waitlist", () => {
     sent = [];
     mailFails = false;
     turnstilePasses = true;
+    turnstileAction = "waitlist";
     limited = false;
     vi.stubGlobal("fetch", () =>
-      Promise.resolve(Response.json({ success: turnstilePasses }))
+      Promise.resolve(
+        Response.json({ success: turnstilePasses, action: turnstileAction })
+      )
     );
   });
 
@@ -287,12 +292,21 @@ describe("the premium waitlist", () => {
       expect(sent).toHaveLength(0);
     });
 
-    it("sends no second email to an address within ten minutes, with the same answer", async () => {
-      await send();
+    it("sends no second email to an address within ten minutes, with the very same answer", async () => {
+      const first = await send();
       const again = await send(FORM, NOW + RESEND_AFTER_MS - 1);
 
-      expect(again).toStrictEqual({ status: 200, page: { view: "sent" } });
+      // The page, its analytics marker included, says nothing of an email that did not go.
+      expect(again).toStrictEqual(first);
       expect(sent).toHaveLength(1);
+    });
+
+    it("refuses a token the audit form's widget gave", async () => {
+      turnstileAction = "audit";
+      const answer = await send();
+
+      expect(answer.status).toBe(403);
+      expect(rows()).toHaveLength(0);
     });
 
     it("sends a new link to an unconfirmed address later, with its newest answers", async () => {
@@ -383,16 +397,18 @@ describe("the premium waitlist", () => {
       expect(rows()).toHaveLength(0);
     });
 
-    it("stop working for an unconfirmed address after seven days, which the next signup deletes", async () => {
+    it("stop working for an unconfirmed address after seven days, which the daily purge deletes", async () => {
       await send();
       const token = lastToken("confirm");
+      await send({ ...FORM, email: "grace@example.com" });
+      await follow("confirm", lastToken("confirm"));
       const later = NOW + UNCONFIRMED_DAYS * DAY;
       const expired = await follow("confirm", token, later);
 
-      await send({ ...FORM, email: "grace@example.com" }, later);
-      await settled();
+      await purgeExpired(d1Of(db), later);
 
       expect(expired).toStrictEqual({ status: 404, page: { view: "expired" } });
+      // The confirmed address stays, however old.
       expect(rows().map(({ email }) => email)).toStrictEqual([
         "grace@example.com",
       ]);

@@ -149,7 +149,7 @@ const stepBody = (page: Exclude<PremiumView, FormView>): string => {
       return answer(
         "Check your inbox.",
         `We sent a link to confirm your address. It works for ${UNCONFIRMED_DAYS} days; until you open it, you are not on the list. Nothing there? Look in your spam folder.`,
-        `${page.event ? eventMarker("waitlist_signed_up", page.event) : ""}${BACK}`
+        `${eventMarker("waitlist_signed_up", page.event)}${BACK}`
       );
     }
 

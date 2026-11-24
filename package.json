@@ -63,6 +63,7 @@
     "site:dev": "node hosted/scripts/wrangler.ts dev --config wrangler.site.jsonc",
     "site:build": "node hosted/scripts/wrangler.ts deploy --dry-run --outdir dist/site --config wrangler.site.jsonc",
     "site:deploy": "node hosted/scripts/wrangler.ts deploy --config wrangler.site.jsonc",
+    "site:migrate": "node hosted/scripts/wrangler.ts d1 migrations apply agentic-seo-check-waitlist --remote --config wrangler.site.jsonc",
     "site:secret": "cd hosted && wrangler secret put --config wrangler.site.jsonc",
     "changeset": "changeset",
     "version-packages": "changeset version && pnpm install --lockfile-only",

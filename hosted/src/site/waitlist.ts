@@ -136,7 +136,7 @@ export interface WaitlistEvent {
 /** What /premium shows: the form, or what became of a signup or a link. */
 export type PremiumView =
   | { view: "form"; error?: string; values?: WaitlistValues }
-  | { view: "sent"; event?: WaitlistEvent }
+  | { view: "sent"; event: WaitlistEvent }
   | { view: "confirm" | "remove"; token: string }
   | { view: "confirmed"; first: boolean }
   | { view: "removed" }
@@ -332,9 +332,22 @@ ON CONFLICT (email) DO UPDATE SET
 WHERE excluded.sent_at - sent_at >= ?
 RETURNING confirmed_at`;
 
-/** Unconfirmed addresses whose link has run out. */
-const PURGE =
-  "DELETE FROM waitlist WHERE confirmed_at IS NULL AND created_at <= ?";
+/**
+ * Deletes the unconfirmed addresses whose link has run out. The website's Worker runs it each day
+ * (its cron trigger, worker.ts), so an address nobody confirmed is gone within a day of its seven,
+ * however quiet the waitlist is.
+ */
+export const purgeExpired = async (
+  db: WaitlistDatabase,
+  now = Date.now()
+): Promise<void> => {
+  await db
+    .prepare(
+      "DELETE FROM waitlist WHERE confirmed_at IS NULL AND created_at <= ?"
+    )
+    .bind(now - UNCONFIRMED_MS)
+    .run();
+};
 
 /**
  * Answers the form at POST /premium. Every address it takes gets the same answer, whether it was
@@ -382,7 +395,7 @@ export const signUp = async (
     );
   }
 
-  if (!(await personSent(env, form, ip))) {
+  if (!(await personSent(env, form, ip, "waitlist"))) {
     return refuse(
       403,
       "The check that keeps bots out did not pass, or it ran out. Send the form again.",
@@ -393,14 +406,6 @@ export const signUp = async (
   const { db, mail, from } = bindings;
   const { email, event } = checked.signup;
   const secret = randomSecret(32);
-
-  // The links that ran out go after the answer: nobody waits for them.
-  ctx.waitUntil(
-    db
-      .prepare(PURGE)
-      .bind(now - UNCONFIRMED_MS)
-      .run()
-  );
 
   const kept = await db
     .prepare(KEEP_SIGNUP)
@@ -417,9 +422,9 @@ export const signUp = async (
     )
     .first<{ confirmed_at: number | null }>();
 
-  // An email went to the address a moment ago: the same answer, and no second email.
+  // An email went to the address a moment ago: no second email, and the very same page.
   if (!kept) {
-    return { status: 200, page: { view: "sent" } };
+    return { status: 200, page: { view: "sent", event } };
   }
 
   try {

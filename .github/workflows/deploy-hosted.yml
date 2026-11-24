@@ -89,6 +89,15 @@ jobs:
       # Straight after the MCP server's, whose Durable Object the website binds: a website deploy
       # never goes out when the MCP server's failed. Until it is done, the website's previous code
       # calls the new object, which is why the object's methods stay additive.
+      # The website's D1 tables (hosted/migrations/), before the code that reads them: a migration
+      # adds to what the website's previous code reads, never takes from it. Wrangler applies each
+      # one once, so a deploy without a new one changes nothing.
+      - name: Migrate the website's database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm run site:migrate
+
       - name: Deploy the website
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

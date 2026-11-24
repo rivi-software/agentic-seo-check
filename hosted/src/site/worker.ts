@@ -12,6 +12,7 @@ import type { SiteEnv } from "./audit.js";
 import { siteRoute } from "./routes.js";
 import { RULES_PREFIX } from "./rule-info.js";
 import { secretPathName } from "./secret-paths.js";
+import { purgeExpired } from "./waitlist.js";
 
 // The errors the core catches in the form's audits reach error tracking, with their run (issue #96).
 onCaughtError(hearCaughtError);
@@ -67,6 +68,20 @@ export default {
       return new Response("Something went wrong on the website.\n", {
         status: 500,
       });
+    }
+  },
+
+  // The daily cron trigger (wrangler.site.jsonc): deletes the waitlist's unconfirmed addresses
+  // whose link has run out, whether or not anyone signed up since (issue #232).
+  async scheduled(_controller, env, ctx): Promise<void> {
+    if (!env.WAITLIST) {
+      return;
+    }
+
+    try {
+      await purgeExpired(env.WAITLIST);
+    } catch (error) {
+      void reportError(env, ctx, error, "website:cron", { handled: false });
     }
   },
 } satisfies ExportedHandler<SiteEnv>;

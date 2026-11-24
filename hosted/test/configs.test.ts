@@ -39,7 +39,18 @@ describe("the two Workers' configurations", () => {
 
   it("give the website each of the MCP server's rate limits as the server has it, and the website's own beside them", () => {
     expect(site.ratelimits).toStrictEqual(
-      expect.arrayContaining(server.ratelimits)
+      expect.arrayContaining([
+        ...server.ratelimits,
+        // The premium waitlist's, the website's alone (issue #232).
+        {
+          name: "WAITLIST_SIGNUPS",
+          namespace_id: "35007",
+          simple: { limit: 5, period: 60 },
+        },
+      ])
+    );
+    expect(server.ratelimits).not.toContainEqual(
+      expect.objectContaining({ name: "WAITLIST_SIGNUPS" })
     );
   });
 
