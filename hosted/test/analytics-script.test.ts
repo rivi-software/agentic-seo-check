@@ -121,6 +121,22 @@ describe("the pages' event cleaning", () => {
     ]);
   });
 
+  it("takes the secret out of a waitlist link (issue #232)", () => {
+    const secret = "a".repeat(43);
+
+    expect(
+      [
+        `https://agentic-seo.org/premium/confirm/${secret}`,
+        `/premium/remove/${secret}`,
+        "https://agentic-seo.org/premium",
+      ].map((value) => page.clean(value))
+    ).toStrictEqual([
+      "https://agentic-seo.org/premium/confirm/:token",
+      "/premium/remove/:token",
+      "https://agentic-seo.org/premium",
+    ]);
+  });
+
   it("cleans an error's message as the tool cleans its own", () => {
     const messages = [
       "Unexpected token '<', \"<!doctype h\"... is not valid JSON",

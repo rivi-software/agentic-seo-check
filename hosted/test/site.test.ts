@@ -12,13 +12,14 @@ import { startFixtureServer } from "../../test/helpers/fixture-server.ts";
 import type { FixtureServer } from "../../test/helpers/fixture-server.ts";
 import { MCP_URL } from "../src/limits.ts";
 import { crawlerPage, landingPage } from "../src/pages.ts";
-import { isHomepage, readForm } from "../src/site/audit.ts";
+import { isHomepage } from "../src/site/audit.ts";
 import {
   LLMS_TXT,
   SITE_JS,
   SITE_ROBOTS_TXT,
   SITEMAP_XML,
 } from "../src/site/files.ts";
+import { readForm } from "../src/site/forms.ts";
 import { homePage, notFoundPage } from "../src/site/home.ts";
 import { SITE_ORIGIN } from "../src/site/layout.ts";
 import { partsHtml, renderReport } from "../src/site/report.ts";

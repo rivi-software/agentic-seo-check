@@ -1,9 +1,7 @@
 import { MARK_SVG } from "../../../src/brand.js";
 import { findRule } from "../../../src/core/rules/index.js";
-import { POSTHOG_HOST } from "../../../src/telemetry/posthog.js";
 import { VERSION } from "../../../src/version.js";
 import { reportError } from "../analytics.js";
-import { freshResponse } from "../fresh.js";
 import { FORMER_SITE_HOST, movedToOrigin } from "../limits.js";
 import { readReport } from "../shared-reports.js";
 /**
@@ -22,6 +20,13 @@ import type { SiteEnv } from "./audit.js";
 import { LLMS_TXT, SITE_JS, SITE_ROBOTS_TXT, SITEMAP_XML } from "./files.js";
 import { homePage, notFoundPage } from "./home.js";
 import { pdfAssetResponse } from "./pdf-assets.js";
+import {
+  file,
+  HTML,
+  methodNotAllowed,
+  SECURITY,
+  secretPage,
+} from "./respond.js";
 import { RULES_PREFIX } from "./rule-info.js";
 import { rulePage } from "./rule-page.js";
 import { rulesPage } from "./rules-page.js";
@@ -29,47 +34,9 @@ import { shareUpload } from "./share-api.js";
 import { sharePage } from "./share-page.js";
 import { openShare, shareImageCacheKey } from "./share.js";
 import { sharedReportPage } from "./shared-page.js";
+import { waitlistRoute } from "./waitlist-routes.js";
 
-const HTML = "text/html; charset=utf-8";
 const TEXT = "text/plain; charset=utf-8";
-
-/**
- * Scripts from this site and Turnstile only, and none inline: a report quotes the audited page,
- * and nothing in it may run. Styles are the page's own <style>. The pages send their analytics
- * (issue #57) to PostHog's managed proxy, the only place besides this site they connect to.
- */
-const CSP = [
-  "default-src 'none'",
-  "script-src 'self' https://challenges.cloudflare.com",
-  "style-src 'unsafe-inline'",
-  "img-src 'self' data:",
-  "font-src 'self'",
-  "frame-src https://challenges.cloudflare.com",
-  `connect-src 'self' ${POSTHOG_HOST}`,
-  "form-action 'self'",
-  "base-uri 'none'",
-  "frame-ancestors 'none'",
-].join("; ");
-
-const SECURITY = {
-  "content-security-policy": CSP,
-  "x-content-type-options": "nosniff",
-  "referrer-policy": "strict-origin-when-cross-origin",
-};
-
-/** A page or a file at an address it keeps from deploy to deploy, which browsers ask for again. */
-const file = (
-  request: Request,
-  body: string,
-  contentType: string,
-  status = 200
-): Promise<Response> =>
-  freshResponse(
-    request,
-    body,
-    { "content-type": contentType, ...SECURITY },
-    status
-  );
 
 /** The address a link put in the field (`/?url=…`). It fills the field only: a GET never audits. */
 const prefill = (url: URL): string | undefined =>
@@ -234,16 +201,7 @@ const sharedReport = async (
 
   const body = stored ? sharedReportPage(stored) : notFoundPage();
 
-  return new Response(request.method === "HEAD" ? null : body, {
-    status: stored ? 200 : 404,
-    headers: {
-      "content-type": HTML,
-      ...SECURITY,
-      "referrer-policy": "no-referrer",
-      "cache-control": "private, no-store",
-      "x-robots-tag": "noindex",
-    },
-  });
+  return secretPage(request, body, stored ? 200 : 404);
 };
 
 /** An upload of a report to share at /api/share, or a shared report's page; null for any other path. */
@@ -255,10 +213,7 @@ const sharedRoute = (
   if (path === "/api/share") {
     return request.method === "POST"
       ? shareUpload(request, env)
-      : new Response("Method not allowed.\n", {
-          status: 405,
-          headers: { allow: "POST" },
-        });
+      : methodNotAllowed("POST");
   }
 
   const id = REPORT_ROUTE.exec(path)?.groups?.id;
@@ -269,10 +224,7 @@ const sharedRoute = (
 
   return request.method === "GET" || request.method === "HEAD"
     ? sharedReport(request, env, id)
-    : new Response("Method not allowed.\n", {
-        status: 405,
-        headers: { allow: "GET, HEAD" },
-      });
+    : methodNotAllowed("GET, HEAD");
 };
 
 /** The share image of a card at `path`: the website's, or the MCP server's, whose pages it serves. */
@@ -323,10 +275,13 @@ export const siteRoute = (
     // A report has no address of its own: /audit opened as a link goes to the form.
     return read
       ? new Response(null, { status: 303, headers: { location: "/" } })
-      : new Response("Method not allowed.\n", {
-          status: 405,
-          headers: { allow: "GET, HEAD, POST" },
-        });
+      : methodNotAllowed("GET, HEAD, POST");
+  }
+
+  const waitlist = waitlistRoute(request, env, ctx, url.pathname);
+
+  if (waitlist) {
+    return waitlist;
   }
 
   const sharing = sharedRoute(request, env, url.pathname);
@@ -336,10 +291,7 @@ export const siteRoute = (
   }
 
   if (!read) {
-    return new Response("Method not allowed.\n", {
-      status: 405,
-      headers: { allow: "GET, HEAD" },
-    });
+    return methodNotAllowed("GET, HEAD");
   }
 
   const shared = SHARE_ROUTE.exec(url.pathname)?.groups;

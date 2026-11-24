@@ -10,6 +10,7 @@ import type { z } from "zod";
 import { SHARE_DAYS } from "../../src/core/share.js";
 import type { ShareLink, SharedReport } from "../../src/core/share.js";
 import { ORIGIN } from "./limits.js";
+import { randomSecret } from "./secrets.js";
 import { SharedReportSchema } from "./shared-schema.js";
 import type { CheckedReport } from "./shared-schema.js";
 
@@ -63,10 +64,7 @@ export const expiryAfter = (days: number, now: Date): string =>
   new Date(now.getTime() + days * DAY_MS).toISOString();
 
 /** A new id of ID_BYTES random bytes, in base64url as REPORT_ID reads it. */
-export const newId = (): string =>
-  Buffer.from(crypto.getRandomValues(new Uint8Array(ID_BYTES))).toString(
-    "base64url"
-  );
+export const newId = (): string => randomSecret(ID_BYTES);
 
 /** The path of a shared report's page. */
 export const reportPath = (id: string): string => `/report/${id}`;
