@@ -1,0 +1,61 @@
+hosted/README.md
+  s_96818531f17a0e::t_41f915615a644e 158-160
+  s_96818531f17a0e::t_73db2052acdcc7 16,19,161
+hosted/src/refused-requests.ts
+  s_96818531f17a0e::t_9d102d000d69ab 1,6,11-14,16-28,31,45-46,48-50,55,76
+  s_96818531f17a0e::t_33461d03bdc140 2-5,10,41-42,44,51-54,56,59-60,63-75
+  s_96818531f17a0e::t_2c63c720ed3aa3 9,15,32-38,47,57-58,61-62
+  s_96818531f17a0e::t_de548c35a0c0ce 7-8,29-30,39-40,43
+hosted/src/index.ts
+  s_96818531f17a0e::t_33461d03bdc140 39,148,151-155
+  s_96818531f17a0e::t_7f06a2fd4320e2 149-150,171
+  s_96818531f17a0e::t_88d899d80d20bd 146-147,156-157
+hosted/test/refused-requests.test.ts
+  s_ebc3e6f5da9de2::t_13a5106685acaa 171-172,177,215-216
+  s_96818531f17a0e::t_63c5fe8fbbdf8c 1,4-5,11-30,33-52,70,72-74,78-79,87-91,96-99,103,105-106,110,140,143,147-149,152,157-158
+  s_96818531f17a0e::t_60488d95923a83 2-3,6-10,56-63,66-69,80-86,92,104,111,118,121-122,126-127,129-133,137-139,146,150,153-156,159-161,163-170,173-176,178-210
+  s_0055da72d5fb30::t_ac0c6e2ec0567c 211-214
+  s_96818531f17a0e::t_ddef0e16a30457 53-55,64-65,71,75-77,93-95,100-102,107-109,112-117,119-120,123-125,128,134-136,141-142,144-145,162
+  s_96818531f17a0e::t_ef3d061bdb8eed 31-32,151
+src/telemetry/mcp.ts
+  s_96818531f17a0e::t_2c63c720ed3aa3 302
+  s_96818531f17a0e::t_3e2db988dd38f4 838-867
+AGENTS.md
+  s_96818531f17a0e::t_73db2052acdcc7 26
+hosted/src/analytics.ts
+  s_96818531f17a0e::t_33461d03bdc140 44,53
+  s_96818531f17a0e::t_c3226693b8ba5f 542
+  s_96818531f17a0e::t_3e2db988dd38f4 87-88,540-541
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29b365a0cb78922cd68892cecf821d70fa8e2f3a",
+  "prompts": {},
+  "sessions": {
+    "s_0055da72d5fb30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65706c69-c061-48f3-9a23-ea87997369c8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    },
+    "s_96818531f17a0e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ff3668c9-50c0-4cb3-8280-2d09ec2c7efa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    },
+    "s_ebc3e6f5da9de2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa2b83cf-c687-4629-9585-b5f513929d4a",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
