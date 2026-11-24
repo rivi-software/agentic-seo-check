@@ -1747,8 +1747,17 @@ describe("the hosted Worker in workerd", () => {
 
     /** Wrangler's Local Explorer, which reads the local D1 database and the emails sent. */
     const EXPLORER = `${ORIGIN}/cdn-cgi/local/explorer/api`;
-    const ACCOUNTS_ID = "00000000-0000-4000-8000-000000000000";
-    const OAUTH_KV_ID = "00000000000000000000000000000000";
+    // The ids as the configuration names them, so the tests keep working once RIVI puts the real
+    // database's and namespace's ids there in place of the placeholders.
+    const serverConfig = readConfig(SERVER_CONFIG);
+
+    const ACCOUNTS_ID: string = serverConfig.d1_databases.find(
+      (database: { binding: string }) => database.binding === "ACCOUNTS"
+    )?.database_id;
+
+    const OAUTH_KV_ID: string = serverConfig.kv_namespaces.find(
+      (namespace: { binding: string }) => namespace.binding === "OAUTH_KV"
+    )?.id;
 
     const SqlAnswer = z.object({
       result: z.array(
