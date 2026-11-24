@@ -641,6 +641,12 @@ export interface RenderComparison {
   consoleErrors: string[];
   raw: RenderSnapshot;
   rendered: RenderSnapshot;
+  /**
+   * With a supplied browser (the hosted server's, issue #230): the page's requests the audit
+   * blocked rather than sent, a refusal, a limit or a method other than GET and HEAD. Console
+   * errors about them are left out of `consoleErrors`.
+   */
+  blockedRequests?: number;
 }
 
 export interface RenderSnapshot {

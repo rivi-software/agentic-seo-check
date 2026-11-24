@@ -10,7 +10,7 @@ import {
   signatureFor,
   withTimeout,
 } from "./fetch.js";
-import type { FetchOptions, FetchResult } from "./fetch.js";
+import type { FetchOptions, FetchResult, RequestGate } from "./fetch.js";
 import { trackRefusals } from "./refusals.js";
 import type { Refusals } from "./refusals.js";
 
@@ -19,8 +19,12 @@ export interface BrowserRequest {
   url: string;
   method: string;
   headers: Record<string, string>;
-  postData?: string;
   resourceType: string;
+  /**
+   * The page's own navigation, of its main frame, which the audit's `gate` decides on. Any other
+   * request is a subresource of the page, which `subresourceGate` decides on.
+   */
+  navigation?: boolean;
 }
 
 /** What the browser gets back: the answer to hand it, or the network error to give it. */
@@ -34,7 +38,31 @@ export type BrowserAnswer =
   | { kind: "fail"; reason: "BlockedByClient" | "Failed" | "TimedOut" };
 
 /** Sends one of the browser's requests, so the browser itself fetches nothing. */
-export type FetchThrough = (request: BrowserRequest) => Promise<BrowserAnswer>;
+export interface FetchThrough {
+  (request: BrowserRequest): Promise<BrowserAnswer>;
+  /**
+   * Told once the browser has `answer`, so its body no longer counts against the bytes a render
+   * holds at once. An answer told twice, or not this function's, changes nothing.
+   */
+  delivered: (answer: BrowserAnswer) => void;
+}
+
+/** What one render may send and hold: see `fetchThroughOptions`. */
+export interface RenderRequestLimits {
+  /** Requests a render sends, each redirect's hop counted: past it, a request is blocked. */
+  maxRequests?: number;
+  /**
+   * Bytes of answers read and not yet handed to the browser: past it, a request is blocked, so a
+   * page's scripts cannot make the audit hold many bodies of `maxBodyBytes` at once.
+   */
+  maxBytesInFlight?: number;
+}
+
+/** The limits of a render without others given (the hosted server gives HOSTED_LIMITS'). */
+export const RENDER_REQUEST_LIMITS = {
+  maxRequests: 200,
+  maxBytesInFlight: 16_000_000,
+} as const satisfies Required<RenderRequestLimits>;
 
 /**
  * Headers the runtime's fetch sets itself, or that describe the browser's own connection: a value
@@ -57,6 +85,12 @@ const CONNECTION_HEADERS = new Set([
 ]);
 
 /**
+ * The browser's headers that belong to the origin it asked: a redirect to another origin does not
+ * carry them on, as a browser's own redirect would not.
+ */
+const ORIGIN_HEADERS = new Set(["authorization", "cookie"]);
+
+/**
  * Headers of an answer that describe how it came over the wire, not the body handed on: fetch has
  * already taken the body out of its encoding and its chunks.
  */
@@ -68,20 +102,40 @@ const WIRE_HEADERS = new Set([
   "transfer-encoding",
 ]);
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * The methods the browser's requests may use. The tools are read-only, and a verified bot does not
+ * send a page's form posts or beacons under its signature: anything else is blocked.
+ */
+const READ_METHODS = new Set(["GET", "HEAD"]);
+
 const fail = (
   reason: "BlockedByClient" | "Failed" | "TimedOut"
 ): BrowserAnswer => ({ kind: "fail", reason });
 
-/** The browser's headers that the audit's request carries on, the HTTP/2 pseudo-headers left out. */
+/**
+ * The browser's headers that the audit's request to `hop` carries on, the HTTP/2 pseudo-headers
+ * left out, and its cookie and authorization too once a redirect left the origin it asked.
+ */
 const browserHeaders = (
-  headers: Record<string, string>
-): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(headers).filter(
-      ([name]) =>
-        !name.startsWith(":") && !CONNECTION_HEADERS.has(name.toLowerCase())
-    )
+  request: BrowserRequest,
+  hop: string
+): Record<string, string> => {
+  const sameOrigin = new URL(hop).origin === new URL(request.url).origin;
+
+  return Object.fromEntries(
+    Object.entries(request.headers).filter(([name]) => {
+      const key = name.toLowerCase();
+
+      return (
+        !name.startsWith(":") &&
+        !CONNECTION_HEADERS.has(key) &&
+        (sameOrigin || !ORIGIN_HEADERS.has(key))
+      );
+    })
   );
+};
 
 /** Every header of an answer, each `set-cookie` on its own, but the wire's. */
 const answerHeaders = (headers: Headers): { name: string; value: string }[] => {
@@ -105,12 +159,13 @@ const answerHeaders = (headers: Headers): { name: string; value: string }[] => {
  * a page shows (a challenge page). A script or an image is no page.
  */
 const showGateBody = (
-  options: FetchOptions,
+  gate: RequestGate | undefined,
   request: BrowserRequest,
+  hop: string,
   res: Response,
   bytes: Uint8Array
 ): void => {
-  if (!options.gate?.afterBody || request.resourceType !== "document") {
+  if (!gate?.afterBody || request.resourceType.toLowerCase() !== "document") {
     return;
   }
 
@@ -118,7 +173,7 @@ const showGateBody = (
 
   const page: FetchResult = {
     requestedUrl: request.url,
-    finalUrl: request.url,
+    finalUrl: hop,
     status: res.status,
     headers,
     body: new TextDecoder().decode(bytes),
@@ -127,27 +182,42 @@ const showGateBody = (
     contentType: headers["content-type"] ?? null,
   };
 
-  const refusal = options.gate.afterBody(new URL(request.url), page);
+  const refusal = gate.afterBody(new URL(hop), page);
 
   if (refusal) {
-    throw new RequestRefusedError(refusal, request.url);
+    throw new RequestRefusedError(refusal, hop);
   }
 };
 
-/** Sends the request once, with no redirect followed, and reads its answer up to the cap. */
-const send = async (
-  options: FetchOptions,
-  headersOrigin: string,
-  request: BrowserRequest,
+/** Where a redirect's answer leads, or null when it is no redirect to follow. */
+const redirectTarget = (res: Response, hop: string): string | null => {
+  const location = res.headers.get("location");
+
+  if (!REDIRECT_STATUSES.has(res.status) || location === null) {
+    return null;
+  }
+
+  return URL.canParse(location, hop) ? new URL(location, hop).href : null;
+};
+
+/** One request of a walk: where it goes, and the walk it belongs to. */
+interface Hop {
+  options: FetchOptions;
+  headersOrigin: string;
+  request: BrowserRequest;
+  url: string;
+}
+
+/** Sends one hop, with no redirect followed, and shows the gate its answer. */
+const sendHop = async (
+  { options, headersOrigin, request, url }: Hop,
   signal: AbortSignal
-): Promise<BrowserAnswer> => {
-  const { url } = request;
-  const maxBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
+): Promise<Response> => {
   // A request that cannot be signed is not sent: it fails as any other request does.
   const signature = options.sign ? await signatureFor(options.sign, url) : {};
 
   const own = browserRequestHeaders(
-    browserHeaders(request.headers),
+    browserHeaders(request, url),
     url,
     options.headers ?? {},
     headersOrigin
@@ -165,60 +235,171 @@ const send = async (
     headers.set(name, value);
   }
 
-  const method = request.method.toUpperCase();
-  const hasBody = method !== "GET" && method !== "HEAD";
-
   const res = await fetch(url, {
-    method,
-    // A redirect goes back to the browser as the redirect, so the gate sees the next hop too.
+    method: request.method.toUpperCase(),
+    // Each hop is asked for here, so the gate and the signature see it: Playwright hands a
+    // redirect's next request to the browser's own network, past the route.
     redirect: "manual",
     signal,
     headers,
-    body: hasBody ? request.postData : undefined,
   });
 
   await showGate(options.gate, url, res);
 
-  // One byte past the cap tells a body over it from one that fills it.
-  const read = await readLimited(res, maxBytes + 1);
-
-  if (read.bytes.byteLength > maxBytes) {
-    return fail("Failed");
-  }
-
-  showGateBody(options, request, res, read.bytes);
-
-  return {
-    kind: "fulfil",
-    status: res.status,
-    headers: answerHeaders(res.headers),
-    body: read.bytes,
-  };
+  return res;
 };
 
+/** A render's count of requests and of the bytes it holds, shared by all its requests. */
+interface RenderBudget {
+  sent: number;
+  bytes: number;
+  maxRequests: number;
+  maxBytesInFlight: number;
+}
+
 /**
- * The browser's network for the audit of `pageUrl`: each request it makes is sent here, one hop at
- * a time, as the audit's own requests are. The gate is asked first (a refusal is a request the
- * browser is told was blocked, and is never sent), the request is signed and goes with the audit's
- * User-Agent, the user's headers go to the audited origin only, the body stops at `maxBodyBytes`,
- * and the request times out at `timeoutMs`.
+ * Sends a hop and reads its answer up to the cap, within `timeoutMs`, or answers where its redirect
+ * leads. An answer's bytes are counted as held here, at once, so answers read side by side cannot
+ * pass the cap together; `delivered` lets them go.
+ */
+const answerHop = (
+  hop: Hop,
+  budget: RenderBudget,
+  timeoutMs: number
+): Promise<BrowserAnswer | { next: string }> =>
+  withTimeout(timeoutMs, async (signal) => {
+    const { options, request, url } = hop;
+    const res = await sendHop(hop, signal);
+    const next = redirectTarget(res, url);
+
+    if (next !== null) {
+      await res.body?.cancel().catch(() => null);
+
+      return { next };
+    }
+
+    const maxBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
+    // One byte past the cap tells a body over it from one that fills it.
+    const read = await readLimited(res, maxBytes + 1);
+
+    if (read.bytes.byteLength > maxBytes) {
+      return fail("Failed");
+    }
+
+    showGateBody(options.gate, request, url, res, read.bytes);
+
+    if (budget.bytes + read.bytes.byteLength > budget.maxBytesInFlight) {
+      return fail("BlockedByClient");
+    }
+
+    budget.bytes += read.bytes.byteLength;
+
+    return {
+      kind: "fulfil",
+      status: res.status,
+      headers: answerHeaders(res.headers),
+      body: read.bytes,
+    };
+  });
+
+/**
+ * Walks the request's redirects as `fetchPage` does, asking the gate before each hop and signing
+ * it, and answers with the last: the browser sees the redirect's target under the URL it asked
+ * for. A redirect it may not follow (past `maxRedirects`, a loop) fails.
+ */
+const walk = async (
+  options: FetchOptions,
+  headersOrigin: string,
+  request: BrowserRequest,
+  budget: RenderBudget
+): Promise<BrowserAnswer> => {
+  const maxRedirects = options.maxRedirects ?? 10;
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const seen = new Set<string>();
+  let { url } = request;
+
+  for (let hop = 0; hop <= maxRedirects; hop += 1) {
+    if (
+      budget.sent >= budget.maxRequests ||
+      budget.bytes >= budget.maxBytesInFlight
+    ) {
+      return fail("BlockedByClient");
+    }
+
+    seen.add(url);
+    // oxlint-disable-next-line eslint/no-await-in-loop -- each hop goes where the one before it led
+    await askGate(options.gate, url);
+    budget.sent += 1;
+
+    // oxlint-disable-next-line eslint/no-await-in-loop -- as above
+    const answer = await answerHop(
+      { options, headersOrigin, request, url },
+      budget,
+      timeoutMs
+    );
+
+    if (!("next" in answer)) {
+      return answer;
+    }
+
+    if (
+      seen.has(answer.next) ||
+      !/^https?:$/u.test(new URL(answer.next).protocol)
+    ) {
+      return fail("Failed");
+    }
+
+    url = answer.next;
+  }
+
+  return fail("Failed");
+};
+
+/** What `fetchThroughOptions` takes besides the audit's options. */
+export interface FetchThroughSettings extends RenderRequestLimits {
+  /** The audit's refusals, so a refusal of the browser's requests is the audit's too. */
+  refusals?: Refusals;
+}
+
+/**
+ * The browser's network for the audit of `pageUrl`: each request it makes is sent here, as the
+ * audit's own requests are. The page's own navigation goes through the audit's `gate`, anything
+ * else through `subresourceGate` (or `gate` without one). The gate is asked before each hop (a
+ * refusal is a request the browser is told was blocked, and is never sent), each hop is signed and
+ * goes with the audit's User-Agent, the user's headers go to the audited origin only, the body
+ * stops at `maxBodyBytes`, and each hop times out at `timeoutMs`. Only GET and HEAD are sent, and a
+ * render sends at most `maxRequests` and holds at most `maxBytesInFlight`: anything else is blocked.
  */
 export const fetchThroughOptions = (
   options: FetchOptions,
   pageUrl: string,
-  refusals: Refusals = trackRefusals()
+  settings: FetchThroughSettings = {}
 ): FetchThrough => {
+  const refusals = settings.refusals ?? trackRefusals();
   // The gate also refuses a host already refused, so a site that answered 429 or a challenge to
   // one request is sent nothing more: no retry.
   const audit = refusals.guard(forAuditOf(options, pageUrl));
+
+  const subresources = audit.subresourceGate
+    ? refusals.guard({ ...audit, gate: audit.subresourceGate })
+    : audit;
 
   const headersOrigin =
     audit.headersOrigin ??
     (URL.canParse(pageUrl) ? new URL(pageUrl).origin : pageUrl);
 
-  const timeoutMs = audit.timeoutMs ?? 15_000;
+  const budget: RenderBudget = {
+    sent: 0,
+    bytes: 0,
+    maxRequests: settings.maxRequests ?? RENDER_REQUEST_LIMITS.maxRequests,
+    maxBytesInFlight:
+      settings.maxBytesInFlight ?? RENDER_REQUEST_LIMITS.maxBytesInFlight,
+  };
 
-  return async (request) => {
+  /** The bytes each answer still holds, until the browser has it. */
+  const held = new WeakMap<BrowserAnswer, number>();
+
+  const through = async (request: BrowserRequest): Promise<BrowserAnswer> => {
     // A data:, blob: or file: URL never reaches this far in a browser; anything else is no request
     // the audit sends.
     if (
@@ -228,15 +409,22 @@ export const fetchThroughOptions = (
       return fail("Failed");
     }
 
+    if (!READ_METHODS.has(request.method.toUpperCase())) {
+      return fail("BlockedByClient");
+    }
+
+    const own = request.navigation ? audit : subresources;
+
     try {
       // A refusal is recorded, as for the audit's own requests, and the browser told it was blocked.
-      const answer = await refusals.run(request.url, async () => {
-        await askGate(audit.gate, request.url);
+      const answer = await refusals.run(request.url, () =>
+        walk(own, headersOrigin, request, budget)
+      );
 
-        return withTimeout(timeoutMs, (signal) =>
-          send(audit, headersOrigin, request, signal)
-        );
-      });
+      // Its bytes were counted when they were read (`answerHop`).
+      if (answer?.kind === "fulfil") {
+        held.set(answer, answer.body.byteLength);
+      }
 
       return answer ?? fail("BlockedByClient");
     } catch (error) {
@@ -247,6 +435,17 @@ export const fetchThroughOptions = (
       );
     }
   };
+
+  return Object.assign(through, {
+    delivered: (answer: BrowserAnswer) => {
+      const bytes = held.get(answer);
+
+      if (bytes !== undefined) {
+        held.delete(answer);
+        budget.bytes -= bytes;
+      }
+    },
+  });
 };
 
 /** The part of Playwright's `Route` that answers a request. */
@@ -264,8 +463,9 @@ export interface RequestLike {
   url: () => string;
   method: () => string;
   allHeaders: () => Promise<Record<string, string>>;
-  postData: () => string | null;
   resourceType: () => string;
+  isNavigationRequest: () => boolean;
+  frame: () => { parentFrame: () => object | null };
 }
 
 /** Playwright's error codes for `route.abort`, which the browser sees as its own network error. */
@@ -275,25 +475,29 @@ const ABORT_CODES = {
   TimedOut: "timedout",
 } as const;
 
+/** Whether `request` navigates the page's main frame; a service worker's request has no frame. */
+const navigatesPage = (request: RequestLike): boolean => {
+  if (!request.isNavigationRequest()) {
+    return false;
+  }
+
+  try {
+    return request.frame().parentFrame() === null;
+  } catch {
+    return false;
+  }
+};
+
 /** The request as `FetchThrough` takes it. */
 export const browserRequestOf = async (
   request: RequestLike
-): Promise<BrowserRequest> => {
-  const browser: BrowserRequest = {
-    url: request.url(),
-    method: request.method(),
-    headers: await request.allHeaders(),
-    resourceType: request.resourceType(),
-  };
-
-  const postData = request.postData();
-
-  if (postData !== null) {
-    browser.postData = postData;
-  }
-
-  return browser;
-};
+): Promise<BrowserRequest> => ({
+  url: request.url(),
+  method: request.method(),
+  headers: await request.allHeaders(),
+  resourceType: request.resourceType(),
+  navigation: navigatesPage(request),
+});
 
 /**
  * Answers a Playwright route with `answer`. Playwright takes one value per header name, and splits

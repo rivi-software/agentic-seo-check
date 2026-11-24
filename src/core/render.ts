@@ -5,20 +5,115 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { createInterface } from "node:readline";
 
-import type { Browser, BrowserContext, Page } from "playwright";
 import type * as Playwright from "playwright";
 
 import { browserRequestHeaders, hasHeaders } from "./browser-headers.js";
 import { ExpectedError } from "./errors.js";
 import { DEFAULT_USER_AGENT } from "./fetch.js";
 import { answerRoute, browserRequestOf } from "./render-fetch.js";
-import type { FetchThrough } from "./render-fetch.js";
+import type {
+  FetchThrough,
+  RenderRequestLimits,
+  RequestLike,
+  RouteLike,
+} from "./render-fetch.js";
 
 export class RenderUnavailableError extends ExpectedError {
   constructor(message: string) {
     super(message);
     this.name = "RenderUnavailableError";
   }
+}
+
+/** A console message, as renderPage reads it. */
+export interface RenderConsoleMessage {
+  type: () => string;
+  text: () => string;
+  /** Where the message came from: for a resource that failed to load, the resource's URL. */
+  location: () => { url: string };
+}
+
+/** The part of a CDP session that sends the user's headers to the audited origin only. */
+export interface RenderCdpSession {
+  on: (
+    event: "Fetch.requestPaused",
+    listener: (paused: {
+      requestId: string;
+      request: { url: string; headers: Record<string, string> };
+    }) => void
+  ) => object;
+  send: {
+    (
+      method: "Fetch.continueRequest",
+      params: { requestId: string; headers: { name: string; value: string }[] }
+    ): Promise<object>;
+    (
+      method: "Fetch.enable",
+      params: { patterns: { urlPattern: string }[] }
+    ): Promise<object>;
+  };
+}
+
+/** The part of Playwright's Page that renderPage uses. */
+export interface RenderPage {
+  /**
+   * Playwright's `newCDPSession` takes its own Page, which this type does not name: the page passed
+   * is the one whose context this is.
+   */
+  context: () => {
+    newCDPSession: (page: never) => Promise<RenderCdpSession>;
+  };
+  on: {
+    (
+      event: "console",
+      listener: (message: RenderConsoleMessage) => void
+    ): object;
+    (event: "pageerror", listener: (error: Error) => void): object;
+  };
+  goto: (
+    url: string,
+    options: {
+      waitUntil: "load" | "domcontentloaded" | "networkidle";
+      timeout: number;
+    }
+  ) => Promise<object | null>;
+  waitForTimeout: (timeout: number) => Promise<void>;
+  content: () => Promise<string>;
+  url: () => string;
+}
+
+/** The part of Playwright's BrowserContext that renderPage uses. */
+export interface RenderContext {
+  route: (
+    url: string,
+    handler: (
+      route: RouteLike & { request: () => RequestLike }
+    ) => Promise<void>
+  ) => Promise<object>;
+  routeWebSocket: (
+    url: string,
+    handler: (socket: { close: () => Promise<void> }) => Promise<void>
+  ) => Promise<void>;
+  newPage: () => Promise<RenderPage>;
+}
+
+/**
+ * The part of a Playwright Browser that renderPage uses: Playwright's own, or another client's with
+ * the same API, such as `@cloudflare/playwright`'s for Browser Run. A structural type, so the
+ * library's types never need Playwright, which is optional.
+ */
+export interface RenderBrowser {
+  newContext: (options: {
+    userAgent: string;
+    viewport: { width: number; height: number };
+    serviceWorkers: "allow" | "block";
+  }) => Promise<RenderContext>;
+  close: () => Promise<void>;
+}
+
+/** A browser the caller supplies for a render, and what that render may send and hold. */
+export interface SuppliedBrowser extends RenderRequestLimits {
+  launch: () => Promise<RenderBrowser>;
 }
 
 export interface RenderOptions {
@@ -32,7 +127,7 @@ export interface RenderOptions {
    * Starts the browser instead of the installed Playwright (the hosted server's Browser Run).
    * Given, neither `import("playwright")` nor the fallback to an installed Chrome runs.
    */
-  launch?: () => Promise<Browser>;
+  launch?: () => Promise<RenderBrowser>;
   /**
    * Sends every request the browser makes, so the browser fetches nothing itself (issue #230): it
    * applies the gate, the signature, the User-Agent and the rule for the user's headers, so
@@ -46,6 +141,11 @@ export interface RenderOutput {
   html: string;
   finalUrl: string;
   consoleErrors: string[];
+  /**
+   * With `fetchThrough`: the browser's requests that were blocked (a refusal, a limit, a method
+   * other than GET and HEAD) rather than sent.
+   */
+  blockedRequests?: number;
 }
 
 export const RENDER_INSTALL_HINT =
@@ -125,7 +225,7 @@ export const installBrowser = async (
 
 const launchSystemBrowser = async (
   playwright: typeof Playwright
-): Promise<Browser | null> => {
+): Promise<Playwright.Browser | null> => {
   for (const channel of ["chrome", "msedge"] as const) {
     try {
       // oxlint-disable-next-line eslint/no-await-in-loop -- one browser at a time, in order of preference
@@ -146,11 +246,12 @@ const firstLine = (message: string): string =>
  * `browserRequestHeaders`.
  */
 const sendHeadersToOrigin = async (
-  page: Page,
+  page: RenderPage,
   headers: Record<string, string>,
   url: string
 ): Promise<void> => {
-  const client = await page.context().newCDPSession(page);
+  // SAFETY: `page` is a page of the browser whose context is asked, which is what it takes.
+  const client = await page.context().newCDPSession(page as never);
 
   client.on("Fetch.requestPaused", (paused) => {
     client
@@ -171,7 +272,7 @@ const sendHeadersToOrigin = async (
 };
 
 /** The installed Playwright's Chromium, or else an installed Google Chrome or Edge. */
-const launchLocal = async (): Promise<Browser> => {
+const launchLocal = async (): Promise<Playwright.Browser> => {
   let playwright: typeof Playwright;
 
   try {
@@ -182,7 +283,7 @@ const launchLocal = async (): Promise<Browser> => {
     );
   }
 
-  let browser: Browser;
+  let browser: Playwright.Browser;
 
   try {
     browser = await playwright.chromium.launch({ headless: true });
@@ -202,23 +303,47 @@ const launchLocal = async (): Promise<Browser> => {
   return browser;
 };
 
+/** What a render's network blocked and failed, for the console messages it explains. */
+interface Unsent {
+  /** URLs the browser was given a network error for instead of an answer. */
+  failed: Set<string>;
+  /** Requests blocked rather than sent: a refusal, a limit, a method other than GET and HEAD. */
+  blocked: number;
+}
+
 /**
  * Answers every request of the context from `fetchThrough`, a worker's and a frame's included,
  * which a CDP session on the page alone would miss. WebSockets are closed before they connect:
  * request interception does not see them.
  */
 const routeThrough = async (
-  context: BrowserContext,
-  fetchThrough: FetchThrough
+  context: RenderContext,
+  fetchThrough: FetchThrough,
+  unsent: Unsent
 ): Promise<void> => {
   await context.route("**/*", async (route) => {
+    const url = route.request().url();
+
     try {
       const answer = await fetchThrough(
         await browserRequestOf(route.request())
       );
 
-      await answerRoute(route, answer);
+      if (answer.kind === "fail") {
+        unsent.failed.add(url);
+
+        if (answer.reason === "BlockedByClient") {
+          unsent.blocked += 1;
+        }
+      }
+
+      try {
+        await answerRoute(route, answer);
+      } finally {
+        fetchThrough.delivered(answer);
+      }
     } catch {
+      unsent.failed.add(url);
       // A request the page gave up on, or a page that closed, has nothing left to answer.
       await route.abort("failed").catch(() => null);
     }
@@ -227,15 +352,41 @@ const routeThrough = async (
   await context.routeWebSocket("**", (ws) => ws.close());
 };
 
+/** Chromium's console error for a resource it got no answer for: the URL is its location. */
+const FAILED_TO_LOAD = /^Failed to load resource: net::ERR_/u;
+
+/** A console error, by its text and where it came from. */
+export interface ConsoleError {
+  text: string;
+  url: string;
+}
+
+/**
+ * The console errors that are the page's, without those about requests the audit itself blocked or
+ * failed (`failed`): Chromium's "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT" for a
+ * refused script is no error of the page. A message that names such a URL goes too.
+ */
+export const pageConsoleErrors = (
+  errors: readonly ConsoleError[],
+  failed: ReadonlySet<string>
+): string[] =>
+  errors.flatMap(({ text, url }) =>
+    (FAILED_TO_LOAD.test(text) && failed.has(url)) ||
+    [...failed].some((unsent) => text.includes(unsent))
+      ? []
+      : [text.slice(0, 300)]
+  );
+
 /** Load the page in headless Chromium and return the rendered DOM. */
 export const renderPage = async (
   url: string,
   options: RenderOptions = {}
 ): Promise<RenderOutput> => {
-  const browser = await (options.launch ?? launchLocal)();
+  const browser: RenderBrowser = await (options.launch ?? launchLocal)();
   const { fetchThrough } = options;
   const timeout = options.timeoutMs ?? 30_000;
-  const consoleErrors: string[] = [];
+  const consoleErrors: ConsoleError[] = [];
+  const unsent: Unsent = { failed: new Set(), blocked: 0 };
 
   try {
     const context = await browser.newContext({
@@ -246,7 +397,7 @@ export const renderPage = async (
     });
 
     if (fetchThrough) {
-      await routeThrough(context, fetchThrough);
+      await routeThrough(context, fetchThrough, unsent);
     }
 
     const page = await context.newPage();
@@ -257,11 +408,15 @@ export const renderPage = async (
 
     page.on("console", (msg) => {
       if (msg.type() === "error") {
-        consoleErrors.push(msg.text().slice(0, 300));
+        // A long message is cut where it is kept: the filter reads the start of it only.
+        consoleErrors.push({
+          text: msg.text().slice(0, 2000),
+          url: msg.location().url,
+        });
       }
     });
     page.on("pageerror", (err) =>
-      consoleErrors.push(err.message.slice(0, 300))
+      consoleErrors.push({ text: err.message.slice(0, 2000), url: "" })
     );
 
     try {
@@ -285,7 +440,12 @@ export const renderPage = async (
     await page.waitForTimeout(250);
     const html = await page.content();
 
-    return { html, finalUrl: page.url(), consoleErrors };
+    return {
+      html,
+      finalUrl: page.url(),
+      consoleErrors: pageConsoleErrors(consoleErrors, unsent.failed),
+      ...(fetchThrough && { blockedRequests: unsent.blocked }),
+    };
   } finally {
     // A browser that fails to close must not replace the page's result or its error.
     await browser.close().catch(() => null);

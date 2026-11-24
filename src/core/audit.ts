@@ -1,8 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import type { Browser } from "playwright";
-
 import { crawlSite, failedPageFindings, userPatterns } from "./crawl.js";
 import type {
   CrawlOptions as InternalCrawlOptions,
@@ -42,6 +40,7 @@ import { trackRefusals } from "./refusals.js";
 import { fetchThroughOptions } from "./render-fetch.js";
 import { compareRender } from "./render-rules.js";
 import { renderPage, RenderUnavailableError } from "./render.js";
+import type { SuppliedBrowser } from "./render.js";
 import {
   runPageRules,
   selectRules,
@@ -81,7 +80,7 @@ export interface AuditOptions {
    * A browser the caller supplies for `render` (the hosted server's, issue #230). The browser then
    * fetches nothing itself: each of its requests goes through `fetch`'s gate and signature.
    */
-  browser?: { launch: () => Promise<Browser> };
+  browser?: SuppliedBrowser;
   /** Run Lighthouse (performance + SEO + agentic-browsing categories). */
   lighthouse?: boolean;
   formFactor?: "mobile" | "desktop";
@@ -443,7 +442,11 @@ const renderFindings = async (
       headers: options.fetch?.headers,
       ...(options.browser && {
         launch: options.browser.launch,
-        fetchThrough: fetchThroughOptions(options.fetch ?? {}, url, refusals),
+        fetchThrough: fetchThroughOptions(options.fetch ?? {}, url, {
+          refusals,
+          maxRequests: options.browser.maxRequests,
+          maxBytesInFlight: options.browser.maxBytesInFlight,
+        }),
       }),
     });
 
@@ -465,6 +468,10 @@ const renderFindings = async (
       rendered.consoleErrors,
       audit.response
     );
+
+    if (rendered.blockedRequests !== undefined) {
+      comparison.blockedRequests = rendered.blockedRequests;
+    }
 
     audit.rendering = comparison;
 

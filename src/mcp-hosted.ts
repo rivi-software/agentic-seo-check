@@ -116,6 +116,11 @@ export interface HostedCallEnd {
 export interface HostedCall {
   /** The server's limits on this call's requests; the address rules and site refusals come first. */
   gate?: RequestGate;
+  /**
+   * The server's limits on what a rendered page requests besides its own navigation (issue #230):
+   * its scripts, stylesheets, fonts and images, which are no site the call audits.
+   */
+  subresourceGate?: RequestGate;
   /** Told once, when the call's answer is ready. What it throws is reported, and the answer stands. */
   end?: (end: HostedCallEnd) => void;
 }
@@ -748,6 +753,7 @@ const runCall = async (
     userAgent: profile.userAgent,
     sign: profile.sign,
     limits: call.gate,
+    subresourceLimits: call.subresourceGate,
     crawl: info.crawl,
   });
 

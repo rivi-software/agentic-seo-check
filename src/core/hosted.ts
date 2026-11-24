@@ -79,6 +79,16 @@ export const HOSTED_LIMITS = {
    * the caller waiting for minutes. One total, so that links to many sites cannot add more.
    */
   crawlDelayBudgetMs: 30_000,
+  /**
+   * Requests one render sends for the page's browser, each redirect's hop counted (issue #230): a
+   * page's scripts decide how many it asks for, and each goes out signed by the server.
+   */
+  maxRenderRequests: 200,
+  /**
+   * Bytes of answers one render holds before the browser has them: eight bodies of `maxBodyBytes`,
+   * well within a Worker's 128 MB.
+   */
+  maxRenderBytesInFlight: 16_000_000,
 } as const;
 
 /** How many days a background crawl's result is kept (issue #209; the bucket's rule on `crawls/`). */
@@ -254,6 +264,11 @@ export interface HostedRequests {
   sign?: FetchOptions["sign"];
   /** The Worker's request limits, asked after the hosted server's own rules. */
   limits?: RequestGate;
+  /**
+   * The Worker's limits on what a rendered page requests besides its own navigation (issue #230),
+   * asked after the same rules. Given, the options have a `subresourceGate`.
+   */
+  subresourceLimits?: RequestGate;
   /** The call crawls a site, so it keeps the Crawl-delay robots.txt asks for. */
   crawl: boolean;
 }
@@ -304,9 +319,8 @@ const disallowed = (
  * gate's robots.txt is the audit's too (`RequestGate.robotsTxt`), so it costs no second request.
  */
 export const hostedFetch = (requests: HostedRequests): FetchOptions => {
-  const { userAgent, sign, limits, crawl } = requests;
+  const { userAgent, sign, limits, subresourceLimits, crawl } = requests;
   const token = robotsUserAgentToken(userAgent);
-  const base = siteGate(limits);
   const files = new Map<string, Promise<FetchResult>>();
   const parsed = new Map<string, Promise<RobotsResult>>();
   /** When each origin's robots.txt was requested. */
@@ -320,7 +334,14 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
   /** The delay Crawl-delay has added to the crawl so far, every site's together. */
   let delayedMs = 0;
 
-  const robotsTxt = (origin: string): Promise<FetchResult> => {
+  /**
+   * The robots.txt of `origin`, requested once through `through`: the gate of the request that
+   * first needs it, so a render's font asks the subresource limits for its host's robots.txt too.
+   */
+  const robotsTxt = (
+    origin: string,
+    through: RequestGate
+  ): Promise<FetchResult> => {
     let pending = files.get(origin);
 
     if (!pending) {
@@ -330,7 +351,7 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
         sign,
         maxBodyBytes: HOSTED_LIMITS.maxBodyBytes,
         timeoutMs: ROBOTS_TIMEOUT_MS,
-        gate: base,
+        gate: through,
       });
       files.set(origin, pending);
     }
@@ -338,12 +359,17 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
     return pending;
   };
 
-  const robotsFor = (origin: string): Promise<RobotsResult> => {
+  const robotsFor = (
+    origin: string,
+    through: RequestGate
+  ): Promise<RobotsResult> => {
     let pending = parsed.get(origin);
 
     if (!pending) {
       const url = new URL("/robots.txt", origin).href;
-      pending = robotsTxt(origin).then((res) => robotsOf(url, res, userAgent));
+      pending = robotsTxt(origin, through).then((res) =>
+        robotsOf(url, res, userAgent)
+      );
       parsed.set(origin, pending);
     }
 
@@ -389,11 +415,14 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
   };
 
   /** robots.txt's say on `url`: a refusal, or undefined once it may go. */
-  const obeyRobots = async (url: URL): Promise<Refusal | undefined> => {
+  const obeyRobots = async (
+    url: URL,
+    through: RequestGate
+  ): Promise<Refusal | undefined> => {
     let robots: RobotsResult;
 
     try {
-      robots = await robotsFor(url.origin);
+      robots = await robotsFor(url.origin, through);
     } catch (error) {
       if (!(error instanceof RequestRefusedError)) {
         throw error;
@@ -409,27 +438,35 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
     return disallowed(url, robots, token) ?? pace(url, robots);
   };
 
-  const gate: RequestGate = {
-    ...base,
-    beforeRequest: async (url) => {
-      const problem = hostedUrlProblem(url);
+  /** The gate whose requests the Worker's `own` limits hold, after the address rules and robots.txt. */
+  const gateFor = (own?: RequestGate): RequestGate => {
+    const through = siteGate(own);
 
-      if (problem) {
-        return addressRefusal(problem);
-      }
+    return {
+      ...through,
+      beforeRequest: async (url) => {
+        const problem = hostedUrlProblem(url);
 
-      const refusal =
-        url.pathname === "/robots.txt" ? undefined : await obeyRobots(url);
+        if (problem) {
+          return addressRefusal(problem);
+        }
 
-      return refusal ?? limits?.beforeRequest(url);
-    },
-    robotsTxt,
+        const refusal =
+          url.pathname === "/robots.txt"
+            ? undefined
+            : await obeyRobots(url, through);
+
+        return refusal ?? own?.beforeRequest(url);
+      },
+      robotsTxt: (origin) => robotsTxt(origin, through),
+    };
   };
 
   return {
     userAgent,
     sign,
     maxBodyBytes: HOSTED_LIMITS.maxBodyBytes,
-    gate,
+    gate: gateFor(limits),
+    ...(subresourceLimits && { subresourceGate: gateFor(subresourceLimits) }),
   };
 };

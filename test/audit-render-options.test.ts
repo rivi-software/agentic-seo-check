@@ -1,9 +1,9 @@
-import type { Browser } from "playwright";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RequestRefusedError } from "../src/core/fetch.js";
 import * as render from "../src/core/render.js";
 import { RenderUnavailableError } from "../src/core/render.js";
+import type { RenderBrowser } from "../src/core/render.js";
 import { startFixtureServer } from "./helpers/fixture-server.js";
 
 // The tests launch no browser (AGENTS.md), and renderPage is what the audit calls: it is the seam.
@@ -14,7 +14,7 @@ vi.mock(import("../src/core/render.js"), async (importOriginal) => ({
 }));
 
 // SAFETY: renderPage is mocked, so nothing reads the browser; only its identity is passed on.
-const fakeBrowser = {} as Browser;
+const fakeBrowser = {} as RenderBrowser;
 
 const HTML =
   "<!doctype html><html lang=en><head><title>Hello</title></head><body><h1>Hi</h1></body></html>";
@@ -48,7 +48,7 @@ describe("audit with a supplied browser", () => {
     await withServer(async (url) => {
       mocked.mockResolvedValue({ ...rendered, finalUrl: `${url}/` });
 
-      const launch = vi.fn<() => Promise<Browser>>(() =>
+      const launch = vi.fn<() => Promise<RenderBrowser>>(() =>
         Promise.resolve(fakeBrowser)
       );
 
@@ -60,6 +60,37 @@ describe("audit with a supplied browser", () => {
 
       expect(options?.launch).toBe(launch);
       expect(options?.fetchThrough).toBeTypeOf("function");
+    });
+  });
+
+  it("keeps how many requests the render blocked on the rendering, and holds it to the browser's limits", async () => {
+    await withServer(async (url) => {
+      let second: unknown;
+
+      mocked.mockImplementation(async (target, options) => {
+        const ask = () =>
+          options?.fetchThrough?.({
+            url: target,
+            method: "GET",
+            headers: {},
+            resourceType: "script",
+          });
+
+        await ask();
+        second = await ask();
+
+        return { ...rendered, finalUrl: target, blockedRequests: 2 };
+      });
+
+      const { auditUrl } = await import("../src/core/audit.js");
+
+      const audit = await auditUrl(url, {
+        render: true,
+        browser: { launch: () => Promise.resolve(fakeBrowser), maxRequests: 1 },
+      });
+
+      expect(audit.rendering?.blockedRequests).toBe(2);
+      expect(second).toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
     });
   });
 

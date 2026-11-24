@@ -95,6 +95,10 @@ describe(fetchThroughOptions, () => {
     },
     "/private.js": { body: "secret" },
     "/redirect": { status: 302, headers: { location: "/target" } },
+    "/hop1": { status: 302, headers: { location: "/hop2" } },
+    "/hop2": { status: 302, headers: { location: "/hop3" } },
+    "/hop3": { body: "end" },
+    "/loop": { status: 302, headers: { location: "/loop" } },
     "/target": { body: "<p>target</p>" },
     "/big.js": { body: "x".repeat(2000) },
     "/exact.js": { body: "x".repeat(1000) },
@@ -113,6 +117,12 @@ describe(fetchThroughOptions, () => {
   beforeAll(async () => {
     site = await startFixtureServer(siteRoutes);
     other = await startFixtureServer(otherRoutes);
+    siteRoutes["/away"] = {
+      status: 302,
+      headers: {
+        location: `${other.origin.replace("localhost", "127.0.0.1")}/lib.js`,
+      },
+    };
   });
 
   afterAll(async () => {
@@ -164,19 +174,120 @@ describe(fetchThroughOptions, () => {
     expect(site.requests).not.toContain("/private.js");
   });
 
-  it("fulfils a redirect as the redirect, with its location, and does not follow it", async () => {
+  it("walks a redirect itself, asking the gate and signing each hop, and fulfils the last answer", async () => {
     const { gate, asked } = gateStub();
+    const through = fetchThroughOptions(optionsWith(gate), `${site.origin}/`);
+
+    const answer = await through(
+      request(`${site.origin}/redirect`, { resourceType: "image" })
+    );
+
+    expect({
+      status: answer.kind === "fulfil" && answer.status,
+      body: text(answer),
+      location: header(answer, "location"),
+    }).toStrictEqual({
+      status: 200,
+      body: "<p>target</p>",
+      location: undefined,
+    });
+    expect(asked).toStrictEqual(["/redirect", "/target"]);
+
+    const hop = site.requestHeaders[site.requests.lastIndexOf("/target")];
+
+    expect({
+      ua: hop?.["user-agent"],
+      signature: hop?.["signature"],
+    }).toStrictEqual({ ua: USER_AGENT, signature: "sig1=:test:" });
+  });
+
+  it("fails a redirect whose next hop the gate refuses, and sends that hop nothing", async () => {
+    const { gate } = gateStub(["/target"]);
     const through = fetchThroughOptions(optionsWith(gate), `${site.origin}/`);
     const before = site.requests.filter((p) => p === "/target").length;
 
-    const answer = await through(
-      request(`${site.origin}/redirect`, { resourceType: "document" })
+    await expect(
+      through(request(`${site.origin}/redirect`))
+    ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
+    expect(site.requests.filter((p) => p === "/target")).toHaveLength(before);
+  });
+
+  it("fails a redirect walk past maxRedirects, and a loop", async () => {
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(
+      optionsWith(gate, { maxRedirects: 1 }),
+      `${site.origin}/`
     );
 
-    expect(answer.kind === "fulfil" && answer.status).toBe(302);
-    expect(header(answer, "location")).toBe("/target");
-    expect(site.requests.filter((p) => p === "/target")).toHaveLength(before);
-    expect(asked).toStrictEqual(["/redirect"]);
+    const before = site.requests.filter((p) => p === "/hop3").length;
+
+    await expect(
+      through(request(`${site.origin}/hop1`))
+    ).resolves.toStrictEqual({ kind: "fail", reason: "Failed" });
+    expect(site.requests.filter((p) => p === "/hop3")).toHaveLength(before);
+    await expect(
+      through(request(`${site.origin}/loop`))
+    ).resolves.toStrictEqual({ kind: "fail", reason: "Failed" });
+  });
+
+  it("carries neither the user's headers nor the browser's cookie along a redirect to another origin", async () => {
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(
+      optionsWith(gate, { headers: { Authorization: SECRET } }),
+      `${site.origin}/`
+    );
+
+    const answer = await through(
+      request(`${site.origin}/away`, {
+        headers: { accept: "*/*", cookie: "session=1" },
+      })
+    );
+
+    expect(text(answer)).toBe("lib");
+
+    const first = site.requestHeaders[site.requests.lastIndexOf("/away")];
+    const hop = other.requestHeaders[other.requests.lastIndexOf("/lib.js")];
+
+    expect({
+      auth: first?.["authorization"],
+      cookie: first?.["cookie"],
+    }).toStrictEqual({ auth: SECRET, cookie: "session=1" });
+    expect({
+      auth: hop?.["authorization"],
+      cookie: hop?.["cookie"],
+      signature: hop?.["signature"],
+    }).toStrictEqual({
+      auth: undefined,
+      cookie: undefined,
+      signature: "sig1=:test:",
+    });
+  });
+
+  it("asks the navigation's gate for the page's own navigation, and the subresources' gate for the rest", async () => {
+    const own = gateStub();
+    const sub = gateStub();
+
+    const through = fetchThroughOptions(
+      optionsWith(own.gate, { subresourceGate: sub.gate }),
+      `${site.origin}/`
+    );
+
+    await through(
+      request(`${site.origin}/target`, {
+        resourceType: "document",
+        navigation: true,
+      })
+    );
+    await through(request(`${site.origin}/app.js`));
+    // A frame's document is no navigation of the page.
+    await through(request(`${site.origin}/hop3`, { resourceType: "document" }));
+
+    expect({ own: own.asked, sub: sub.asked }).toStrictEqual({
+      own: ["/target"],
+      sub: ["/app.js", "/hop3"],
+    });
   });
 
   it("fails a body over maxBodyBytes, and fulfils one at the cap", async () => {
@@ -302,7 +413,7 @@ describe(fetchThroughOptions, () => {
             : undefined,
       }),
       `${site.origin}/`,
-      refusals
+      { refusals }
     );
 
     await expect(
@@ -318,22 +429,75 @@ describe(fetchThroughOptions, () => {
     expect(refusals.of(`${site.origin}/after.js`)?.reason).toBe("http_429");
   });
 
-  it("sends a POST with its body", async () => {
-    const { gate } = gateStub();
+  it("sends GET and HEAD only: any other method is blocked and sends nothing", async () => {
+    const { gate, asked } = gateStub();
     const through = fetchThroughOptions(optionsWith(gate), `${site.origin}/`);
+    const before = site.requests.filter((p) => p === "/form").length;
 
-    const answer = await through(
-      request(`${site.origin}/form`, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        postData: "a=1&b=2",
-        resourceType: "fetch",
-      })
+    for (const method of ["POST", "PUT", "DELETE", "PATCH"]) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one method at a time
+      await expect(
+        through(
+          request(`${site.origin}/form`, { method, resourceType: "fetch" })
+        )
+      ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
+    }
+
+    expect(asked).toStrictEqual([]);
+    expect(site.requests.filter((p) => p === "/form")).toHaveLength(before);
+
+    const head = await through(
+      request(`${site.origin}/form`, { method: "HEAD", resourceType: "fetch" })
     );
 
-    expect(text(answer)).toBe("ok");
-    const index = site.requests.lastIndexOf("/form");
-    expect(site.requestBodies[index]).toBe("a=1&b=2");
+    expect(head.kind === "fulfil" && head.status).toBe(200);
+  });
+
+  it("blocks a render's requests past maxRequests, a redirect's hops counted, and sends them nothing", async () => {
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(optionsWith(gate), `${site.origin}/`, {
+      maxRequests: 3,
+    });
+
+    // Two requests: /redirect and its hop to /target.
+    const walked = await through(request(`${site.origin}/redirect`));
+    const script = await through(request(`${site.origin}/app.js`));
+
+    expect([walked.kind, script.kind]).toStrictEqual(["fulfil", "fulfil"]);
+
+    const before = site.requests.length;
+
+    await expect(
+      through(request(`${site.origin}/after.js`))
+    ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
+    expect(site.requests).toHaveLength(before);
+  });
+
+  it("blocks an answer past the bytes in flight, until the browser has the ones before it", async () => {
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(optionsWith(gate), `${site.origin}/`, {
+      maxBytesInFlight: 1500,
+    });
+
+    const first = await through(request(`${site.origin}/exact.js`));
+
+    expect(first.kind).toBe("fulfil");
+    await expect(
+      through(request(`${site.origin}/exact.js`))
+    ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
+
+    through.delivered(first);
+    // Told twice, it lets go once.
+    through.delivered(first);
+
+    const third = await through(request(`${site.origin}/exact.js`));
+
+    expect(third.kind).toBe("fulfil");
+    await expect(
+      through(request(`${site.origin}/exact.js`))
+    ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
   });
 });
 

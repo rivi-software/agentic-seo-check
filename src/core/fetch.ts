@@ -134,6 +134,13 @@ export interface FetchOptions {
   /** What the audit may request; `fetchPage` throws RequestRefusedError for what it may not. */
   gate?: RequestGate;
   /**
+   * What a rendered page may request besides its own navigation (issue #230): its scripts,
+   * stylesheets, images, fonts and frames, which are no site the audit visits. Without it, `gate`.
+   * The hosted server's obeys robots.txt and its URL rules as `gate` does, but spends none of the
+   * caller's sites of the day on a font's host.
+   */
+  subresourceGate?: RequestGate;
+  /**
    * The headers that sign a request (the hosted server's Web Bot Auth signature), asked for each
    * request the gate lets through: the first and every redirect, since a signature covers the
    * host it goes to.
