@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { auditUrl } from "../src/core/audit.js";
@@ -15,6 +17,8 @@ import { siteRoutes, startFixtureServer } from "./helpers/fixture-server.js";
 import type { FixtureServer } from "./helpers/fixture-server.js";
 
 const lhr: LhrLike = lhrJson;
+
+const fixtureLab: LabRunner = () => Promise.resolve(lhr);
 
 describe("a supplied lab runner", () => {
   let server: FixtureServer;
@@ -199,6 +203,38 @@ describe("a supplied lab runner", () => {
 
     expect(met.toSorted()).toStrictEqual(["lab", "render"]);
     expect(result.performance?.source).toBe("pagespeed-insights");
+  });
+
+  it("answers a lab refusal only once the render beside it has settled", async () => {
+    const events: string[] = [];
+
+    const labGate: RequestGate = {
+      beforeRequest: () => ({
+        message: "robots.txt keeps the lab out.",
+        scope: "url",
+        reason: "robots_txt",
+      }),
+    };
+
+    const launch = async (): Promise<RenderBrowser> => {
+      await sleep(100);
+      events.push("render settled");
+
+      throw new RenderUnavailableError("No browser in this test.");
+    };
+
+    await expect(
+      audit({
+        lighthouse: true,
+        render: true,
+        lab: fixtureLab,
+        browser: { launch },
+        fetch: { labGate },
+      })
+    ).rejects.toMatchObject({ name: "RequestRefusedError" });
+    events.push("answered");
+
+    expect(events).toStrictEqual(["render settled", "answered"]);
   });
 
   it("reads the metrics of the fixture", async () => {

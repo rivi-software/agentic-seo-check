@@ -589,12 +589,20 @@ const enrichPage = async (
   if (options.lab && options.render && options.lighthouse) {
     // A supplied lab runs elsewhere (Google's servers, issue #222), so it need not wait for the
     // render: both at once save a minute. A local Lighthouse launches its own Chrome, so it waits.
-    const [rendered, measured] = await Promise.all([
+    // Both settle before the call answers, a refusal included, so the browser is closed and no
+    // work outlives the answer; then the first failure, the render's before the lab's, is thrown.
+    const settled = await Promise.allSettled([
       renderFindings(audit, options, url),
       lighthouseFindings(audit, options, url),
     ]);
 
-    extra.push(...rendered, ...measured);
+    for (const side of settled) {
+      if (side.status === "rejected") {
+        throw side.reason;
+      }
+
+      extra.push(...side.value);
+    }
   } else {
     if (options.render) {
       extra.push(...(await renderFindings(audit, options, url)));

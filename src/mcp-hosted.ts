@@ -400,7 +400,7 @@ const lighthouse = z
   .boolean()
   .optional()
   .describe(
-    "With `url`: also run Lighthouse (performance and SEO categories) on Google's PageSpeed Insights, which loads the page from Google's servers. Needs a subscription. Slow: 20-60 seconds."
+    "With `url`: also run Lighthouse (performance and SEO categories) on Google's PageSpeed Insights, which loads the page from Google's servers. Needs a subscription. Slow: a run can take up to a minute."
   );
 
 /** `formFactor` beside `lighthouse`, as the local tool has it. */
