@@ -71,12 +71,20 @@
   // Shared reports (src/shared-reports.ts): each kept for 30 days in the EU, under a random id. The
   // bucket's lifecycle rule deletes them: `wrangler r2 bucket lifecycle add
   // agentic-seo-check-shared-reports expire-reports reports/ --expire-days 30 --jurisdiction eu`.
+  // Background crawls (src/crawls.ts, issue #209) are kept beside them for 7 days (CRAWL_DAYS), and
+  // a rule of their own deletes them: `wrangler r2 bucket lifecycle add
+  // agentic-seo-check-shared-reports expire-crawls crawls/ --expire-days 7 --jurisdiction eu`.
   "r2_buckets": [
     {
       "binding": "SHARED_REPORTS",
       "bucket_name": "agentic-seo-check-shared-reports",
       "jurisdiction": "eu"
     }
+  ],
+  // The Workflow that runs a background crawl seo_start_crawl started (src/crawls.ts, issue #209).
+  // The website starts none, so its configuration binds none.
+  "workflows": [
+    { "name": "agentic-seo-check-crawls", "binding": "CRAWLS", "class_name": "CrawlWorkflow" }
   ],
   // One record per tool call: the tool, the outcome, the duration, the requests and pages, the target hostname.
   // Analytics Engine keeps data for three months.

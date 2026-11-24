@@ -85,4 +85,15 @@ describe("the two Workers' configurations", () => {
       })),
     ]);
   });
+
+  it("bind background crawls on the MCP server only (issue #209)", () => {
+    expect(server.workflows).toStrictEqual([
+      {
+        name: "agentic-seo-check-crawls",
+        binding: "CRAWLS",
+        class_name: "CrawlWorkflow",
+      },
+    ]);
+    expect(site.workflows).toStrictEqual([]);
+  });
 });
