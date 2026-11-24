@@ -1,0 +1,21 @@
+test/audit-lab.test.ts
+  s_46ac76d26da34b::t_54057a85c593bc 61-89
+test/hosted.test.ts
+  s_46ac76d26da34b::t_54057a85c593bc 3264-3268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d597c61f4a07cd03e945c512a5ad4e4633e50240",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
