@@ -70,7 +70,8 @@ interface LhAudit {
   details?: object;
 }
 
-interface LhrLike {
+/** A Lighthouse result as `summarize` reads it: a local run's, or PageSpeed Insights' `lighthouseResult`. */
+export interface LhrLike {
   lighthouseVersion: string;
   requestedUrl?: string;
   finalDisplayedUrl?: string;

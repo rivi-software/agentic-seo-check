@@ -107,6 +107,12 @@ export type {
 
 export { ExpectedError } from "./core/errors.js";
 
+export { LabUnavailableError, pageSpeedInsights } from "./core/psi.js";
+
+export type { LabRunner, PsiOptions } from "./core/psi.js";
+
+export type { LhrLike } from "./core/lighthouse.js";
+
 export { FieldDataKeyError } from "./core/field-data.js";
 
 export type { FieldDataCache, FieldDataOptions } from "./core/field-data.js";

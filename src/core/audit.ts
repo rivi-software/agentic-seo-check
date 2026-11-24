@@ -9,6 +9,7 @@ import type {
 } from "./crawl.js";
 import { caughtError, ExpectedError } from "./errors.js";
 import {
+  askGate,
   DEFAULT_USER_AGENT,
   fetchPage,
   forAuditOf,
@@ -26,8 +27,14 @@ import {
 } from "./field-data.js";
 import type { FieldDataOptions } from "./field-data.js";
 import { extractPage } from "./html/extract.js";
-import { runLighthouse, LighthouseUnavailableError } from "./lighthouse.js";
+import {
+  runLighthouse,
+  summarize,
+  LighthouseUnavailableError,
+} from "./lighthouse.js";
 import { performanceFindings } from "./performance-rules.js";
+import { LabUnavailableError } from "./psi.js";
+import type { LabRunner } from "./psi.js";
 import {
   assignIds,
   compareWithBaseline,
@@ -84,6 +91,12 @@ export interface AuditOptions {
   /** Run Lighthouse (performance + SEO + agentic-browsing categories). */
   lighthouse?: boolean;
   formFactor?: "mobile" | "desktop";
+  /**
+   * A lab runner the caller supplies for `lighthouse` (the hosted server's, from PageSpeed
+   * Insights, issue #222), in place of a local Lighthouse. It is asked only once `fetch`'s gate
+   * lets the page's URL through, since the runner's service visits the page.
+   */
+  lab?: LabRunner;
   /**
    * Real-user Core Web Vitals from the Chrome UX Report for a URL, or its origin when it has too
    * few visits; a crawl asks for its first pages (issue #130). `true` reads the API key from
@@ -512,12 +525,22 @@ const lighthouseFindings = async (
     message: `Running Lighthouse (${options.formFactor ?? "mobile"}) on ${url}`,
   });
 
+  const formFactor = options.formFactor ?? "mobile";
+
+  // Asked outside the try: a refused page is the site's answer, not a finding about the lab, as
+  // in renderFindings.
+  if (options.lab) {
+    await askGate(options.fetch?.gate, url);
+  }
+
   try {
-    const perf = await runLighthouse(url, {
-      formFactor: options.formFactor ?? "mobile",
-      userAgent: options.fetch?.userAgent,
-      headers: options.fetch?.headers,
-    });
+    const perf = options.lab
+      ? summarize(await options.lab(url, formFactor), url, formFactor)
+      : await runLighthouse(url, {
+          formFactor,
+          userAgent: options.fetch?.userAgent,
+          headers: options.fetch?.headers,
+        });
 
     audit.performance = perf;
 
@@ -529,7 +552,8 @@ const lighthouseFindings = async (
     return [
       toolFinding(
         "tool.lighthouse-unavailable",
-        error instanceof LighthouseUnavailableError
+        error instanceof LighthouseUnavailableError ||
+          error instanceof LabUnavailableError
           ? error.message
           : `Lighthouse failed: ${error instanceof Error ? error.message : String(error)}`,
         url

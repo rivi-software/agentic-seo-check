@@ -1,0 +1,110 @@
+{
+  "lighthouseVersion": "13.0.1",
+  "requestedUrl": "https://www.example.com/widgets/",
+  "finalUrl": "https://www.example.com/widgets/",
+  "finalDisplayedUrl": "https://www.example.com/widgets/",
+  "categories": {
+    "performance": {
+      "score": 0.62,
+      "auditRefs": [
+        { "id": "first-contentful-paint", "weight": 10, "group": "metrics" },
+        { "id": "largest-contentful-paint", "weight": 25, "group": "metrics" },
+        { "id": "total-blocking-time", "weight": 30, "group": "metrics" },
+        { "id": "cumulative-layout-shift", "weight": 25, "group": "metrics" },
+        { "id": "speed-index", "weight": 10, "group": "metrics" },
+        { "id": "render-blocking-insight", "weight": 0 }
+      ]
+    },
+    "seo": {
+      "score": 0.92,
+      "auditRefs": [{ "id": "robots-txt", "weight": 1 }]
+    }
+  },
+  "audits": {
+    "first-contentful-paint": {
+      "id": "first-contentful-paint",
+      "title": "First Contentful Paint",
+      "description": "",
+      "score": 0.5,
+      "scoreDisplayMode": "numeric",
+      "numericValue": 2400,
+      "displayValue": "2.4 s"
+    },
+    "largest-contentful-paint": {
+      "id": "largest-contentful-paint",
+      "title": "Largest Contentful Paint",
+      "description": "",
+      "score": 0.3,
+      "scoreDisplayMode": "numeric",
+      "numericValue": 4600,
+      "displayValue": "4.6 s"
+    },
+    "total-blocking-time": {
+      "id": "total-blocking-time",
+      "title": "Total Blocking Time",
+      "description": "",
+      "score": 0.4,
+      "scoreDisplayMode": "numeric",
+      "numericValue": 520,
+      "displayValue": "520 ms"
+    },
+    "cumulative-layout-shift": {
+      "id": "cumulative-layout-shift",
+      "title": "Cumulative Layout Shift",
+      "description": "",
+      "score": 0.4,
+      "scoreDisplayMode": "numeric",
+      "numericValue": 0.31,
+      "displayValue": "0.31"
+    },
+    "speed-index": {
+      "id": "speed-index",
+      "title": "Speed Index",
+      "description": "",
+      "score": 0.7,
+      "scoreDisplayMode": "numeric",
+      "numericValue": 3900,
+      "displayValue": "3.9 s"
+    },
+    "server-response-time": {
+      "id": "server-response-time",
+      "title": "Initial server response time",
+      "description": "",
+      "score": 1,
+      "scoreDisplayMode": "metricSavings",
+      "numericValue": 180
+    },
+    "render-blocking-insight": {
+      "id": "render-blocking-insight",
+      "title": "Render blocking requests",
+      "description": "Requests block the first paint.",
+      "score": 0.5,
+      "scoreDisplayMode": "metricSavings",
+      "metricSavings": { "FCP": 600, "LCP": 600 },
+      "details": {
+        "type": "table",
+        "overallSavingsMs": 600,
+        "items": [
+          {
+            "url": "https://www.example.com/app.css",
+            "totalBytes": 20000,
+            "wastedMs": 600
+          }
+        ]
+      }
+    },
+    "robots-txt": {
+      "id": "robots-txt",
+      "title": "robots.txt is not valid",
+      "description": "Malformed robots.txt.",
+      "score": 0,
+      "scoreDisplayMode": "binary",
+      "details": {
+        "type": "table",
+        "items": [
+          { "index": "4", "line": "Disalow: /cart", "message": "Unknown directive" }
+        ]
+      }
+    }
+  }
+}
