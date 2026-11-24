@@ -54,7 +54,13 @@ const ID_BYTES = 16;
 /** An id as /report/<id> has it: 22 characters of base64url. */
 export const REPORT_ID = /^[\w-]{22}$/u;
 
-const DAY_MS = 86_400_000;
+export const DAY_MS = 86_400_000;
+
+/** A new id of ID_BYTES random bytes, in base64url as REPORT_ID reads it. */
+export const newId = (): string =>
+  Buffer.from(crypto.getRandomValues(new Uint8Array(ID_BYTES))).toString(
+    "base64url"
+  );
 
 /** The path of a shared report's page. */
 export const reportPath = (id: string): string => `/report/${id}`;
@@ -68,9 +74,7 @@ export const keepReport = async (
   source: ReportSource,
   now = new Date()
 ): Promise<ShareLink> => {
-  const id = Buffer.from(
-    crypto.getRandomValues(new Uint8Array(ID_BYTES))
-  ).toString("base64url");
+  const id = newId();
 
   const expiresAt = new Date(now.getTime() + SHARE_DAYS * DAY_MS).toISOString();
 
