@@ -1,0 +1,29 @@
+hosted/README.md
+  s_591d3d85af19c1::t_e5cca079966347 15
+hosted/test/limits.test.ts
+  s_591d3d85af19c1::t_a8f88562233e1f 174-176,379,390-396,410
+  s_591d3d85af19c1::t_039dd98c97988b 6-11,38-39,60,130,347-378,380-389,397-409
+  s_591d3d85af19c1::t_36e5e4046930ad 411
+hosted/src/limits.ts
+  s_591d3d85af19c1::t_541a66f0f7ee86 259-270,274-283,286-290,292-294,299,301,305-308,310-311,313-318,320,324-325,327-328,331-335
+  s_591d3d85af19c1::t_d82b8dbaa40a6d 1-2,271,291,295-298,309
+  s_591d3d85af19c1::t_3917c837eb6171 272-273,285,312,326,330
+  s_591d3d85af19c1::t_645fe635afdf41 329
+  s_591d3d85af19c1::t_f9189da5faac05 284,336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c2915f495d0defb67312e1349a203db0d777565d",
+  "prompts": {},
+  "sessions": {
+    "s_591d3d85af19c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e63a2d21-71c3-4ee8-8064-46d1db8c0d1d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
