@@ -1748,6 +1748,22 @@ describe("the hosted Worker in workerd", () => {
     /** Wrangler's Local Explorer, which reads the local D1 database and the emails sent. */
     const EXPLORER = `${ORIGIN}/cdn-cgi/local/explorer/api`;
     const ACCOUNTS_ID = "00000000-0000-4000-8000-000000000000";
+    const OAUTH_KV_ID = "00000000000000000000000000000000";
+
+    const SqlAnswer = z.object({
+      result: z.array(
+        z.object({ results: z.object({ rows: z.array(z.array(z.unknown())) }) })
+      ),
+    });
+
+    const KvKeys = z.object({
+      result: z.array(z.object({ name: z.string() })),
+    });
+
+    const Tokens = z.object({
+      access_token: z.string(),
+      refresh_token: z.string(),
+    });
 
     const MIGRATION = readFileSync(
       new URL("../migrations-accounts/0001_accounts.sql", import.meta.url),
@@ -1763,7 +1779,7 @@ describe("the hosted Worker in workerd", () => {
     const SentEmail = z.object({ result: z.object({ text: z.string() }) });
 
     /** Runs `sql` on the MCP server's local accounts database. */
-    const accountsSql = async (sql: string) => {
+    const accountsSql = async (sql: string): Promise<unknown[][]> => {
       const { res, text } = await fetchRead(
         worker,
         `${EXPLORER}/d1/database/${ACCOUNTS_ID}/raw`,
@@ -1775,6 +1791,20 @@ describe("the hosted Worker in workerd", () => {
       );
 
       assert(res.ok, `the explorer ran the SQL: ${text}`);
+
+      return (
+        SqlAnswer.parse(JSON.parse(text)).result.at(-1)?.results.rows ?? []
+      );
+    };
+
+    /** The keys in the MCP server's local OAUTH_KV that start with `prefix`. */
+    const oauthKeys = async (prefix: string): Promise<string[]> => {
+      const { text } = await fetchRead(
+        worker,
+        `${EXPLORER}/storage/kv/namespaces/${OAUTH_KV_ID}/keys?prefix=${encodeURIComponent(prefix)}`
+      );
+
+      return KvKeys.parse(JSON.parse(text)).result.map((key) => key.name);
     };
 
     /** The code in the email sent to `email` (one each), as Email Service keeps it locally. */
@@ -1908,7 +1938,9 @@ describe("the hosted Worker in workerd", () => {
      * The whole sign-in as an MCP client and a person go through it: the client registers, the
      * person signs in and allows it, and the client trades the code it gets for a token.
      */
-    const signIn = async (email: string): Promise<string> => {
+    const signIn = async (
+      email: string
+    ): Promise<z.infer<typeof Tokens> & { clientId: string }> => {
       const clientId = await register();
       const verifier = randomBytes(32).toString("base64url");
 
@@ -1950,9 +1982,29 @@ describe("the hosted Worker in workerd", () => {
         }).toString(),
       });
 
-      return z
-        .object({ access_token: z.string() })
-        .parse(JSON.parse(token.text)).access_token;
+      return { ...Tokens.parse(JSON.parse(token.text)), clientId };
+    };
+
+    /** A refresh at the token endpoint, as the client sends it. */
+    const refresh = (clientId: string, refreshToken: string) =>
+      premium("/oauth/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: clientId,
+          resource: RESOURCE,
+        }).toString(),
+      });
+
+    /** The id of the account of `email`, read before a test deletes it. */
+    const accountIdOf = async (email: string): Promise<string> => {
+      const [row] = await accountsSql(
+        `SELECT id FROM accounts WHERE email = '${email}'`
+      );
+
+      return z.string().parse(row?.[0]);
     };
 
     const INITIALIZE = {
@@ -2033,7 +2085,7 @@ describe("the hosted Worker in workerd", () => {
     });
 
     it("sign a person in by an emailed code, and let their client call the tools with the token", async () => {
-      const token = await signIn("premium-one@example.com");
+      const { access_token: token } = await signIn("premium-one@example.com");
 
       const { res, text } = await mcpPost(worker, LIST_RULES, {
         ...PREMIUM_HEADER,
@@ -2044,9 +2096,10 @@ describe("the hosted Worker in workerd", () => {
       expect(text).toContain("title.missing");
     });
 
-    it("refuse the token of an account that was deleted", async () => {
+    it("refuse the token of an account that was deleted, and revoke its grants", async () => {
       const email = "premium-two@example.com";
-      const token = await signIn(email);
+      const { access_token: token } = await signIn(email);
+      const accountId = await accountIdOf(email);
       const auth = { ...PREMIUM_HEADER, authorization: `Bearer ${token}` };
 
       // A request that calls no tool reads no account, so the account's answer is not cached yet.
@@ -2062,6 +2115,29 @@ describe("the hosted Worker in workerd", () => {
         'error="invalid_token"'
       );
       expect(res.headers.get("www-authenticate")).toContain(METADATA);
+      // After the answer, the grants go, with every token of them.
+      await expect
+        .poll(() => oauthKeys(`grant:${accountId}:`))
+        .toStrictEqual([]);
+    });
+
+    it("refuse a refresh for an account that was deleted", async () => {
+      const email = "premium-three@example.com";
+      const tokens = await signIn(email);
+      const accountId = await accountIdOf(email);
+      const fresh = await refresh(tokens.clientId, tokens.refresh_token);
+      const renewed = Tokens.parse(JSON.parse(fresh.text));
+
+      await accountsSql(`DELETE FROM accounts WHERE email = '${email}'`);
+
+      const refused = await refresh(tokens.clientId, renewed.refresh_token);
+
+      expect(fresh.res.status).toBe(200);
+      expect([refused.res.status, JSON.parse(refused.text)]).toMatchObject([
+        400,
+        { error: "invalid_grant" },
+      ]);
+      await expect(oauthKeys(`grant:${accountId}:`)).resolves.toStrictEqual([]);
     });
 
     it("answer an anonymous /mcp without the premium server's KV and database", async () => {

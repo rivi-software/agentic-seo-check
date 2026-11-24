@@ -6,10 +6,20 @@
  * server's own page (authorize.ts). index.ts sends it the requests on the premium hostname only,
  * so agentic-seo.org serves none of OAuth's documents and its anonymous /mcp stays as it was.
  */
-import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
-import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import {
+  getOAuthApi,
+  OAuthError,
+  OAuthProvider,
+} from "@cloudflare/workers-oauth-provider";
+import type {
+  OAuthHelpers,
+  OAuthProviderOptions,
+} from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
 
+import { accountById } from "../accounts/store.js";
+import { reportTask } from "../analytics.js";
+import type { ReportTask } from "../analytics.js";
 import { accountCaller } from "../callers.js";
 import type { Caller } from "../callers.js";
 import { entitlement } from "../entitlement.js";
@@ -63,6 +73,60 @@ const accountGone = (): Response =>
   });
 
 /**
+ * Revokes every grant of an account that no longer exists, page by page, with their tokens: the
+ * website deletes the account but has no OAUTH_KV, so its grants would otherwise live out their
+ * 30 days. A failure goes to error tracking.
+ */
+const revokeGrants = async (
+  oauth: OAuthHelpers,
+  accountId: string,
+  report: ReportTask
+): Promise<void> => {
+  let cursor: string | undefined;
+
+  try {
+    do {
+      // oxlint-disable-next-line no-await-in-loop -- each page names the cursor of the next
+      const page = await oauth.listUserGrants(
+        accountId,
+        cursor === undefined ? {} : { cursor }
+      );
+
+      // oxlint-disable-next-line no-await-in-loop -- one page at a time, as listed
+      await Promise.all(
+        page.items.map((grant) => oauth.revokeGrant(grant.id, accountId))
+      );
+      ({ cursor } = page);
+    } while (cursor !== undefined);
+  } catch (error) {
+    // The client got its 401 already; error tracking hears why the grants stay.
+    report(error, "revoke_grants");
+  }
+};
+
+/**
+ * A refresh for an account that no longer exists fails, which also revokes its grant. It reads the
+ * database itself, not the entitlement's cached answer, so a deleted account gets no new token.
+ */
+const refreshOnlyForAccounts: OAuthProviderOptions<PremiumEnv>["tokenExchangeCallback"] =
+  async ({ grantType, props, env }) => {
+    if (grantType !== "refresh_token") {
+      return;
+    }
+
+    const parsed = Props.safeParse(props);
+
+    if (
+      !parsed.success ||
+      (await accountById(env.ACCOUNTS, parsed.data.accountId)) === null
+    ) {
+      throw new OAuthError("invalid_grant", {
+        description: "The account no longer exists. Sign in again.",
+      });
+    }
+  };
+
+/**
  * The provider, once for the isolate. Its handler for /mcp runs `mcp` as the token's account. Only
  * a request that may call a tool reads the account: initialize, tools/list and the like cost no
  * read of the database.
@@ -70,8 +134,8 @@ const accountGone = (): Response =>
 export const premiumProvider = (
   mcp: McpHandler,
   other: OtherHandler
-): OAuthProvider<PremiumEnv> =>
-  new OAuthProvider<PremiumEnv>({
+): OAuthProvider<PremiumEnv> => {
+  const options: OAuthProviderOptions<PremiumEnv> = {
     apiRoute: "/mcp",
     apiHandler: {
       async fetch(request, env, ctx) {
@@ -91,6 +155,16 @@ export const premiumProvider = (
         const { account, paid } = await entitlement(env, accountId, Date.now());
 
         if (account === null) {
+          // After the answer. The provider hands its helpers to the default handler only, so a
+          // request that came straight to /mcp builds them.
+          ctx.waitUntil(
+            revokeGrants(
+              env.OAUTH_PROVIDER ?? getOAuthApi(options, env),
+              accountId,
+              reportTask(env, ctx, "server:/mcp")
+            )
+          );
+
           return accountGone();
         }
 
@@ -112,10 +186,14 @@ export const premiumProvider = (
     tokenEndpoint: "/oauth/token",
     clientRegistrationEndpoint: "/oauth/register",
     clientIdMetadataDocumentEnabled: true,
+    tokenExchangeCallback: refreshOnlyForAccounts,
     scopesSupported: [PREMIUM_SCOPE],
     requiredScopes: [PREMIUM_SCOPE],
     resourceMetadata: {
       resource: RESOURCE,
       authorization_servers: [PREMIUM_ORIGIN],
     },
-  });
+  };
+
+  return new OAuthProvider<PremiumEnv>(options);
+};

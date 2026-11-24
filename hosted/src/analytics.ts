@@ -188,7 +188,8 @@ export type ErrorTask =
   | "call_record"
   | "openai_ranges"
   | "signing_keys"
-  | "request_signature";
+  | "request_signature"
+  | "revoke_grants";
 
 /** Hears an error of `task`, for its event; it never throws. */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
