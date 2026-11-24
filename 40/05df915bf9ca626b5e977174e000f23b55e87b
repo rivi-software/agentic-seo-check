@@ -1,0 +1,35 @@
+hosted/test/accounts-store.test.ts
+  s_46ac76d26da34b::t_3f280ff7ef8573 1-49,55-57,59-70,72-83,85-86,91-92
+  s_46ac76d26da34b::t_216f2e0d2178f1 50-54,58,71,84
+  s_46ac76d26da34b::t_c3438eb9d4137b 87-90,93-95
+hosted/migrations-accounts/0001_accounts.sql
+  s_46ac76d26da34b::t_3f280ff7ef8573 1-40
+hosted/src/site/waitlist.ts
+  s_46ac76d26da34b::t_3f280ff7ef8573 12,18-19,21
+hosted/src/accounts/store.ts
+  s_46ac76d26da34b::t_216f2e0d2178f1 1-149
+hosted/src/d1.ts
+  s_46ac76d26da34b::t_3f280ff7ef8573 1-13,15
+  s_46ac76d26da34b::t_b68a10d9fe21e3 14
+hosted/test/helpers/d1.ts
+  s_46ac76d26da34b::t_3f280ff7ef8573 1-34
+hosted/test/waitlist.test.ts
+  s_46ac76d26da34b::t_216f2e0d2178f1 23
+  s_46ac76d26da34b::t_3f280ff7ef8573 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4005df915bf9ca626b5e977174e000f23b55e87b",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
