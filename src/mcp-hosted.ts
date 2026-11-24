@@ -67,6 +67,7 @@ import {
   noteCall,
   noteConversation,
   noteFeedback,
+  withErrorType,
 } from "./telemetry/mcp.js";
 import type { CallProperties, CountedTool } from "./telemetry/mcp.js";
 import { uuidv7 } from "./telemetry/posthog.js";
@@ -1181,11 +1182,16 @@ const registerCrawlResult = (
           }
 
           if (state.status === "failed") {
+            // The kind of failure `fail` gave the crawl's error: a site's refusal is no bad input.
+            // The attempt that failed reported an internal error already, so none goes again.
             return {
-              result: {
-                isError: true,
-                content: [{ type: "text", text: state.failure.message }],
-              },
+              result: withErrorType(
+                {
+                  isError: true,
+                  content: [{ type: "text", text: state.failure.message }],
+                },
+                state.failure.refused ? "permission" : "internal"
+              ),
               pages: 0,
             };
           }

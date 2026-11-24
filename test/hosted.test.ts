@@ -2177,6 +2177,35 @@ describe("the hosted server", () => {
       expect(textOf(result)).toBe(message);
     });
 
+    it("names a failed crawl's kind of failure in its event: a refusal's, or internal", async () => {
+      const { crawls, states } = fakeCrawls();
+
+      const { client, calls } = await connectWatched(
+        profileWith({ crawls }).profile
+      );
+
+      for (const refused of [true, false]) {
+        states.set(CRAWL_ID, {
+          status: "failed",
+          startedAt: STARTED_AT,
+          endedAt: "2026-11-24T10:00:01.000Z",
+          failure: { message: "Agentic SEO Check error: it failed.", refused },
+        });
+        // oxlint-disable-next-line eslint/no-await-in-loop -- in order, as the expected list reads
+        await client.callTool({
+          name: "seo_crawl_result",
+          arguments: { id: CRAWL_ID },
+        });
+      }
+
+      expect(calls.map((c) => [c.isError, c.errorType, c.error])).toStrictEqual(
+        [
+          [true, "permission", undefined],
+          [true, "internal", undefined],
+        ]
+      );
+    });
+
     it("answers an unknown id as a tool error, crawl_not_found", async () => {
       const { crawls } = fakeCrawls();
 
