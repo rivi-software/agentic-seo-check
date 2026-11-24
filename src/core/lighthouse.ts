@@ -81,6 +81,13 @@ export interface LhrLike {
   audits: Record<string, LhAudit | undefined>;
 }
 
+/** The categories a local run measures; a lab that leaves one out says so in `notMeasured`. */
+export const LIGHTHOUSE_CATEGORIES = [
+  "performance",
+  "seo",
+  "agentic-browsing",
+] as const;
+
 /** The metrics whose savings Lighthouse reports in milliseconds. */
 const MS_SAVINGS_METRICS = ["LCP", "FCP", "TBT", "INP", "SI"];
 
@@ -867,7 +874,7 @@ export const runLighthouse = async (
       port: chrome.port,
       output: "json",
       logLevel: "silent",
-      onlyCategories: ["performance", "seo", "agentic-browsing"],
+      onlyCategories: [...LIGHTHOUSE_CATEGORIES],
     };
 
     // Not Lighthouse's `extraHeaders`, which go to every request the page makes.

@@ -15,7 +15,10 @@ const PAGE = "https://www.example.com/widgets/";
 type Fetcher = typeof fetch;
 
 const answering = (
-  body: { lighthouseResult?: LhrLike; error?: { message?: string } },
+  body: {
+    lighthouseResult?: LhrLike;
+    error?: { code?: number; message?: string };
+  },
   status = 200
 ) => vi.fn<Fetcher>(() => Promise.resolve(Response.json(body, { status })));
 

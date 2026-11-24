@@ -92,6 +92,43 @@ describe("a supplied lab runner", () => {
     expect(got).not.toContain("lighthouse.agentic-audit-failed");
   });
 
+  it("says the result is PageSpeed Insights', and what it did not measure, as its last keys", async () => {
+    const result = await audit({
+      lighthouse: true,
+      lab: () => Promise.resolve(lhr),
+    });
+
+    const keys = Object.keys(result.performance ?? {});
+
+    expect(result.performance?.source).toBe("pagespeed-insights");
+    expect(result.performance?.notMeasured).toStrictEqual(["agentic-browsing"]);
+    expect(keys.slice(-2)).toStrictEqual(["source", "notMeasured"]);
+  });
+
+  it("names nothing as not measured when the lab returned every category", async () => {
+    const full: LhrLike = {
+      ...lhr,
+      categories: {
+        ...lhr.categories,
+        "agentic-browsing": { score: 1, auditRefs: [] },
+      },
+    };
+
+    const result = await audit({
+      lighthouse: true,
+      lab: () => Promise.resolve(full),
+    });
+
+    expect(result.performance?.notMeasured).toStrictEqual([]);
+  });
+
+  it("leaves source and notMeasured off a local Lighthouse run's summary", () => {
+    const local = summarize(lhr, "https://www.example.com/", "mobile");
+
+    expect(local).not.toHaveProperty("source");
+    expect(local).not.toHaveProperty("notMeasured");
+  });
+
   it("reads the metrics of the fixture", async () => {
     const result = await audit({
       lighthouse: true,

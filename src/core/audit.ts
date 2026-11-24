@@ -28,10 +28,12 @@ import {
 import type { FieldDataOptions } from "./field-data.js";
 import { extractPage } from "./html/extract.js";
 import {
+  LIGHTHOUSE_CATEGORIES,
   runLighthouse,
   summarize,
   LighthouseUnavailableError,
 } from "./lighthouse.js";
+import type { LhrLike } from "./lighthouse.js";
 import { performanceFindings } from "./performance-rules.js";
 import { LabUnavailableError } from "./psi.js";
 import type { LabRunner } from "./psi.js";
@@ -69,6 +71,7 @@ import type {
   NoFieldData,
   PageAudit,
   PageSource,
+  PerformanceResult,
   Requirement,
   ResponseInfo,
   SiteAudit,
@@ -514,6 +517,20 @@ const renderFindings = async (
   }
 };
 
+/**
+ * A supplied lab's result: summarized as a local run is, then marked as PageSpeed Insights' with the
+ * categories it left out, as the object's last keys.
+ */
+const labResult = (
+  lhr: LhrLike,
+  url: string,
+  formFactor: "mobile" | "desktop"
+): PerformanceResult => ({
+  ...summarize(lhr, url, formFactor),
+  source: "pagespeed-insights",
+  notMeasured: LIGHTHOUSE_CATEGORIES.filter((c) => !lhr.categories[c]),
+});
+
 /** Runs Lighthouse on the page, on `audit.performance`. */
 const lighthouseFindings = async (
   audit: PageAudit,
@@ -535,7 +552,7 @@ const lighthouseFindings = async (
 
   try {
     const perf = options.lab
-      ? summarize(await options.lab(url, formFactor), url, formFactor)
+      ? labResult(await options.lab(url, formFactor), url, formFactor)
       : await runLighthouse(url, {
           formFactor,
           userAgent: options.fetch?.userAgent,
