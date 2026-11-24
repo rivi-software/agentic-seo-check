@@ -9,9 +9,10 @@ import type {
   BrowserWorker,
   WorkersLaunchOptions,
 } from "@cloudflare/playwright";
-import type { Browser } from "playwright";
 
+import { HOSTED_LIMITS } from "../../src/core/hosted.js";
 import { RenderUnavailableError } from "../../src/core/render.js";
+import type { RenderBrowser } from "../../src/core/render.js";
 import type { HostedProfile } from "../../src/mcp-hosted.js";
 
 /** `@cloudflare/playwright`'s `launch`, or a test's stand-in for it. */
@@ -49,6 +50,8 @@ export const serverBrowser = (
   binding: BrowserWorker | undefined,
   launch: BrowserLauncher = launchBrowserRun
 ): NonNullable<HostedProfile["browser"]> => ({
+  maxRequests: HOSTED_LIMITS.maxRenderRequests,
+  maxBytesInFlight: HOSTED_LIMITS.maxRenderBytesInFlight,
   launch: async () => {
     if (!binding) {
       throw new RenderUnavailableError(
@@ -59,7 +62,7 @@ export const serverBrowser = (
     try {
       // SAFETY: `@cloudflare/playwright` is Playwright's client for Browser Run, with Playwright's
       // own Browser API; the core calls only what both have (newContext, routing, pages, close).
-      return (await launch(binding, LAUNCH_OPTIONS)) as Browser;
+      return (await launch(binding, LAUNCH_OPTIONS)) as RenderBrowser;
     } catch (error) {
       if (error instanceof Error && NO_BROWSER_FREE.test(error.message)) {
         throw new RenderUnavailableError(

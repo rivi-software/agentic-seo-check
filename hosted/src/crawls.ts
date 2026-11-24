@@ -23,6 +23,7 @@ import type {
   BackgroundCrawls,
   CrawlFailure,
   CrawlState,
+  HostedPaid,
 } from "../../src/mcp-hosted.js";
 import { inRequest, reportError, reportTask } from "./analytics.js";
 import type { AnalyticsEnv, ErrorRoute, ReportTask } from "./analytics.js";
@@ -65,6 +66,8 @@ const StoredCrawlSchema = z.object({
   startedAt: z.string(),
   endedAt: z.string().optional(),
   options: kept<BackgroundCrawlOptions>(),
+  /** How a subscriber's crawl is paid for, so it counts against the subscribers' day (issue #230). */
+  paid: z.enum(["subscription", "per_call"]).optional(),
   seo: kept<SiteAudit>(),
   aeo: kept<AeoAudit>(),
   failure: z
@@ -154,7 +157,8 @@ export const keepCrawl = async (
   bucket: ReportBucket,
   id: string,
   options: BackgroundCrawlOptions,
-  now = new Date()
+  now = new Date(),
+  paid?: HostedPaid
 ): Promise<string> => {
   const startedAt = now.toISOString();
   const expiresAt = expiryAfter(CRAWL_DAYS, now);
@@ -162,7 +166,7 @@ export const keepCrawl = async (
   await write(
     bucket,
     id,
-    { status: "running", startedAt, options },
+    { status: "running", startedAt, options, ...(paid && { paid }) },
     { startedAt, expiresAt }
   );
 
@@ -179,12 +183,17 @@ export const storedCrawlOptions = async (
 ): Promise<{
   options: BackgroundCrawlOptions;
   times: CrawlTimes | undefined;
+  paid?: HostedPaid;
 } | null> => {
   const stored = await readStored(bucket, id, new Date());
 
-  return stored?.crawl.status === "running" && stored.crawl.options
-    ? { options: stored.crawl.options, times: stored.times }
-    : null;
+  if (stored?.crawl.status !== "running" || !stored.crawl.options) {
+    return null;
+  }
+
+  const { options, paid } = stored.crawl;
+
+  return { options, times: stored.times, ...(paid && { paid }) };
 };
 
 /** The times the start of the crawl under `id` wrote, read from the bucket, or undefined. */
@@ -268,7 +277,8 @@ export const backgroundCrawls = (
     SHARED_REPORTS?: ReportBucket;
     CRAWLS?: Pick<Workflow<CrawlParams>, "create">;
   },
-  report?: ReportTask
+  report?: ReportTask,
+  paid?: HostedPaid
 ): BackgroundCrawls | undefined => {
   const { SHARED_REPORTS: bucket, CRAWLS: workflow } = env;
 
@@ -280,7 +290,7 @@ export const backgroundCrawls = (
     start: async (options) => {
       const id = newCrawlId();
       // Kept first, so the Workflow finds its options however soon it runs.
-      const startedAt = await keepCrawl(bucket, id, options);
+      const startedAt = await keepCrawl(bucket, id, options, new Date(), paid);
 
       try {
         await workflow.create({ id, params: { id } });
@@ -373,13 +383,14 @@ export const crawlAttempt = (
       return { pages: 0 };
     }
 
-    const { options, times } = stored;
+    const { options, times, paid } = stored;
 
     const limits = backgroundCrawl(
       env,
       ctx,
       new URL(options.url).hostname,
-      report
+      report,
+      paid
     );
 
     const started = Date.now();

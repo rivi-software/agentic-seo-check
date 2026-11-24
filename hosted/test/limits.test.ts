@@ -1018,6 +1018,106 @@ describe("the hosted server's limits", () => {
       expect(stored().count).toBe(0);
     });
 
+    it("let a render's subresources reach other hosts without spending a site of the day or writing a record for each", async () => {
+      const { env, ctx, settled, points, asked, paid } = fakeEnv({
+        CALLER_SITES: 1,
+      });
+
+      const call = await hostedProfile(env, ctx, ANN, {
+        paid: "subscription",
+      }).startCall(RENDER);
+
+      const gate = call.subresourceGate;
+
+      expect(gate).toBeDefined();
+
+      const hosts = [
+        "fonts.googleapis.com",
+        "cdn.shopify.com",
+        "www.googletagmanager.com",
+      ];
+
+      for (const host of hosts) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- a render's requests, one after another
+        await expect(
+          gate?.beforeRequest(new URL(`https://${host}/x`))
+        ).resolves.toBeUndefined();
+      }
+
+      // The page's own navigation is the call's, and its site the one admitted.
+      await call.gate?.beforeRequest(new URL("https://www.example.com/"));
+      call.end?.({ outcome: "ok", pages: 1 });
+      await settled();
+
+      expect(asked.map((line) => line.split(" ")[2])).toStrictEqual([
+        "example.com",
+      ]);
+      expect(points.map((point) => point.blobs?.[2])).toStrictEqual([
+        "www.example.com",
+      ]);
+      // Counted against the subscribers' day, and in the call's own record.
+      expect(paid().count).toBe(4);
+      expect(points[0]?.doubles?.[1]).toBe(4);
+    });
+
+    it("hold a render's subresources to each host's requests a minute", async () => {
+      const { env, ctx } = fakeEnv({ SITE_REQUESTS: limiter(1) });
+
+      const call = await hostedProfile(env, ctx, ANN, {
+        paid: "subscription",
+      }).startCall(RENDER);
+
+      const font = new URL("https://fonts.googleapis.com/css");
+
+      await expect(
+        call.subresourceGate?.beforeRequest(font)
+      ).resolves.toBeUndefined();
+      await expect(
+        call.subresourceGate?.beforeRequest(font)
+      ).resolves.toMatchObject({ scope: "host", reason: "site_requests" });
+    });
+
+    it("give a call without render no subresource gate", async () => {
+      const { env, ctx } = fakeEnv();
+
+      const call = await hostedProfile(env, ctx, ANN, {
+        paid: "subscription",
+      }).startCall(PAGE);
+
+      expect(call.subresourceGate).toBeUndefined();
+    });
+
+    it("count a subscriber's background crawl against the subscribers' day, and check that day before it runs", async () => {
+      const day = new Date().toISOString().slice(0, 10);
+
+      const { env, ctx, settled, stored, paid } = fakeEnv({
+        DAILY_REQUESTS: 1,
+      });
+
+      // The free day is spent; the subscribers' is not.
+      await env.STATE.jurisdiction("eu")
+        .getByName("global")
+        .addRequests(day, 1);
+
+      const crawl = backgroundCrawl(
+        env,
+        ctx,
+        "shop.example.com",
+        undefined,
+        "subscription"
+      );
+
+      await expect(crawl.readmit()).resolves.toBeUndefined();
+      await crawl.gate.beforeRequest(new URL("https://shop.example.com/"));
+      crawl.end("ok", 1, 10);
+      await settled();
+
+      expect({ paid: paid().count, free: stored().count }).toStrictEqual({
+        paid: 1,
+        free: 1,
+      });
+    });
+
     it("refuse a subscriber's audit once the subscribers' requests for the day are sent, whatever the free day's count", async () => {
       const day = new Date().toISOString().slice(0, 10);
       const freeSpent = fakeEnv({ DAILY_REQUESTS: 2 });

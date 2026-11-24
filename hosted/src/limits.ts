@@ -654,10 +654,6 @@ const pageSites = (
   };
 };
 
-/**
- * The gate of one call: the sites a page audit may reach (`reaches`), the limit per site, and a
- * count of the requests it lets through.
- */
 /** The sites a call that audits one page may reach, and the competitors' among them (issue #129). */
 interface Reaches {
   caller: Caller;
@@ -666,13 +662,29 @@ interface Reaches {
   competitors: ReadonlySet<string>;
 }
 
+/** What one gate of a call holds its requests to, besides each site's requests a minute. */
+interface GateRules {
+  /** The sites a page audit may reach, each a site of the day. */
+  reaches?: Reaches;
+  /** The day's budget the requests count against. */
+  budget?: Budget;
+  /**
+   * Whether the requests count by hostname, for a record of each other hostname the call reached.
+   * A render's subresources do not: a font's host is no site the call audited.
+   */
+  byHost?: boolean;
+}
+
+/**
+ * The gate of one call: the sites a page audit may reach (`reaches`), the limit per site, and a
+ * count of the requests it lets through.
+ */
 const siteGate = (
   env: LimitsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
   sent: Sent,
   report: ReportTask | undefined,
-  reaches?: Reaches,
-  budget: Budget = "free"
+  { reaches, budget = "free", byHost = true }: GateRules = {}
 ): RequestGate => ({
   beforeRequest: async (url) => {
     if (reaches && !(await reaches.site(url.hostname))) {
@@ -698,7 +710,10 @@ const siteGate = (
     }
 
     sent.requests += 1;
-    sent.byHost.set(url.hostname, (sent.byHost.get(url.hostname) ?? 0) + 1);
+
+    if (byHost) {
+      sent.byHost.set(url.hostname, (sent.byHost.get(url.hostname) ?? 0) + 1);
+    }
 
     if (sent.requests - sent.counted >= COUNT_BATCH) {
       countSent(env, ctx, sent, report, budget);
@@ -731,16 +746,19 @@ export const backgroundCrawl = (
   env: LimitsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
   host: string,
-  report?: ReportTask
+  report?: ReportTask,
+  paid?: HostedProfile["paid"]
 ): BackgroundCrawlLimits => {
   const sent: Sent = { requests: 0, counted: 0, byHost: new Map() };
+  // A subscriber's crawl counts against the subscribers' day, as its call did (issue #230).
+  const budget: Budget = paid ? "paid" : "free";
 
   return {
     readmit: async () => {
       checkMode(env, true);
-      await checkDay(env);
+      await checkDay(env, budget);
     },
-    gate: siteGate(env, ctx, sent, report),
+    gate: siteGate(env, ctx, sent, report, { budget }),
     end: (outcome, pages, durationMs) => {
       record(
         env,
@@ -750,7 +768,7 @@ export const backgroundCrawl = (
         report,
         "background"
       );
-      countSent(env, ctx, sent, report);
+      countSent(env, ctx, sent, report, budget);
     },
   };
 };
@@ -820,20 +838,25 @@ export const hostedProfile = (
       const competitors = new Set((call.competitors ?? []).map(siteOf));
 
       return {
-        gate: siteGate(
-          env,
-          ctx,
-          sent,
-          report,
-          call.host && !call.crawl
-            ? {
-                caller,
-                site: pageSites(env, caller, call.host),
-                competitors,
-              }
-            : undefined,
-          budget
-        ),
+        gate: siteGate(env, ctx, sent, report, {
+          reaches:
+            call.host && !call.crawl
+              ? {
+                  caller,
+                  site: pageSites(env, caller, call.host),
+                  competitors,
+                }
+              : undefined,
+          budget,
+        }),
+        // A render's scripts, stylesheets, fonts and images: requests of the call, which count, but
+        // no site it audits, so none spends a site of the day or gets a record of its own.
+        ...(call.render && {
+          subresourceGate: siteGate(env, ctx, sent, report, {
+            budget,
+            byHost: false,
+          }),
+        }),
         end: ({ outcome, pages }) => {
           const durationMs = Date.now() - started;
 

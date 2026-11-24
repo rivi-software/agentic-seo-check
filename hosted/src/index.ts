@@ -121,6 +121,7 @@ const handleMcp = async (
   }
 
   const report = reportTask(env, ctx, "server:/mcp");
+  const paid = as?.paid;
 
   const caller =
     as?.caller ??
@@ -134,7 +135,7 @@ const handleMcp = async (
     ctx,
     caller,
     request.headers.get("mcp-session-id"),
-    as?.paid
+    paid
   );
 
   const premium = as !== undefined;
@@ -146,12 +147,13 @@ const handleMcp = async (
           ...hostedProfile(env, ctx, caller, {
             observe: tracking?.observe,
             report,
-            paid: as?.paid,
+            paid,
           }),
           ...(premium && { premium, browser: serverBrowser(env.BROWSER) }),
           connection: tracking?.connection,
           share: reportKeeper(env),
-          crawls: backgroundCrawls(env, report),
+          // A subscriber's crawl counts against the subscribers' day when it runs (issue #230).
+          crawls: backgroundCrawls(env, report, paid),
         },
       })
     : await (premium ? premiumProtocolServer : protocolServer)();

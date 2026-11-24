@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { HOSTED_LIMITS } from "../../src/core/hosted.ts";
 import { RenderUnavailableError } from "../../src/core/render.ts";
 import { serverBrowser } from "../src/browser.ts";
 import type { BrowserLauncher } from "../src/browser.ts";
@@ -28,6 +29,17 @@ describe("the premium server's browser (issue #230)", () => {
     expect(launch).toHaveBeenCalledWith(BINDING, {
       guardrails: { allowedDomains: [] },
     });
+  });
+
+  it("holds a render to the hosted server's requests and bytes in flight", () => {
+    const browser = serverBrowser(BINDING);
+
+    expect({
+      maxRequests: browser.maxRequests,
+      maxBytesInFlight: browser.maxBytesInFlight,
+    }).toStrictEqual({ maxRequests: 200, maxBytesInFlight: 16_000_000 });
+    expect(browser.maxRequests).toBe(HOSTED_LIMITS.maxRenderRequests);
+    expect(browser.maxBytesInFlight).toBe(HOSTED_LIMITS.maxRenderBytesInFlight);
   });
 
   it("says rendering is unavailable without the binding, and launches nothing", async () => {
