@@ -20,6 +20,9 @@ export default defineConfig({
   },
   test: {
     include: ["test/**/*.test.ts"],
+    // The OAuth provider (src/premium/) imports `cloudflare:workers` too: taken through Vite, so
+    // the alias above reaches it.
+    server: { deps: { inline: ["@cloudflare/workers-oauth-provider"] } },
     testTimeout: 60_000,
     // Starting workerd and building the Worker takes a few seconds.
     hookTimeout: 120_000,

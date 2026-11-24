@@ -4,7 +4,8 @@
  * how to use it and what its requests are. The project's website is a Worker of its own
  * (src/site/worker.ts), so it deploys apart from the server. Both answer on one hostname (issue
  * #168): this Worker's routes there are its own paths only (wrangler.jsonc), and the files its
- * pages load come from the website.
+ * pages load come from the website. The premium server (issue #229) is this Worker too, on its own
+ * hostname: src/premium/ has it, and `premiumRequest` sends it its requests.
  */
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
@@ -28,13 +29,21 @@ import {
   refreshOpenAiRanges,
 } from "./callers.js";
 import { freshResponse } from "./fresh.js";
-import { FORMER_SERVER_HOSTS, hostedProfile, movedToOrigin } from "./limits.js";
+import {
+  FORMER_SERVER_HOSTS,
+  hostedProfile,
+  movedToOrigin,
+  PREMIUM_HOST,
+  PREMIUM_ORIGIN,
+} from "./limits.js";
 import {
   crawlerPage,
   FAVICON_SVG,
   landingPage,
   notFoundPage,
 } from "./pages.js";
+import { premiumProvider } from "./premium/provider.js";
+import type { PremiumCall } from "./premium/provider.js";
 import { mayCallTool, protocolServers } from "./protocol-server.js";
 import { refusalOf } from "./refused-requests.js";
 import { keepReport } from "./shared-reports.js";
@@ -85,12 +94,14 @@ const openAiRanges = openAiRangesReader();
  * JSON. A tool call gets the hosted server, built for its caller; anything else the light server
  * of protocol-server.ts, which answers alike. The `Mcp-Session-Id` an `initialize` is answered with is a token for the analytics alone
  * (analytics.ts), which any request can read without the server keeping anything. There is no
- * session to resume or end, so GET and DELETE answer 405, as the protocol allows.
+ * session to resume or end, so GET and DELETE answer 405, as the protocol allows. On the premium
+ * server, `as` names the token's account as the caller, and what it paid.
  */
 const handleMcp = async (
   request: Request,
   env: Env,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  as?: PremiumCall
 ): Promise<Response> => {
   if (request.method !== "POST") {
     return new Response("This MCP server takes POST requests only.\n", {
@@ -101,16 +112,19 @@ const handleMcp = async (
 
   const report = reportTask(env, ctx, "server:/mcp");
 
-  const caller = callerOf(
-    request.headers.get("cf-connecting-ip"),
-    await openAiRanges(env, ctx, report)
-  );
+  const caller =
+    as?.caller ??
+    callerOf(
+      request.headers.get("cf-connecting-ip"),
+      await openAiRanges(env, ctx, report)
+    );
 
   const tracking = hostedAnalytics(
     env,
     ctx,
     caller,
-    request.headers.get("mcp-session-id")
+    request.headers.get("mcp-session-id"),
+    as?.paid
   );
 
   // A request that calls no tool, as nearly all are, needs nothing of the caller's (issue #211).
@@ -120,6 +134,7 @@ const handleMcp = async (
           ...hostedProfile(env, ctx, caller, {
             observe: tracking?.observe,
             report,
+            paid: as?.paid,
           }),
           connection: tracking?.connection,
           share: reportKeeper(env),
@@ -260,7 +275,48 @@ const devFile = (
   }
 };
 
+/** The premium hostname serves the pages' files beside OAuth and /authorize, and not found else. */
+const premiumOther = (
+  request: Request,
+  env: Env
+): Response | Promise<Response> =>
+  request.method === "GET" || request.method === "HEAD"
+    ? devFile(request, env, new URL(request.url).pathname)
+    : new Response("Method not allowed.\n", {
+        status: 405,
+        headers: { allow: "GET, HEAD" },
+      });
+
+/** The premium server, built once for the isolate. */
+const premium = premiumProvider(handleMcp, premiumOther);
+
+/**
+ * Whether a request is the premium server's: its hostname, or, where PREMIUM_DEV is "on"
+ * (.dev.vars), the header that stands for it, since `hosted:dev` and the tests give every request
+ * the first route's hostname.
+ */
+const premiumRequest = (request: Request, env: Env): boolean =>
+  new URL(request.url).hostname === PREMIUM_HOST ||
+  (env.PREMIUM_DEV === "on" &&
+    request.headers.get("x-agentic-seo-premium") === "1");
+
+/**
+ * The request on the premium hostname, which the provider checks every address against: a local
+ * request has another, and keeps its path, query, method, headers and body.
+ */
+const onPremiumHost = (request: Request): Request => {
+  const { hostname, pathname, search } = new URL(request.url);
+
+  return hostname === PREMIUM_HOST
+    ? request
+    : new Request(`${PREMIUM_ORIGIN}${pathname}${search}`, request);
+};
+
 const route = (request: Request, env: Env, ctx: ExecutionContext) => {
+  if (premiumRequest(request, env)) {
+    return premium.fetch(onPremiumHost(request), env, ctx);
+  }
+
   const { hostname, pathname } = new URL(request.url);
   const former = FORMER_SERVER_HOSTS.has(hostname);
 
@@ -325,6 +381,10 @@ const KNOWN_PATHS = new Set([
   "/ph-recorder.js",
   "/favicon.svg",
   DIRECTORY_PATH,
+  // The premium server's (src/premium/).
+  "/authorize",
+  "/oauth/token",
+  "/oauth/register",
 ]);
 
 /** Where a request went, as an error's event names it: never its address. */

@@ -45,8 +45,8 @@ export interface AccountPageState {
   siteKey: string;
 }
 
-/** The look of the account's panels, on these pages alone. */
-const ACCOUNT_STYLE = `
+/** The look of the account's panels, on these pages and the premium server's sign-in (src/premium/). */
+export const ACCOUNT_STYLE = `
 .acc-panel{display:grid;gap:14px;max-width:640px;padding:24px;border:1px solid var(--line-strong);border-radius:16px;background:linear-gradient(180deg,#ffffff0b,#ffffff03);box-shadow:var(--shadow-panel)}
 .acc-panel+.acc-panel{margin-top:16px}
 .acc-panel h2{margin:0}
@@ -61,19 +61,19 @@ const ACCOUNT_STYLE = `
 @media (max-width:720px){.acc-panel{padding:16px}}
 `.replaceAll("\n", "");
 
-const alert = (error: string | undefined): string =>
+export const alert = (error: string | undefined): string =>
   error
     ? `<p class="notice" role="alert">${icon("error")}<span>${esc(error)}</span></p>`
     : "";
 
-const info = (text: string): string =>
+export const info = (text: string): string =>
   `<p class="notice" role="status">${icon("info")}<span>${text}</span></p>`;
 
 /** An address, in the part a session recording masks. */
-const address = (email: string): string =>
+export const address = (email: string): string =>
   `<span class="private">${esc(email)}</span>`;
 
-const hero = (kicker: string, title: string, lede: string): string =>
+export const hero = (kicker: string, title: string, lede: string): string =>
   `<section class="hero hero-glow" aria-labelledby="acc-title">
 <div class="wrap">
 <div class="hero-copy">
@@ -84,7 +84,7 @@ const hero = (kicker: string, title: string, lede: string): string =>
 </div>
 </section>`;
 
-const section = (content: string): string =>
+export const section = (content: string): string =>
   `<section class="section section-tight"><div class="wrap">${content}</div></section>`;
 
 /** A button that POSTs to one of the account's paths. */

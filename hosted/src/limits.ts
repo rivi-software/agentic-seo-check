@@ -63,6 +63,15 @@ export const FORMER_SERVER_HOSTS: ReadonlySet<string> = new Set([
   "mcp.agentic-seo-check.rivi.software",
 ]);
 
+/**
+ * The premium server's hostname (issue #229): the same tools behind an account's sign-in, with
+ * OAuth's endpoints and discovery documents, which ORIGIN never serves (src/premium/). The MCP
+ * server's Worker has it as a custom domain.
+ */
+export const PREMIUM_HOST = "premium.agentic-seo.org";
+
+export const PREMIUM_ORIGIN = `https://${PREMIUM_HOST}`;
+
 /** The website's hostname before issue #168, which sends every request to ORIGIN (site/routes.ts). */
 export const FORMER_SITE_HOST = "agentic-seo.rivi.software";
 
