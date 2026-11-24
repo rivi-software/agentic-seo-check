@@ -63,6 +63,41 @@ describe(pageConsoleErrors, () => {
     ]);
   });
 
+  it("leaves out a message only for a failed URL named whole, not one that begins a longer URL", () => {
+    const failed = new Set(["https://cdn.example/app.js"]);
+
+    expect(
+      pageConsoleErrors(
+        [
+          {
+            text: "Refused to execute script from 'https://cdn.example/app.js?v=2' because its MIME type is not executable.",
+            url: "https://example.com/",
+          },
+          {
+            text: "Uncaught SyntaxError at https://cdn.example/app.jsx",
+            url: "https://example.com/",
+          },
+          {
+            text: "Refused to execute script from 'https://cdn.example/app.js' because its MIME type is not executable.",
+            url: "https://example.com/",
+          },
+          {
+            text: "Script https://cdn.example/app.js failed",
+            url: "https://example.com/",
+          },
+          {
+            text: "Could not load https://cdn.example/app.js",
+            url: "https://example.com/",
+          },
+        ],
+        failed
+      )
+    ).toStrictEqual([
+      "Refused to execute script from 'https://cdn.example/app.js?v=2' because its MIME type is not executable.",
+      "Uncaught SyntaxError at https://cdn.example/app.jsx",
+    ]);
+  });
+
   it("cuts each error it keeps to 300 characters", () => {
     expect(
       pageConsoleErrors([{ text: "x".repeat(1000), url: "" }], new Set())

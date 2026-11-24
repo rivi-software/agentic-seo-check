@@ -4,7 +4,6 @@ import {
   DEFAULT_USER_AGENT,
   forAuditOf,
   MAX_BODY_BYTES,
-  readLimited,
   RequestRefusedError,
   showGate,
   signatureFor,
@@ -255,12 +254,153 @@ interface RenderBudget {
   bytes: number;
   maxRequests: number;
   maxBytesInFlight: number;
+  /** The origins a gate that reads robots.txt has been asked about, each one request more. */
+  robotsRead: Set<string>;
 }
+
+/** A read stopped because the render holds as much as it may: the request is blocked. */
+class OverBudgetError extends Error {
+  override name = "OverBudgetError";
+}
+
+/** What `readBudgeted` read: the body, or null when it is over `maxBytes`. */
+type BudgetedRead = Uint8Array | null;
+
+/** The body's length as Content-Length gives it, when that is the length fetch hands over. */
+const declaredLength = (res: Response): number | null => {
+  const encoding = res.headers.get("content-encoding");
+  const length = res.headers.get("content-length");
+
+  // fetch decodes a compressed body, so its Content-Length is not the length read.
+  if ((encoding !== null && encoding !== "identity") || length === null) {
+    return null;
+  }
+
+  return /^\d{1,15}$/u.test(length.trim()) ? Number(length.trim()) : null;
+};
+
+/**
+ * Reads the body up to `maxBytes` (null past it), counting its bytes against the render's budget
+ * as they arrive, so bodies read side by side never hold more than `maxBytesInFlight` together:
+ * the chunk that would pass it stops the read with `OverBudgetError`. A body whose Content-Length
+ * is known is reserved whole before it is read, and read into one buffer of that length; any other
+ * is copied once from its chunks. What the read had counted is let go when it fails, and whatever
+ * it counted past the body it returns. The body returned stays counted until `delivered`.
+ */
+const readBudgeted = async (
+  res: Response,
+  maxBytes: number,
+  budget: RenderBudget
+): Promise<BudgetedRead> => {
+  let reserved = 0;
+
+  const reserve = (total: number): void => {
+    if (total <= reserved) {
+      return;
+    }
+
+    if (budget.bytes + total - reserved > budget.maxBytesInFlight) {
+      throw new OverBudgetError("The render holds as much as it may.");
+    }
+
+    budget.bytes += total - reserved;
+    reserved = total;
+  };
+
+  const settle = (total: number): void => {
+    budget.bytes -= reserved - total;
+    reserved = total;
+  };
+
+  const declared = declaredLength(res);
+
+  if (declared !== null && declared > maxBytes) {
+    await res.body?.cancel().catch(() => null);
+
+    return null;
+  }
+
+  if (!res.body) {
+    return new Uint8Array(0);
+  }
+
+  const reader = res.body.getReader();
+  let whole: Uint8Array | null = null;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let over = false;
+
+  try {
+    if (declared !== null) {
+      reserve(declared);
+      whole = new Uint8Array(declared);
+    }
+
+    for (;;) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- a stream hands over its chunks one after another
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      const next = total + value.byteLength;
+
+      if (next > maxBytes) {
+        over = true;
+        break;
+      }
+
+      reserve(next);
+
+      if (whole && next <= whole.byteLength) {
+        whole.set(value, total);
+      } else {
+        // More than Content-Length said: what came so far joins the chunks.
+        if (whole) {
+          chunks.push(whole.subarray(0, total));
+          whole = null;
+        }
+
+        chunks.push(value);
+      }
+
+      total = next;
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => null);
+    settle(0);
+    throw error;
+  }
+
+  if (over) {
+    await reader.cancel().catch(() => null);
+    settle(0);
+
+    return null;
+  }
+
+  settle(total);
+
+  if (whole) {
+    return total === whole.byteLength ? whole : whole.slice(0, total);
+  }
+
+  const body = new Uint8Array(total);
+  let at = 0;
+
+  for (const chunk of chunks) {
+    body.set(chunk, at);
+    at += chunk.byteLength;
+  }
+
+  return body;
+};
 
 /**
  * Sends a hop and reads its answer up to the cap, within `timeoutMs`, or answers where its redirect
- * leads. An answer's bytes are counted as held here, at once, so answers read side by side cannot
- * pass the cap together; `delivered` lets them go.
+ * leads. The answer's bytes are counted as held while they are read (`readBudgeted`), so answers
+ * read side by side cannot pass the cap together; `delivered` lets them go.
  */
 const answerHop = (
   hop: Hop,
@@ -278,27 +418,38 @@ const answerHop = (
       return { next };
     }
 
-    const maxBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
-    // One byte past the cap tells a body over it from one that fills it.
-    const read = await readLimited(res, maxBytes + 1);
+    let body: BudgetedRead;
 
-    if (read.bytes.byteLength > maxBytes) {
+    try {
+      body = await readBudgeted(
+        res,
+        options.maxBodyBytes ?? MAX_BODY_BYTES,
+        budget
+      );
+    } catch (error) {
+      if (error instanceof OverBudgetError) {
+        return fail("BlockedByClient");
+      }
+
+      throw error;
+    }
+
+    if (body === null) {
       return fail("Failed");
     }
 
-    showGateBody(options.gate, request, url, res, read.bytes);
-
-    if (budget.bytes + read.bytes.byteLength > budget.maxBytesInFlight) {
-      return fail("BlockedByClient");
+    try {
+      showGateBody(options.gate, request, url, res, body);
+    } catch (error) {
+      budget.bytes -= body.byteLength;
+      throw error;
     }
-
-    budget.bytes += read.bytes.byteLength;
 
     return {
       kind: "fulfil",
       status: res.status,
       headers: answerHeaders(res.headers),
-      body: read.bytes,
+      body,
     };
   });
 
@@ -319,11 +470,25 @@ const walk = async (
   let { url } = request;
 
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
+    const { origin } = new URL(url);
+    // A gate that reads robots.txt (the hosted server's) requests it for an origin it has not read
+    // yet, out of this file's sight: the first hop to each origin counts as two requests. The
+    // page's own origin counts so too, though the audit may have read its robots.txt already.
+    const robots = options.gate?.robotsTxt && !budget.robotsRead.has(origin);
+    const cost = robots ? 2 : 1;
+
     if (
-      budget.sent >= budget.maxRequests ||
+      budget.sent + cost > budget.maxRequests ||
       budget.bytes >= budget.maxBytesInFlight
     ) {
       return fail("BlockedByClient");
+    }
+
+    // robots.txt is requested while the gate is asked, whatever it answers; the hop only once the
+    // gate lets it go.
+    if (robots) {
+      budget.robotsRead.add(origin);
+      budget.sent += 1;
     }
 
     seen.add(url);
@@ -374,7 +539,7 @@ export const fetchThroughOptions = (
   options: FetchOptions,
   pageUrl: string,
   settings: FetchThroughSettings = {}
-): FetchThrough => {
+): FetchThrough & { held: () => number } => {
   const refusals = settings.refusals ?? trackRefusals();
   // The gate also refuses a host already refused, so a site that answered 429 or a challenge to
   // one request is sent nothing more: no retry.
@@ -394,6 +559,7 @@ export const fetchThroughOptions = (
     maxRequests: settings.maxRequests ?? RENDER_REQUEST_LIMITS.maxRequests,
     maxBytesInFlight:
       settings.maxBytesInFlight ?? RENDER_REQUEST_LIMITS.maxBytesInFlight,
+    robotsRead: new Set(),
   };
 
   /** The bytes each answer still holds, until the browser has it. */
@@ -421,7 +587,7 @@ export const fetchThroughOptions = (
         walk(own, headersOrigin, request, budget)
       );
 
-      // Its bytes were counted when they were read (`answerHop`).
+      // Its bytes were counted as they were read (`readBudgeted`).
       if (answer?.kind === "fulfil") {
         held.set(answer, answer.body.byteLength);
       }
@@ -445,6 +611,8 @@ export const fetchThroughOptions = (
         budget.bytes -= bytes;
       }
     },
+    /** The bytes the render holds now: read or being read, and not yet delivered. */
+    held: () => budget.bytes,
   });
 };
 

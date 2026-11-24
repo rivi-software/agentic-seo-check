@@ -49,6 +49,9 @@ const request = (
   ...extra,
 });
 
+/** What a test reads in place of an answer it expected and did not get. */
+const NO_ANSWER: BrowserAnswer = { kind: "fail", reason: "Failed" };
+
 const text = (answer: BrowserAnswer): string =>
   answer.kind === "fulfil" ? new TextDecoder().decode(answer.body) : "";
 
@@ -102,6 +105,15 @@ describe(fetchThroughOptions, () => {
     "/target": { body: "<p>target</p>" },
     "/big.js": { body: "x".repeat(2000) },
     "/exact.js": { body: "x".repeat(1000) },
+    // 1,000 bytes in ten chunks, 30 ms apart, with no Content-Length.
+    "/stream.js": {
+      chunked: { chunk: "s".repeat(100), count: 10, everyMs: 30 },
+    },
+    // Promises 1,000 bytes and sends ten: the connection ends short.
+    "/short.js": {
+      headers: { "content-length": "1000", connection: "close" },
+      body: "x".repeat(10),
+    },
     "/form": { body: "ok" },
     "/limited.js": { status: 429, body: "slow down" },
     "/after.js": { body: "after" },
@@ -498,6 +510,125 @@ describe(fetchThroughOptions, () => {
     await expect(
       through(request(`${site.origin}/exact.js`))
     ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
+  });
+
+  it("counts a body's bytes as they arrive, so reads side by side stop at the cap while they stream", async () => {
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(optionsWith(gate), `${site.origin}/`, {
+      maxBytesInFlight: 1500,
+    });
+
+    let most = 0;
+
+    const sample = setInterval(() => {
+      most = Math.max(most, through.held());
+    }, 1);
+
+    const started = Date.now();
+
+    const answers = await Promise.all(
+      [1, 2, 3].map(async () => {
+        const answer = await through(request(`${site.origin}/stream.js`));
+
+        return { answer, ms: Date.now() - started };
+      })
+    );
+
+    clearInterval(sample);
+
+    const fulfilled = answers.filter(({ answer }) => answer.kind === "fulfil");
+
+    const blocked = answers.filter(
+      ({ answer }) =>
+        answer.kind === "fail" && answer.reason === "BlockedByClient"
+    );
+
+    const [answered] = fulfilled;
+    const heldBeforeDelivery = through.held();
+
+    through.delivered(answered?.answer ?? NO_ANSWER);
+
+    expect({
+      fulfilled: fulfilled.length,
+      blocked: blocked.length,
+      body: text(answered?.answer ?? NO_ANSWER),
+      // The two over the cap stopped while their bodies were still streaming, well before the
+      // last chunk of the one that was answered.
+      stoppedEarly: blocked.every(({ ms }) => ms < (answered?.ms ?? 0) - 50),
+      withinCap: most <= 1500,
+      heldBeforeDelivery,
+    }).toStrictEqual({
+      fulfilled: 1,
+      blocked: 2,
+      body: "s".repeat(1000),
+      stoppedEarly: true,
+      withinCap: true,
+      heldBeforeDelivery: 1000,
+    });
+    expect(through.held()).toBe(0);
+  });
+
+  it("lets go of what a request held once it fails, over maxBodyBytes, cut short or timed out", async () => {
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(
+      optionsWith(gate, { maxBodyBytes: 1000, timeoutMs: 100 }),
+      `${site.origin}/`,
+      { maxBytesInFlight: 1500 }
+    );
+
+    const after: [BrowserAnswer, number][] = [];
+
+    for (const path of ["/big.js", "/short.js", "/stream.js"]) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one after another, so each lets go before the next
+      const answer = await through(request(`${site.origin}${path}`));
+      after.push([answer, through.held()]);
+    }
+
+    expect(after).toStrictEqual([
+      [{ kind: "fail", reason: "Failed" }, 0],
+      [{ kind: "fail", reason: "Failed" }, 0],
+      [{ kind: "fail", reason: "TimedOut" }, 0],
+    ]);
+
+    // A body whose Content-Length does not fit beside what is held is blocked before it is read.
+    const first = await through(request(`${site.origin}/exact.js`));
+
+    expect([first.kind, through.held()]).toStrictEqual(["fulfil", 1000]);
+    await expect(
+      through(request(`${site.origin}/exact.js`))
+    ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
+    expect(through.held()).toBe(1000);
+  });
+
+  it("counts the robots.txt a gate that reads it requests for each new host as one more request", async () => {
+    const { gate } = gateStub();
+
+    const reading: RequestGate = {
+      ...gate,
+      robotsTxt: () => Promise.reject(new Error("not read here")),
+    };
+
+    const through = fetchThroughOptions(
+      optionsWith(reading),
+      `${site.origin}/`,
+      { maxRequests: 4 }
+    );
+
+    // The site's first request is two (its robots.txt and the script), the next one.
+    const app = await through(request(`${site.origin}/app.js`));
+    const after = await through(request(`${site.origin}/after.js`));
+
+    expect([app.kind, after.kind]).toStrictEqual(["fulfil", "fulfil"]);
+
+    const before = other.requests.length;
+
+    // Another host's first request would be the fifth and sixth.
+    await expect(
+      through(request(`${other.origin}/lib.js`))
+    ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
+    expect(other.requests).toHaveLength(before);
   });
 });
 

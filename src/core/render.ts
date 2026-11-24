@@ -361,10 +361,35 @@ export interface ConsoleError {
   url: string;
 }
 
+/** A character no URL in a message goes on with: the URL before it ends there. */
+const URL_END = /[\s'"`<>()[\]{}|\\^]/u;
+
+/**
+ * Whether `text` names `url` whole: followed by its end, a character that ends a URL, or a full
+ * stop or comma that ends the sentence. A longer URL it begins (`app.js?v=2`, `app.jsx`) is another.
+ */
+const namesUrl = (text: string, url: string): boolean => {
+  for (let at = text.indexOf(url); at !== -1; at = text.indexOf(url, at + 1)) {
+    const after = text.slice(at + url.length, at + url.length + 2);
+    const next = after.charAt(0);
+
+    if (
+      next === "" ||
+      URL_END.test(next) ||
+      ((next === "." || next === ",") &&
+        (after.length === 1 || URL_END.test(after.charAt(1))))
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 /**
  * The console errors that are the page's, without those about requests the audit itself blocked or
  * failed (`failed`): Chromium's "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT" for a
- * refused script is no error of the page. A message that names such a URL goes too.
+ * refused script is no error of the page. A message that names such a URL whole goes too.
  */
 export const pageConsoleErrors = (
   errors: readonly ConsoleError[],
@@ -372,7 +397,7 @@ export const pageConsoleErrors = (
 ): string[] =>
   errors.flatMap(({ text, url }) =>
     (FAILED_TO_LOAD.test(text) && failed.has(url)) ||
-    [...failed].some((unsent) => text.includes(unsent))
+    [...failed].some((unsent) => namesUrl(text, unsent))
       ? []
       : [text.slice(0, 300)]
   );

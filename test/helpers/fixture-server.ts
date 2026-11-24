@@ -12,6 +12,8 @@ export interface Route {
   blockUserAgents?: string[];
   /** Milliseconds to wait before answering the first, second, ... request to this path, to order races. */
   delaysMs?: number[];
+  /** Send the body as `count` chunks of `chunk`, `everyMs` apart, with no Content-Length: a slow stream. */
+  chunked?: { chunk: string; count: number; everyMs: number };
 }
 
 /** The site a fixture server serves, by path; a test may add a route once the server listens. */
@@ -143,6 +145,20 @@ export const startFixtureServer = async (
     }
 
     res.writeHead(route.status ?? 200);
+
+    if (route.chunked) {
+      const { chunk, count, everyMs } = route.chunked;
+
+      for (let sent = 0; sent < count && !res.destroyed; sent += 1) {
+        res.write(chunk);
+        // oxlint-disable-next-line eslint/no-await-in-loop -- the chunks go out one after another, on purpose slowly
+        await wait(everyMs);
+      }
+
+      res.end();
+
+      return;
+    }
 
     if (Buffer.isBuffer(route.body)) {
       res.end(route.body);
