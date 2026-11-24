@@ -94,3 +94,27 @@ No `cf-brapi-*` or `cf-biso-*` header on any of them. CDP: no `requestWillBeSent
 - `routeWebSocket` replaces `window.WebSocket` in the page; a WebSocket opened from a Worker would not see it. Same answer as above.
 - `/favicon.ico` is requested by the browser on every page and goes through `Fetch`, so it passes the gate and counts as a request.
 - The spike used one CDP session for `Fetch` and a second for `Network`; Playwright's own `page.route` was not used, and need not be.
+
+## After the final review: redirects walked by `fetchThrough` (finding 2)
+
+The spike answered `Fetch.requestPaused` on its own CDP session, where a fulfilled 302 made the browser pause the next hop again. The implementation routes through Playwright's `context.route` instead, and `@cloudflare/playwright` (`crNetworkManager.js`, the `redirectedFrom` branch) continues a redirect's next request with `Fetch.continueRequest` without handing it to the route: every hop after a fulfilled 3xx would have gone to Browser Run's own network, where the guardrails deny it. So `fetchThrough` now walks each redirect itself, asks the gate and signs each hop, and fulfils the browser with the last answer. The browser keeps the URL it asked for, which is fine for a subresource; the audit renders the page's final URL already.
+
+Checked on 2026-11-24 with `wrangler dev --remote` (Wrangler 4.162.0, RIVI account, nothing deployed; the throwaway Worker and its files were deleted after the run). The Worker ran the branch's own `renderPage` and `fetchThroughOptions` with `launch(env.BROWSER, { guardrails: { allowedDomains: [] } })`, and answered the test site in process, as the spike did, since a remote preview has no public address. The page linked a stylesheet behind a 307, a script behind a 302 and an image behind a 301, and its script sent `fetch('/post', { method: 'POST' })`. Result (4.1 s):
+
+```json
+{
+  "appRan": true,
+  "img": "loaded",
+  "post": "blocked",
+  "consoleErrors": [],
+  "blockedRequests": 1,
+  "gateAsked": [
+    "gate /page",
+    "subresources /r/style.css", "subresources /style.css",
+    "subresources /r/app.js", "subresources /app.js",
+    "subresources /r/img.png", "subresources /img.png"
+  ]
+}
+```
+
+Every one of the seven requests the site received was a GET with the check's User-Agent and signature (`sig1=:RENDER-CHECK:`); the POST reached neither the gate nor the site. The script behind its redirect ran and the image behind its redirect loaded, which, with the guardrails denying the browser any traffic of its own, is possible only if each hop was fetched by `fetchThrough`. The page's navigation went through the call's gate and everything else through `subresourceGate`. Chromium's console error for the blocked POST was left out of `consoleErrors`, and counted in `blockedRequests`.

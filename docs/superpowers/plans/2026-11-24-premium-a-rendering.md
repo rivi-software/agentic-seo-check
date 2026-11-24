@@ -34,6 +34,7 @@
   - A request the gate refuses is failed with `BlockedByClient` and never reported as broken.
   - Service workers are blocked (`serviceWorkers: "block"`). WebSockets are closed.
 - Each fulfilled request goes through the audit's `FetchOptions`: `gate.beforeRequest`, `sign`, and the hosted User-Agent. A redirect is fulfilled as the 3xx itself, so the browser asks again and the gate sees the next hop.
+  - *Amended after the final review:* Playwright's `context.route` never sees a redirect's next request (it hands it to the browser's own network), so `fetchThrough` walks each redirect itself, asking the gate and signing each hop, and fulfils the last answer. Only GET and HEAD are sent; any other method is blocked (Ruling K). The page's navigation goes through the call's gate, its subresources through `subresourceGate`, which spends no site of the day. A render sends at most 200 requests and holds at most 16 MB of answers at once.
 - Limits:
   - `RENDER_CALLS`, per account, 10 a minute, a new namespace in both configs, held equal by `configs.test.ts`.
   - `DAILY_RENDERS`, 2,000 rendered pages a day across all accounts.
@@ -93,7 +94,7 @@
   - `interface BrowserRequest { url: string; method: string; headers: Record<string, string>; postData?: string; resourceType: string }`
   - `type BrowserAnswer = { kind: "fulfil"; status: number; headers: { name: string; value: string }[]; body: Uint8Array } | { kind: "fail"; reason: "BlockedByClient" | "Failed" | "TimedOut" }`
   - `type FetchThrough = (request: BrowserRequest) => Promise<BrowserAnswer>`
-  - `fetchThroughOptions(options: FetchOptions, pageUrl: string): FetchThrough`. One hop, no redirect following. It asks `gate.beforeRequest` (a refusal becomes `fail BlockedByClient`), adds `sign(url)` headers and the User-Agent, sends the user's `headers` to the audited origin only (`browserRequestHeaders`), caps the body at `maxBodyBytes` (over it: `fail Failed`), and times out at `timeoutMs` (`fail TimedOut`). Gate refusals go through the gate's own bookkeeping, as `fetchPage` does, so `Refusals` sees them.
+  - `fetchThroughOptions(options: FetchOptions, pageUrl: string): FetchThrough`. One hop, no redirect following (*amended: it walks redirects itself, and `postData` is gone, see Global Constraints*). It asks `gate.beforeRequest` (a refusal becomes `fail BlockedByClient`), adds `sign(url)` headers and the User-Agent, sends the user's `headers` to the audited origin only (`browserRequestHeaders`), caps the body at `maxBodyBytes` (over it: `fail Failed`), and times out at `timeoutMs` (`fail TimedOut`). Gate refusals go through the gate's own bookkeeping, as `fetchPage` does, so `Refusals` sees them.
 - Produces, in `render.ts`:
   - `RenderOptions.launch?: () => Promise<Browser>`. When given, `renderPage` skips `import("playwright")` and the system-browser fallback.
   - `RenderOptions.fetchThrough?: FetchThrough`. When given:
@@ -109,7 +110,7 @@
   - A 302 is fulfilled as the 302 with its `location`, and is not followed.
   - A body over `maxBodyBytes` gives `fail Failed`.
   - The user's `headers` go to the page's origin and not to a third-party origin.
-  - A `POST` with `postData` sends the body.
+  - A `POST` with `postData` sends the body. (*Amended: a POST is blocked, and sends nothing.*)
 - [ ] **Step 2:** Run `pnpm exec vitest run test/render-fetch.test.ts`. Expected: FAIL (module missing).
 - [ ] **Step 3:** Implement `render-fetch.ts`, and the `launch` and `fetchThrough` options in `render.ts`. Reuse `fetch.ts`'s helpers for the body cap and timeout, and don't duplicate them.
 - [ ] **Step 4:** Run the test file and `pnpm run test`. Expected: PASS, and the existing render tests are unchanged.
