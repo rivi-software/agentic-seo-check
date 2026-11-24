@@ -5,7 +5,6 @@
  */
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -20,11 +19,8 @@ import {
   tokenHash,
   UNCONFIRMED_DAYS,
 } from "../src/site/waitlist.ts";
-import type {
-  WaitlistDatabase,
-  WaitlistSiteEnv,
-  WaitlistStatement,
-} from "../src/site/waitlist.ts";
+import type { WaitlistSiteEnv } from "../src/site/waitlist.ts";
+import { d1Of } from "./helpers/d1.ts";
 
 const MIGRATION = readFileSync(
   new URL("../migrations/0001_waitlist.sql", import.meta.url),
@@ -34,31 +30,6 @@ const MIGRATION = readFileSync(
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 10, 24, 12);
 const ORIGIN = "https://agentic-seo.org";
-
-/** D1's prepare, bind, run and first, over SQLite. */
-const d1Of = (db: DatabaseSync): WaitlistDatabase => ({
-  prepare: (sql) => {
-    let args: SQLInputValue[] = [];
-
-    const statement: WaitlistStatement = {
-      bind: (...values) => {
-        args = values;
-
-        return statement;
-      },
-      run: () => {
-        db.prepare(sql).run(...args);
-
-        return Promise.resolve({ success: true });
-      },
-      first: <T>() =>
-        // SAFETY: each query names the columns of the Row its caller asks for.
-        Promise.resolve((db.prepare(sql).get(...args) ?? null) as T | null),
-    };
-
-    return statement;
-  },
-});
 
 interface Sent {
   to: EmailMessageBuilder["to"];
