@@ -1,0 +1,21 @@
+hosted/src/pages.ts
+  s_e92caf351f3c51::t_3c23ee4fc0d58e 11-12,300
+hosted/test/pages.test.ts
+  s_e92caf351f3c51::t_b2e7152a001d1c 104-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd780865635a6f138629a802dd9aa35cd8cc02b7",
+  "prompts": {},
+  "sessions": {
+    "s_e92caf351f3c51": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48178603-ca61-4e8c-85b4-313a5de7ff44",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
