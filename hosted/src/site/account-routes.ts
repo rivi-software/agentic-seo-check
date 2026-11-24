@@ -356,7 +356,7 @@ const checkout = async (
 
   try {
     return redirect(
-      await checkoutUrl(env, account, new URL(request.url).origin)
+      await checkoutUrl(env, env.ACCOUNTS, account, new URL(request.url).origin)
     );
   } catch (error) {
     return billingFailed(request, env, account, error);
@@ -364,9 +364,9 @@ const checkout = async (
 };
 
 /**
- * Ends the subscription at Stripe first, refunding the unused paid time, then deletes the row. A
- * subscription Stripe already ended still goes through cancelAndRefund, which finishes a refund
- * an earlier try left halfway. When Stripe fails, the account stays, so a refund is never lost
+ * Ends the customer's subscriptions at Stripe first, refunding the unused paid time, then deletes
+ * the row. A subscription Stripe already ended still goes through cancelAndRefund, which finishes
+ * a refund an earlier try left halfway. When Stripe fails, the account stays, so a refund is never lost
  * with it.
  */
 const remove = async (
@@ -389,18 +389,18 @@ const remove = async (
     );
   }
 
-  if (account.subscriptionId !== null) {
-    try {
-      await cancelAndRefund(env, account);
-    } catch (error) {
-      return billingFailed(
-        request,
-        env,
-        account,
-        error,
-        "Your subscription could not be ended, so your account is kept. "
-      );
-    }
+  // Asked even when the row names no subscription: the customer can have one whose webhook has
+  // not landed yet. An account without a customer sends Stripe nothing.
+  try {
+    await cancelAndRefund(env, account);
+  } catch (error) {
+    return billingFailed(
+      request,
+      env,
+      account,
+      error,
+      "Your subscription could not be ended, so your account is kept. "
+    );
   }
 
   await deleteAccount(env.ACCOUNTS, account.id);

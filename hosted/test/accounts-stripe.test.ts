@@ -48,6 +48,7 @@ interface Sent {
 type StripeJson =
   | string
   | number
+  | boolean
   | null
   | StripeJson[]
   | { [key: string]: StripeJson };
@@ -147,6 +148,23 @@ const FINAL_INVOICE = {
   total: -1500,
 };
 
+/** The customer's subscriptions as `GET /v1/subscriptions?customer=` lists them. */
+const listing =
+  (
+    ...subscriptions: [id: string, status: string, refundInvoice?: string][]
+  ): Answer =>
+  () =>
+    reply({
+      data: subscriptions.map(([id, status, refundInvoice]): StripeJson => ({
+        customer: "cus_1",
+        id,
+        metadata:
+          refundInvoice === undefined ? {} : { refund_invoice: refundInvoice },
+        status,
+      })),
+      has_more: false,
+    });
+
 /** Stripe as it answers an active subscription with 1500 of unused time on a 2000 payment. */
 const stripeAnswers =
   (overrides: Record<string, Answer> = {}): Answer =>
@@ -159,6 +177,21 @@ const stripeAnswers =
     }
 
     switch (route) {
+      case "GET /v1/subscriptions": {
+        return listing(["sub_1", "active"])(request);
+      }
+
+      case "GET /v1/payment_intents/pi_1": {
+        return reply({
+          id: "pi_1",
+          latest_charge: { amount_captured: 2000, amount_refunded: 0 },
+        });
+      }
+
+      case "GET /v1/customers/cus_1/balance_transactions": {
+        return reply({ data: [], has_more: false });
+      }
+
       case "GET /v1/subscriptions/sub_1": {
         return reply({
           customer: "cus_1",
@@ -205,6 +238,35 @@ const stripeAnswers =
     }
   };
 
+/** A request sent to `route` ("GET /v1/refunds"), the first. */
+const sentTo = (all: Sent[], route: string): Sent | undefined =>
+  all.find((request) => `${request.method} ${request.path}` === route);
+
+/** Stripe's answer for an object it does not have. */
+const missing: Answer = () =>
+  reply(
+    {
+      error: {
+        code: "resource_missing",
+        message: "No such subscription",
+        type: "invalid_request_error",
+      },
+    },
+    404
+  );
+
+/** A past_due subscription `id`, whose latest invoice nobody paid. */
+const pastDue =
+  (id: string): Answer =>
+  () =>
+    reply({
+      customer: "cus_1",
+      id,
+      latest_invoice: { ...PAID_INVOICE, amount_paid: 0, status: "open" },
+      metadata: {},
+      status: "past_due",
+    });
+
 /** A retry: the subscription is canceled already, stamped with the invoice to refund. */
 const canceledEarlier: Answer = () =>
   reply({
@@ -214,6 +276,30 @@ const canceledEarlier: Answer = () =>
     metadata: { refund_invoice: "in_paid" },
     status: "canceled",
   });
+
+/** A retry: sub_1 is canceled already, stamped with the invoice to refund. */
+const retrying = (overrides: Record<string, Answer> = {}): Answer =>
+  stripeAnswers({
+    "GET /v1/subscriptions": listing(["sub_1", "canceled", "in_paid"]),
+    "GET /v1/subscriptions/sub_1": canceledEarlier,
+    ...overrides,
+  });
+
+/** A database with the real migration, as D1 runs it. */
+const migrated = (): DatabaseSync => {
+  const db = new DatabaseSync(":memory:");
+
+  db.exec(
+    readFileSync(
+      new URL("../migrations-accounts/0001_accounts.sql", import.meta.url),
+      "utf-8"
+    )
+  );
+
+  return db;
+};
+
+const MINUTE_MS = 60_000;
 
 describe("stripe", () => {
   let sent: Sent[] = [];
@@ -317,54 +403,160 @@ describe("stripe", () => {
   });
 
   describe(checkoutUrl, () => {
-    it("opens a Managed Payments subscription for the account", async () => {
-      answer = () => reply({ url: "https://checkout.stripe.com/c/pay/cs_1" });
+    let db: DatabaseSync;
+    let free: Account;
 
-      await expect(checkoutUrl(ENV, account(), ORIGIN)).resolves.toBe(
-        "https://checkout.stripe.com/c/pay/cs_1"
+    const CHECKOUT = "https://checkout.stripe.com/c/pay/cs_1";
+    const PORTAL = "https://billing.stripe.com/p/session/1";
+
+    /** Stripe for a customer with the subscriptions `listed`. */
+    const checkoutAnswers =
+      (listed: Answer = listing()): Answer =>
+      (request) => {
+        switch (`${request.method} ${request.path}`) {
+          case "POST /v1/customers": {
+            return reply({ id: "cus_new" });
+          }
+
+          case "GET /v1/subscriptions": {
+            return listed(request);
+          }
+
+          case "POST /v1/billing_portal/sessions": {
+            return reply({ url: PORTAL });
+          }
+
+          default: {
+            return reply({ url: CHECKOUT });
+          }
+        }
+      };
+
+    beforeEach(async () => {
+      db = migrated();
+      free = await accountForSignIn(d1Of(db), "ada@example.com", Date.now());
+      answer = checkoutAnswers();
+    });
+
+    it("makes the account's customer and links it before the first Checkout", async () => {
+      await expect(checkoutUrl(ENV, d1Of(db), free, ORIGIN)).resolves.toBe(
+        CHECKOUT
       );
-      expect(routesOf(sent)).toStrictEqual(["POST /v1/checkout/sessions"]);
-      expect(Object.fromEntries(sent[0]?.form ?? [])).toStrictEqual({
+      expect(routesOf(sent)).toStrictEqual([
+        "POST /v1/customers",
+        "GET /v1/subscriptions",
+        "POST /v1/checkout/sessions",
+      ]);
+
+      const [customer, listed] = sent;
+
+      expect(Object.fromEntries(customer?.form ?? [])).toStrictEqual({
+        email: "ada@example.com",
+        "metadata[account_id]": free.id,
+      });
+      expect(customer?.headers.get("Idempotency-Key")).toBe(
+        `customer-${free.id}`
+      );
+      expect(Object.fromEntries(listed?.query ?? [])).toStrictEqual({
+        customer: "cus_new",
+        limit: "100",
+        status: "all",
+      });
+    });
+
+    it("keeps the customer it made on the account", async () => {
+      await checkoutUrl(ENV, d1Of(db), free, ORIGIN);
+
+      await expect(accountById(d1Of(db), free.id)).resolves.toMatchObject({
+        stripeCustomerId: "cus_new",
+      });
+    });
+
+    it("opens a Managed Payments subscription for the account's customer", async () => {
+      await checkoutUrl(ENV, d1Of(db), free, ORIGIN);
+
+      expect(Object.fromEntries(sent.at(-1)?.form ?? [])).toStrictEqual({
         cancel_url: `${ORIGIN}/account`,
-        client_reference_id: "acc_1",
+        client_reference_id: free.id,
+        customer: "cus_new",
         "line_items[0][price]": "price_123",
         "line_items[0][quantity]": "1",
         "managed_payments[enabled]": "true",
         mode: "subscription",
-        "subscription_data[metadata][account_id]": "acc_1",
+        "subscription_data[metadata][account_id]": free.id,
         success_url: `${ORIGIN}/account`,
       });
     });
 
     it("sends the pinned API version and the secret key", async () => {
-      answer = () => reply({ url: "https://checkout.stripe.com/c/pay/cs_1" });
+      await checkoutUrl(ENV, d1Of(db), free, ORIGIN);
 
-      await checkoutUrl(ENV, account(), ORIGIN);
-      const [request] = sent;
-
-      expect(request?.headers.get("Stripe-Version")).toBe(STRIPE_VERSION);
-      expect(request?.headers.get("Authorization")).toBe("Bearer sk_test_123");
+      for (const request of sent) {
+        expect(request.headers.get("Stripe-Version")).toBe(STRIPE_VERSION);
+        expect(request.headers.get("Authorization")).toBe("Bearer sk_test_123");
+      }
     });
 
-    it("names the customer when the account has one", async () => {
-      answer = () => reply({ url: "https://checkout.stripe.com/c/pay/cs_2" });
+    it("uses the customer the account has, without making another", async () => {
+      await checkoutUrl(
+        ENV,
+        d1Of(db),
+        { ...free, stripeCustomerId: "cus_1" },
+        ORIGIN
+      );
 
-      await checkoutUrl(ENV, account({ stripeCustomerId: "cus_1" }), ORIGIN);
+      expect(routesOf(sent)).toStrictEqual([
+        "GET /v1/subscriptions",
+        "POST /v1/checkout/sessions",
+      ]);
+      expect(sent.at(-1)?.form.get("customer")).toBe("cus_1");
+    });
 
-      expect(sent[0]?.form.get("customer")).toBe("cus_1");
+    it("sends a customer with a subscription not ended to the portal, before the webhook says so", async () => {
+      answer = checkoutAnswers(
+        listing(["sub_old", "canceled"], ["sub_1", "incomplete"])
+      );
+
+      await expect(
+        checkoutUrl(
+          ENV,
+          d1Of(db),
+          { ...free, stripeCustomerId: "cus_1" },
+          ORIGIN
+        )
+      ).resolves.toBe(PORTAL);
+      expect(routesOf(sent)).not.toContain("POST /v1/checkout/sessions");
+    });
+
+    it("opens Checkout when every subscription of the customer has ended", async () => {
+      answer = checkoutAnswers(
+        listing(["sub_1", "canceled"], ["sub_2", "incomplete_expired"])
+      );
+
+      await expect(
+        checkoutUrl(
+          ENV,
+          d1Of(db),
+          { ...free, stripeCustomerId: "cus_1" },
+          ORIGIN
+        )
+      ).resolves.toBe(CHECKOUT);
     });
 
     it("throws BillingUnavailableError when Stripe fails", async () => {
       answer = failing(500);
 
-      await expect(checkoutUrl(ENV, account(), ORIGIN)).rejects.toBeInstanceOf(
-        BillingUnavailableError
-      );
+      await expect(
+        checkoutUrl(ENV, d1Of(db), free, ORIGIN)
+      ).rejects.toBeInstanceOf(BillingUnavailableError);
+      await expect(accountById(d1Of(db), free.id)).resolves.toMatchObject({
+        stripeCustomerId: null,
+      });
     });
 
     it("throws BillingUnavailableError while billing is not set up", async () => {
       await expect(
-        checkoutUrl({ ...ENV, STRIPE_PRICE: "" }, account(), ORIGIN)
+        checkoutUrl({ ...ENV, STRIPE_PRICE: "" }, d1Of(db), free, ORIGIN)
       ).rejects.toBeInstanceOf(BillingUnavailableError);
       expect(sent).toHaveLength(0);
     });
@@ -398,13 +590,7 @@ describe("stripe", () => {
       applyStripeEvent(ENV, d1Of(db), event);
 
     beforeEach(async () => {
-      db = new DatabaseSync(":memory:");
-      db.exec(
-        readFileSync(
-          new URL("../migrations-accounts/0001_accounts.sql", import.meta.url),
-          "utf-8"
-        )
-      );
+      db = migrated();
 
       const created = await accountForSignIn(
         d1Of(db),
@@ -540,21 +726,28 @@ describe("stripe", () => {
       subscriptionStatus: "active",
     });
 
+    const NOW_MS = Date.UTC(2026, 10, 24, 12);
+
+    const FULL_RUN = [
+      "GET /v1/subscriptions",
+      "GET /v1/subscriptions/sub_1",
+      "POST /v1/subscriptions/sub_1",
+      "DELETE /v1/subscriptions/sub_1",
+      "GET /v1/customers/cus_1",
+      "GET /v1/invoice_payments",
+      "GET /v1/refunds",
+      "GET /v1/payment_intents/pi_1",
+      "POST /v1/refunds",
+      "GET /v1/customers/cus_1/balance_transactions",
+      "POST /v1/customers/cus_1/balance_transactions",
+    ];
+
     it("cancels with proration, refunds the credit and clears the balance, in order", async () => {
       answer = stripeAnswers();
 
-      await cancelAndRefund(ENV, subscribed);
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
 
-      expect(routesOf(sent)).toStrictEqual([
-        "GET /v1/subscriptions/sub_1",
-        "POST /v1/subscriptions/sub_1",
-        "DELETE /v1/subscriptions/sub_1",
-        "GET /v1/customers/cus_1",
-        "GET /v1/invoice_payments",
-        "GET /v1/refunds",
-        "POST /v1/refunds",
-        "POST /v1/customers/cus_1/balance_transactions",
-      ]);
+      expect(routesOf(sent)).toStrictEqual(FULL_RUN);
       expect(
         sent.every(
           (request) => request.headers.get("Stripe-Version") === STRIPE_VERSION
@@ -562,11 +755,23 @@ describe("stripe", () => {
       ).toBeTruthy();
     });
 
+    it("lists every subscription of the customer, ended ones too", async () => {
+      answer = stripeAnswers();
+
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
+
+      expect(Object.fromEntries(sent[0]?.query ?? [])).toStrictEqual({
+        customer: "cus_1",
+        limit: "100",
+        status: "all",
+      });
+    });
+
     it("stamps the paid invoice, then cancels with proration and reads the final invoice", async () => {
       answer = stripeAnswers();
 
-      await cancelAndRefund(ENV, subscribed);
-      const [read, stamp, cancel] = sent;
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
+      const [, read, stamp, cancel] = sent;
 
       expect(read?.query.getAll("expand[]")).toStrictEqual(["latest_invoice"]);
       expect(Object.fromEntries(stamp?.form ?? [])).toStrictEqual({
@@ -579,22 +784,36 @@ describe("stripe", () => {
       });
     });
 
-    it("refunds from the current period's invoice, once, and clears the balance", async () => {
+    it("reads the current period's payment, its refunds and its charge", async () => {
       answer = stripeAnswers();
 
-      await cancelAndRefund(ENV, subscribed);
-      const payments = sent.at(4);
-      const refunds = sent.at(5);
-      const [refund, balance] = sent.slice(-2);
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
 
-      expect(Object.fromEntries(payments?.query ?? [])).toStrictEqual({
-        invoice: "in_paid",
-        status: "paid",
-      });
-      expect(Object.fromEntries(refunds?.query ?? [])).toStrictEqual({
-        limit: "100",
-        payment_intent: "pi_1",
-      });
+      expect(
+        Object.fromEntries(
+          sentTo(sent, "GET /v1/invoice_payments")?.query ?? []
+        )
+      ).toStrictEqual({ invoice: "in_paid", status: "paid" });
+      expect(
+        Object.fromEntries(sentTo(sent, "GET /v1/refunds")?.query ?? [])
+      ).toStrictEqual({ limit: "100", payment_intent: "pi_1" });
+      expect(
+        sentTo(sent, "GET /v1/payment_intents/pi_1")?.query.getAll("expand[]")
+      ).toStrictEqual(["latest_charge"]);
+    });
+
+    it("refunds the credit once, and clears it off the balance", async () => {
+      answer = stripeAnswers();
+
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
+
+      const refund = sentTo(sent, "POST /v1/refunds");
+
+      const balance = sentTo(
+        sent,
+        "POST /v1/customers/cus_1/balance_transactions"
+      );
+
       expect(Object.fromEntries(refund?.form ?? [])).toStrictEqual({
         amount: "1500",
         "metadata[subscription]": "sub_1",
@@ -604,7 +823,41 @@ describe("stripe", () => {
       expect(Object.fromEntries(balance?.form ?? [])).toStrictEqual({
         amount: "1500",
         currency: "eur",
+        "metadata[subscription]": "sub_1",
       });
+    });
+
+    it("cancels every subscription of the customer that has not ended, not only the account's", async () => {
+      answer = stripeAnswers({
+        "DELETE /v1/subscriptions/sub_2": () =>
+          reply({
+            customer: "cus_1",
+            id: "sub_2",
+            latest_invoice: null,
+            metadata: {},
+            status: "canceled",
+          }),
+        "GET /v1/subscriptions": listing(
+          ["sub_1", "active"],
+          ["sub_2", "past_due"],
+          ["sub_3", "canceled"],
+          ["sub_4", "incomplete_expired"]
+        ),
+        "GET /v1/subscriptions/sub_2": pastDue("sub_2"),
+      });
+
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
+
+      const deleted = routesOf(sent).filter((route) =>
+        route.startsWith("DELETE")
+      );
+
+      expect(deleted).toStrictEqual([
+        "DELETE /v1/subscriptions/sub_1",
+        "DELETE /v1/subscriptions/sub_2",
+      ]);
+      expect(routesOf(sent)).not.toContain("GET /v1/subscriptions/sub_3");
+      expect(routesOf(sent)).not.toContain("GET /v1/subscriptions/sub_4");
     });
 
     it("cancels a past_due subscription without proration and refunds nothing", async () => {
@@ -627,17 +880,104 @@ describe("stripe", () => {
           }),
       });
 
-      await expect(cancelAndRefund(ENV, subscribed)).resolves.toBeUndefined();
+      await expect(
+        cancelAndRefund(ENV, subscribed, NOW_MS)
+      ).resolves.toBeUndefined();
       expect(routesOf(sent)).toStrictEqual([
+        "GET /v1/subscriptions",
         "GET /v1/subscriptions/sub_1",
         "DELETE /v1/subscriptions/sub_1",
       ]);
-      expect(sent[1]?.query.get("prorate")).toBe("false");
-      expect(sent[1]?.query.get("invoice_now")).toBe("false");
+      expect(sent[2]?.query.get("prorate")).toBe("false");
+      expect(sent[2]?.query.get("invoice_now")).toBe("false");
+    });
+
+    it("cancels nothing Stripe has ended, incomplete_expired included", async () => {
+      answer = stripeAnswers({
+        "GET /v1/subscriptions/sub_1": () =>
+          reply({
+            customer: "cus_1",
+            id: "sub_1",
+            latest_invoice: { ...PAID_INVOICE, amount_paid: 0, status: "void" },
+            metadata: {},
+            status: "incomplete_expired",
+          }),
+      });
+
+      // An account that names its subscription but no customer reads that subscription alone.
+      await expect(
+        cancelAndRefund(
+          ENV,
+          account({
+            subscriptionId: "sub_1",
+            subscriptionStatus: "incomplete",
+          }),
+          NOW_MS
+        )
+      ).resolves.toBeUndefined();
+      expect(routesOf(sent)).toStrictEqual(["GET /v1/subscriptions/sub_1"]);
+    });
+
+    it("counts a subscription Stripe no longer has as nothing to cancel", async () => {
+      answer = stripeAnswers({ "GET /v1/subscriptions/sub_1": missing });
+
+      await expect(
+        cancelAndRefund(ENV, account({ subscriptionId: "sub_1" }), NOW_MS)
+      ).resolves.toBeUndefined();
+      expect(routesOf(sent)).toStrictEqual(["GET /v1/subscriptions/sub_1"]);
+    });
+
+    it("counts a customer Stripe no longer has as nothing to cancel", async () => {
+      answer = stripeAnswers({ "GET /v1/subscriptions": missing });
+
+      await expect(
+        cancelAndRefund(ENV, subscribed, NOW_MS)
+      ).resolves.toBeUndefined();
+      expect(routesOf(sent)).toStrictEqual(["GET /v1/subscriptions"]);
+    });
+
+    it("still fails on a 404 that is not a missing object", async () => {
+      answer = stripeAnswers({ "GET /v1/subscriptions": failing(404) });
+
+      await expect(
+        cancelAndRefund(ENV, subscribed, NOW_MS)
+      ).rejects.toBeInstanceOf(BillingUnavailableError);
+    });
+
+    it("refunds no more than the payment still holds after an earlier refund", async () => {
+      answer = stripeAnswers({
+        "GET /v1/payment_intents/pi_1": () =>
+          reply({
+            id: "pi_1",
+            latest_charge: { amount_captured: 2000, amount_refunded: 1200 },
+          }),
+      });
+
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
+
+      const refund = sentTo(sent, "POST /v1/refunds");
+
+      expect(refund?.form.get("amount")).toBe("800");
+      expect(sent.at(-1)?.form.get("amount")).toBe("800");
+    });
+
+    it("refunds nothing, and still deletes, when the payment was refunded in full elsewhere", async () => {
+      answer = stripeAnswers({
+        "GET /v1/payment_intents/pi_1": () =>
+          reply({
+            id: "pi_1",
+            latest_charge: { amount_captured: 2000, amount_refunded: 2000 },
+          }),
+      });
+
+      await expect(
+        cancelAndRefund(ENV, subscribed, NOW_MS)
+      ).resolves.toBeUndefined();
+      expect(routesOf(sent)).not.toContain("POST /v1/refunds");
     });
 
     it("on a retry after the refund went through, only clears the balance", async () => {
-      answer = stripeAnswers({
+      answer = retrying({
         "GET /v1/refunds": () =>
           reply({
             data: [
@@ -645,47 +985,100 @@ describe("stripe", () => {
               { amount: 1500, id: "re_1", metadata: { subscription: "sub_1" } },
             ],
           }),
-        "GET /v1/subscriptions/sub_1": canceledEarlier,
       });
 
-      await cancelAndRefund(ENV, subscribed);
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
 
       expect(routesOf(sent)).toStrictEqual([
+        "GET /v1/subscriptions",
         "GET /v1/subscriptions/sub_1",
         "GET /v1/customers/cus_1",
         "GET /v1/invoice_payments",
         "GET /v1/refunds",
+        "GET /v1/customers/cus_1/balance_transactions",
         "POST /v1/customers/cus_1/balance_transactions",
       ]);
       expect(sent.at(-1)?.form.get("amount")).toBe("1500");
     });
 
     it("on a retry before the refund, refunds without cancelling again", async () => {
-      answer = stripeAnswers({
-        "GET /v1/subscriptions/sub_1": canceledEarlier,
-      });
+      answer = retrying();
 
-      await cancelAndRefund(ENV, subscribed);
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
 
       expect(routesOf(sent)).not.toContain("DELETE /v1/subscriptions/sub_1");
       expect(routesOf(sent)).toContain("POST /v1/refunds");
     });
 
-    it("refunds nothing for a subscription canceled elsewhere", async () => {
+    it("on a retry after a failed balance step, tries it again with a new key", async () => {
       answer = stripeAnswers({
-        "GET /v1/subscriptions/sub_1": () =>
+        "POST /v1/customers/cus_1/balance_transactions": failing(500),
+      });
+
+      await expect(
+        cancelAndRefund(ENV, subscribed, NOW_MS)
+      ).rejects.toBeInstanceOf(BillingUnavailableError);
+
+      const failed = sent.at(-1)?.headers.get("Idempotency-Key");
+
+      sent = [];
+      answer = retrying({
+        "GET /v1/refunds": () =>
           reply({
-            customer: "cus_1",
-            id: "sub_1",
-            latest_invoice: FINAL_INVOICE,
-            metadata: {},
-            status: "canceled",
+            data: [
+              { amount: 1500, id: "re_1", metadata: { subscription: "sub_1" } },
+            ],
           }),
       });
 
-      await cancelAndRefund(ENV, subscribed);
+      await cancelAndRefund(ENV, subscribed, NOW_MS + MINUTE_MS);
+      const retried = sent.at(-1);
 
-      expect(routesOf(sent)).toStrictEqual(["GET /v1/subscriptions/sub_1"]);
+      expect(`${retried?.method} ${retried?.path}`).toBe(
+        "POST /v1/customers/cus_1/balance_transactions"
+      );
+      expect(retried?.headers.get("Idempotency-Key")).toMatch(
+        /^balance-sub_1-/u
+      );
+      expect(retried?.headers.get("Idempotency-Key")).not.toBe(failed);
+    });
+
+    it("clears the balance once: not again when this subscription's adjustment is on it", async () => {
+      answer = retrying({
+        "GET /v1/customers/cus_1/balance_transactions": () =>
+          reply({
+            data: [
+              {
+                amount: 1500,
+                id: "cbtxn_1",
+                metadata: { subscription: "sub_1" },
+              },
+            ],
+            has_more: false,
+          }),
+        "GET /v1/refunds": () =>
+          reply({
+            data: [
+              { amount: 1500, id: "re_1", metadata: { subscription: "sub_1" } },
+            ],
+          }),
+      });
+
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
+
+      expect(routesOf(sent).at(-1)).toBe(
+        "GET /v1/customers/cus_1/balance_transactions"
+      );
+    });
+
+    it("refunds nothing for a subscription canceled elsewhere", async () => {
+      answer = stripeAnswers({
+        "GET /v1/subscriptions": listing(["sub_1", "canceled"]),
+      });
+
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
+
+      expect(routesOf(sent)).toStrictEqual(["GET /v1/subscriptions"]);
     });
 
     it("refunds nothing when the credit was already cleared", async () => {
@@ -694,7 +1087,7 @@ describe("stripe", () => {
           reply({ balance: 0, currency: "eur", id: "cus_1" }),
       });
 
-      await cancelAndRefund(ENV, subscribed);
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
 
       expect(routesOf(sent).at(-1)).toBe("GET /v1/customers/cus_1");
     });
@@ -711,13 +1104,13 @@ describe("stripe", () => {
           }),
       });
 
-      await cancelAndRefund(ENV, subscribed);
+      await cancelAndRefund(ENV, subscribed, NOW_MS);
 
       expect(routesOf(sent).at(-1)).toBe("DELETE /v1/subscriptions/sub_1");
     });
 
-    it("sends nothing for an account without a subscription", async () => {
-      await cancelAndRefund(ENV, account());
+    it("sends nothing for an account without a customer or a subscription", async () => {
+      await cancelAndRefund(ENV, account(), NOW_MS);
 
       expect(sent).toHaveLength(0);
     });
@@ -725,18 +1118,18 @@ describe("stripe", () => {
     it("throws BillingUnavailableError when the first request fails", async () => {
       answer = failing(500);
 
-      await expect(cancelAndRefund(ENV, subscribed)).rejects.toBeInstanceOf(
-        BillingUnavailableError
-      );
+      await expect(
+        cancelAndRefund(ENV, subscribed, NOW_MS)
+      ).rejects.toBeInstanceOf(BillingUnavailableError);
       expect(sent).toHaveLength(1);
     });
 
     it("throws BillingUnavailableError when the refund fails, and leaves the balance", async () => {
       answer = stripeAnswers({ "POST /v1/refunds": failing(402) });
 
-      await expect(cancelAndRefund(ENV, subscribed)).rejects.toBeInstanceOf(
-        BillingUnavailableError
-      );
+      await expect(
+        cancelAndRefund(ENV, subscribed, NOW_MS)
+      ).rejects.toBeInstanceOf(BillingUnavailableError);
       expect(routesOf(sent).at(-1)).toBe("POST /v1/refunds");
     });
   });

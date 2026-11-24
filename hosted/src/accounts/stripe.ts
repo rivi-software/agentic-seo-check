@@ -13,6 +13,7 @@ import {
   accountById,
   applySubscription,
   linkCustomer,
+  subscriptionEnded,
 } from "./store.js";
 import type { Account } from "./store.js";
 
@@ -53,6 +54,15 @@ export const billingOpen = (env: StripeEnv): boolean =>
   Boolean(env.STRIPE_SECRET_KEY) &&
   Boolean(env.STRIPE_WEBHOOK_SECRET) &&
   Boolean(env.STRIPE_PRICE);
+
+/**
+ * The cause of a BillingUnavailableError for an object Stripe does not have (`resource_missing`),
+ * as after a sandbox's data is cleared. Any caller that does not look for it fails as for any
+ * other error of Stripe's.
+ */
+const MISSING_AT_STRIPE = Symbol("resource_missing");
+
+const StripeErrorCode = z.object({ error: z.object({ code: z.string() }) });
 
 interface StripeRequest {
   method: "GET" | "POST" | "DELETE";
@@ -105,9 +115,16 @@ const stripe = async <T>(
   }
 
   if (!response.ok) {
-    // Stripe's error body can name the customer, so it stays out of the error.
-    await response.body?.cancel();
-    throw new BillingUnavailableError();
+    // Stripe's error body can name the customer, so only its code is read, and none of it is kept.
+    const failure = StripeErrorCode.safeParse(
+      await response.json().catch(() => null)
+    );
+
+    throw new BillingUnavailableError(
+      failure.success && failure.data.error.code === "resource_missing"
+        ? { cause: MISSING_AT_STRIPE }
+        : {}
+    );
   }
 
   const parsed = schema.safeParse(await response.json().catch(() => null));
@@ -119,15 +136,139 @@ const stripe = async <T>(
   return parsed.data;
 };
 
+/** What `request` answers, or null when Stripe has no such object. */
+const stripeUnlessMissing = async <T>(
+  env: StripeEnv,
+  request: StripeRequest,
+  schema: z.ZodType<T>
+): Promise<T | null> => {
+  try {
+    return await stripe(env, request, schema);
+  } catch (error) {
+    if (
+      error instanceof BillingUnavailableError &&
+      error.cause === MISSING_AT_STRIPE
+    ) {
+      return null;
+    }
+
+    throw error;
+  }
+};
+
 const SessionUrl = z.object({ url: z.string() });
 
+const Created = z.object({ id: z.string() });
+
+/** A subscription as `GET /v1/subscriptions?customer=` lists it. */
+const ListedSubscription = z.object({
+  id: z.string(),
+  status: z.string(),
+  metadata: z.object({ refund_invoice: z.string().optional() }).nullish(),
+});
+
+const SubscriptionPage = z.object({
+  data: z.array(ListedSubscription),
+  has_more: z.boolean(),
+});
+
+/**
+ * Every subscription of a customer, ended ones too (`status=all`,
+ * https://docs.stripe.com/api/subscriptions/list), page by page; none for a customer Stripe no
+ * longer has.
+ */
+const subscriptionsOf = async (
+  env: StripeEnv,
+  customerId: string
+): Promise<z.infer<typeof ListedSubscription>[]> => {
+  const all: z.infer<typeof ListedSubscription>[] = [];
+  let after: string | undefined;
+
+  for (;;) {
+    const params = new URLSearchParams({
+      customer: customerId,
+      limit: "100",
+      status: "all",
+    });
+
+    if (after !== undefined) {
+      params.set("starting_after", after);
+    }
+
+    // oxlint-disable-next-line no-await-in-loop -- each page starts after the last one's end
+    const page = await stripeUnlessMissing(
+      env,
+      { method: "GET", params, path: "/v1/subscriptions" },
+      SubscriptionPage
+    );
+
+    if (page === null) {
+      return all;
+    }
+
+    all.push(...page.data);
+    after = page.data.at(-1)?.id;
+
+    if (!page.has_more || after === undefined) {
+      return all;
+    }
+  }
+};
+
+/**
+ * The account's Stripe customer, made and linked before its first Checkout, so every subscription
+ * it starts (two tabs, or Subscribe again before the webhook lands) sits under one customer that
+ * the account page sees and a deletion cancels. The idempotency key makes two Checkouts started
+ * at once share one customer.
+ */
+const customerOf = async (
+  env: StripeEnv,
+  db: D1Like,
+  account: Account
+): Promise<string> => {
+  if (account.stripeCustomerId !== null) {
+    return account.stripeCustomerId;
+  }
+
+  const customer = await stripe(
+    env,
+    {
+      idempotencyKey: `customer-${account.id}`,
+      method: "POST",
+      params: new URLSearchParams({
+        email: account.email,
+        "metadata[account_id]": account.id,
+      }),
+      path: "/v1/customers",
+    },
+    Created
+  );
+
+  await linkCustomer(db, account.id, customer.id);
+
+  return customer.id;
+};
+
+/**
+ * Where Subscribe leads: Stripe Checkout for the account's customer, or Stripe's portal when the
+ * customer already has a subscription that has not ended, which the account's row may not show
+ * yet (Checkout's success_url can come back before the webhook does).
+ */
 export const checkoutUrl = async (
   env: StripeEnv,
+  db: D1Like,
   account: Account,
   origin: string
 ): Promise<string> => {
   if (!billingOpen(env)) {
     throw new BillingUnavailableError();
+  }
+
+  const customer = await customerOf(env, db, account);
+  const subscriptions = await subscriptionsOf(env, customer);
+
+  if (subscriptions.some((each) => !subscriptionEnded(each.status))) {
+    return portalUrl(env, { ...account, stripeCustomerId: customer }, origin);
   }
 
   const params = new URLSearchParams({
@@ -136,14 +277,11 @@ export const checkoutUrl = async (
     "line_items[0][price]": env.STRIPE_PRICE ?? "",
     "line_items[0][quantity]": "1",
     client_reference_id: account.id,
+    customer,
     "subscription_data[metadata][account_id]": account.id,
     success_url: `${origin}/account`,
     cancel_url: `${origin}/account`,
   });
-
-  if (account.stripeCustomerId !== null) {
-    params.set("customer", account.stripeCustomerId);
-  }
 
   const session = await stripe(
     env,
@@ -401,7 +539,6 @@ const Customer = z.object({
 const InvoicePayments = z.object({
   data: z.array(
     z.object({
-      amount_paid: z.number().int().nullable(),
       payment: z.object({ payment_intent: z.string().optional() }),
     })
   ),
@@ -416,50 +553,52 @@ const Refunds = z.object({
   ),
 });
 
-const Created = z.object({ id: z.string() });
+/** A payment with its charge, which holds what was captured and what is refunded of it. */
+const PaymentIntent = z.object({
+  latest_charge: z
+    .object({
+      amount_captured: z.number().int(),
+      amount_refunded: z.number().int(),
+    })
+    .nullable(),
+});
+
+const BalanceTransactions = z.object({
+  data: z.array(
+    z.object({
+      metadata: z.object({ subscription: z.string().optional() }).nullish(),
+    })
+  ),
+});
+
+const MINUTE_MS = 60_000;
 
 /**
- * Ends an account's subscription now and refunds the unused time, before the account is deleted.
- *
- * What Stripe's docs say, and what this does in that order:
- * - Managed Payments lets the business "issue refunds and update subscriptions in the Dashboard or
- *   with the API" (https://docs.stripe.com/payments/managed-payments/how-it-works).
- * - `DELETE /v1/subscriptions/{id}` cancels now; `prorate=true` "will generate a proration
- *   invoice item that credits remaining unused time until the subscription period end" and
- *   `invoice_now=true` puts it on a final invoice (https://docs.stripe.com/api/subscriptions/cancel).
- * - The credit lands on the customer's balance, not the card: "To refund your customer, issue
- *   refunds and then adjust their account balance back to zero"
- *   (https://docs.stripe.com/billing/subscriptions/cancel#prorate-for-usage-based-billing, and
- *   https://support.stripe.com/questions/refunding-credit-balance-to-customer-after-subscription-downgrade-or-cancellation).
- * - Since basil an invoice's payment is in `GET /v1/invoice_payments?invoice=`
- *   (https://docs.stripe.com/api/invoice-payment/list), and `POST /v1/refunds` takes its
- *   `payment_intent`, an `amount` and `metadata`; `GET /v1/refunds?payment_intent=` lists a
- *   payment's refunds (https://docs.stripe.com/refunds, https://docs.stripe.com/api/refunds/list).
- * - `POST /v1/customers/{id}/balance_transactions` with a positive `amount` takes the credit back
- *   off the balance (https://docs.stripe.com/billing/customer/balance#modifying).
+ * Ends one subscription now and refunds its unused time; see cancelAndRefund for Stripe's docs.
  *
  * Only the current period is refunded, and only when its invoice (the subscription's latest, read
  * before the cancellation) is paid: a past_due subscription is canceled without proration, since
  * nobody paid for the time it would credit. That invoice's id is written to the subscription's
  * metadata before it is canceled, so a retry finds it on the canceled subscription; one canceled
  * elsewhere (at link.com, or by Stripe after failed payments) has none, and is refunded nothing.
+ * A subscription Stripe has ended (canceled, incomplete_expired) or no longer has is not canceled.
+ *
  * A retry is safe at any time: the refund carries the subscription's id in its metadata and is not
- * made again when the payment already has it, and the balance step runs only while the balance
- * still holds the credit.
+ * made again when the payment already has it, and is never more than the charge still holds, so a
+ * refund made in the Dashboard first does not make every retry fail. The balance adjustment too
+ * carries the subscription's id and is made once. Its idempotency key changes each minute: Stripe
+ * replays a saved answer, a failure included, for 24 hours, so a key fixed per subscription would
+ * fail every retry for a day after one failed try; the key only keeps two tries at the same moment
+ * from both adjusting.
  */
-export const cancelAndRefund = async (
+const cancelOne = async (
   env: StripeEnv,
-  account: Account
+  subscriptionId: string,
+  now: number
 ): Promise<void> => {
-  const { subscriptionId } = account;
-
-  if (subscriptionId === null) {
-    return;
-  }
-
   const path = `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`;
 
-  let subscription = await stripe(
+  const held = await stripeUnlessMissing(
     env,
     {
       method: "GET",
@@ -469,9 +608,14 @@ export const cancelAndRefund = async (
     Subscription
   );
 
+  if (held === null) {
+    return;
+  }
+
+  let subscription = held;
   let refundInvoice = subscription.metadata?.refund_invoice;
 
-  if (subscription.status !== "canceled") {
+  if (!subscriptionEnded(subscription.status)) {
     const current = subscription.latest_invoice;
 
     const paid =
@@ -539,11 +683,9 @@ export const cancelAndRefund = async (
     InvoicePayments
   );
 
-  const payment = payments.data.find(
+  const paymentIntent = payments.data.find(
     (each) => each.payment.payment_intent !== undefined
-  );
-
-  const paymentIntent = payment?.payment.payment_intent;
+  )?.payment.payment_intent;
 
   if (paymentIntent === undefined) {
     return;
@@ -569,11 +711,22 @@ export const cancelAndRefund = async (
   let amount = refunded?.amount;
 
   if (amount === undefined) {
-    amount = Math.min(
-      -finalInvoice.total,
-      -customer.balance,
-      payment?.amount_paid ?? 0
+    const intent = await stripe(
+      env,
+      {
+        method: "GET",
+        params: new URLSearchParams({ "expand[]": "latest_charge" }),
+        path: `/v1/payment_intents/${encodeURIComponent(paymentIntent)}`,
+      },
+      PaymentIntent
     );
+
+    const charge = intent.latest_charge;
+
+    const refundable =
+      charge === null ? 0 : charge.amount_captured - charge.amount_refunded;
+
+    amount = Math.min(-finalInvoice.total, -customer.balance, refundable);
 
     if (amount <= 0) {
       return;
@@ -595,17 +748,92 @@ export const cancelAndRefund = async (
     );
   }
 
+  const adjustments = await stripe(
+    env,
+    {
+      method: "GET",
+      params: new URLSearchParams({ limit: "100" }),
+      path: `${customerPath}/balance_transactions`,
+    },
+    BalanceTransactions
+  );
+
+  if (
+    adjustments.data.some(
+      (adjustment) => adjustment.metadata?.subscription === subscriptionId
+    )
+  ) {
+    return;
+  }
+
   await stripe(
     env,
     {
-      idempotencyKey: `balance-${subscriptionId}`,
+      idempotencyKey: `balance-${subscriptionId}-${Math.floor(now / MINUTE_MS)}`,
       method: "POST",
       params: new URLSearchParams({
         amount: String(Math.min(amount, -customer.balance)),
         currency: customer.currency ?? finalInvoice.currency,
+        "metadata[subscription]": subscriptionId,
       }),
       path: `${customerPath}/balance_transactions`,
     },
     Created
   );
+};
+
+/**
+ * Ends every subscription of an account's customer that has not ended, now, and refunds the
+ * unused time, before the account is deleted. Every one, not only the subscription the account's
+ * row names: two Checkouts can each start one, and no paid subscription may outlive its account.
+ * A canceled one stamped with an invoice to refund is read again too, so a retry finishes a refund
+ * an earlier try left halfway. A customer Stripe no longer has has nothing to cancel.
+ *
+ * What Stripe's docs say, and what cancelOne does in that order:
+ * - Managed Payments lets the business "issue refunds and update subscriptions in the Dashboard or
+ *   with the API" (https://docs.stripe.com/payments/managed-payments/how-it-works).
+ * - `DELETE /v1/subscriptions/{id}` cancels now; `prorate=true` "will generate a proration
+ *   invoice item that credits remaining unused time until the subscription period end" and
+ *   `invoice_now=true` puts it on a final invoice (https://docs.stripe.com/api/subscriptions/cancel).
+ * - The credit lands on the customer's balance, not the card: "To refund your customer, issue
+ *   refunds and then adjust their account balance back to zero"
+ *   (https://docs.stripe.com/billing/subscriptions/cancel#prorate-for-usage-based-billing, and
+ *   https://support.stripe.com/questions/refunding-credit-balance-to-customer-after-subscription-downgrade-or-cancellation).
+ * - Since basil an invoice's payment is in `GET /v1/invoice_payments?invoice=`
+ *   (https://docs.stripe.com/api/invoice-payment/list), and `POST /v1/refunds` takes its
+ *   `payment_intent`, an `amount` and `metadata`; `GET /v1/refunds?payment_intent=` lists a
+ *   payment's refunds (https://docs.stripe.com/refunds, https://docs.stripe.com/api/refunds/list).
+ * - A PaymentIntent has no refunded amount of its own; its `latest_charge` has `amount_captured`
+ *   and `amount_refunded` (https://docs.stripe.com/api/charges/object).
+ * - `POST /v1/customers/{id}/balance_transactions` with a positive `amount` takes the credit back
+ *   off the balance, and `GET` lists them (https://docs.stripe.com/billing/customer/balance#modifying,
+ *   https://docs.stripe.com/api/customer_balance_transactions/list).
+ *
+ * `now` is in milliseconds.
+ */
+export const cancelAndRefund = async (
+  env: StripeEnv,
+  account: Account,
+  now: number = Date.now()
+): Promise<void> => {
+  let ids: string[] = [];
+
+  if (account.stripeCustomerId !== null) {
+    const subscriptions = await subscriptionsOf(env, account.stripeCustomerId);
+
+    ids = subscriptions
+      .filter(
+        (each) =>
+          !subscriptionEnded(each.status) ||
+          each.metadata?.refund_invoice !== undefined
+      )
+      .map((each) => each.id);
+  } else if (account.subscriptionId !== null) {
+    ids = [account.subscriptionId];
+  }
+
+  for (const id of ids) {
+    // oxlint-disable-next-line no-await-in-loop -- one at a time, so each reads the balance the last left
+    await cancelOne(env, id, now);
+  }
 };

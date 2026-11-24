@@ -4,6 +4,7 @@
  * part, which a session recording masks (PRIVATE in analytics-script.ts).
  */
 import { PRODUCT_NAME } from "../../../src/brand.js";
+import { subscriptionEnded } from "../accounts/store.js";
 import type { Account } from "../accounts/store.js";
 import { PRIVACY_URL } from "../ui/frame.js";
 import { icon } from "../ui/icons.js";
@@ -18,15 +19,15 @@ const LINK_URL = "https://link.com";
 /** The statuses of a subscription that is paid for now. */
 const SUBSCRIBED = new Set(["active", "trialing"]);
 
-/** The statuses of a subscription Stripe has ended for good, after which a new one may start. */
-const ENDED = new Set(["canceled", "incomplete_expired"]);
-
 /**
  * Whether Subscribe may start a subscription: only without a live one, since Checkout would start
- * a second beside it. A live one that is not paid (past_due, unpaid) is fixed in the portal.
+ * a second beside it. A live one that is not paid (past_due, unpaid) is fixed in the portal. This
+ * reads what the webhook last wrote; checkoutUrl asks Stripe as well, since a subscription can
+ * exist before its webhook lands.
  */
 export const mayCheckout = (account: Account): boolean =>
-  account.subscriptionStatus === null || ENDED.has(account.subscriptionStatus);
+  account.subscriptionStatus === null ||
+  subscriptionEnded(account.subscriptionStatus);
 
 export type AccountView =
   | { view: "sign-in"; error?: string; email?: string }

@@ -7,6 +7,15 @@ import type { D1Like } from "../d1.js";
 import { randomSecret } from "../secrets.js";
 import { normalEmail } from "../site/waitlist.js";
 
+/**
+ * The statuses of a subscription Stripe has ended for good: nothing to cancel, and a new one may
+ * start beside it (https://docs.stripe.com/api/subscriptions/object#subscription_object-status).
+ */
+const ENDED_STATUSES = new Set(["canceled", "incomplete_expired"]);
+
+export const subscriptionEnded = (status: string): boolean =>
+  ENDED_STATUSES.has(status);
+
 export interface Account {
   id: string;
   email: string;

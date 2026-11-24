@@ -46,6 +46,9 @@ let stripeStatus: number;
 let turnstilePasses: boolean;
 let subscriptionStatus: string;
 
+/** The customer's subscriptions, as `GET /v1/subscriptions?customer=` lists them. */
+let listed: { id: string; status: string }[];
+
 const env = (overrides: Partial<AccountSiteEnv> = {}): AccountSiteEnv => ({
   ACCOUNTS: d1Of(db),
   EMAIL: {
@@ -86,12 +89,24 @@ const stripeAnswer = (method: string, path: string): Response => {
     return Response.json({ url: PORTAL });
   }
 
-  if (method === "GET" && path.startsWith("/v1/subscriptions/")) {
+  if (method === "POST" && path === "/v1/customers") {
+    return Response.json({ id: "cus_new" });
+  }
+
+  if (method === "GET" && path === "/v1/subscriptions") {
+    return Response.json({
+      data: listed.map((each) => ({ ...each, metadata: {} })),
+      has_more: false,
+    });
+  }
+
+  if (path.startsWith("/v1/subscriptions/")) {
     return Response.json({
       id: "sub_1",
       customer: "cus_1",
-      status: subscriptionStatus,
+      status: method === "DELETE" ? "canceled" : subscriptionStatus,
       metadata: {},
+      latest_invoice: null,
       items: { data: [{ current_period_end: 1_800_000_000 }] },
     });
   }
@@ -249,6 +264,7 @@ describe("the account pages", () => {
     stripeCalls = [];
     otherCalls = [];
     stripeStatus = 200;
+    listed = [];
     turnstilePasses = true;
     subscriptionStatus = "active";
     waiting.length = 0;
@@ -399,7 +415,40 @@ describe("the account pages", () => {
 
     expect(answer.status).toBe(303);
     expect(answer.headers.get("location")).toBe(CHECKOUT);
-    expect(stripeCalls[0]?.form.get("client_reference_id")).toMatch(/^acc_/u);
+    expect(
+      stripeCalls
+        .find((call) => call.path === "/v1/checkout/sessions")
+        ?.form.get("client_reference_id")
+    ).toMatch(/^acc_/u);
+  });
+
+  it("keeps the Stripe customer a free account's first Subscribe makes", async () => {
+    const account = await accountRow();
+
+    await route(
+      "/account/checkout",
+      post({}, { cookie: await cookieFor(account.id) })
+    );
+
+    await expect(accountById(d1Of(db), account.id)).resolves.toMatchObject({
+      stripeCustomerId: "cus_new",
+    });
+  });
+
+  it("sends an account whose subscription Stripe has but the webhook has not brought to the portal", async () => {
+    const account = await accountRow();
+    await linkCustomer(d1Of(db), account.id, "cus_1");
+    listed = [{ id: "sub_1", status: "active" }];
+
+    const answer = await route(
+      "/account/checkout",
+      post({}, { cookie: await cookieFor(account.id) })
+    );
+
+    expect(answer.headers.get("location")).toBe(PORTAL);
+    expect(stripeCalls.map((call) => call.path)).not.toContain(
+      "/v1/checkout/sessions"
+    );
   });
 
   it("sends a visitor who is signed out back to the sign-in form, without asking Stripe", async () => {
@@ -426,6 +475,23 @@ describe("the account pages", () => {
     expect(html).toContain("Payments are unavailable right now");
     expect(answer.headers.get("set-cookie")).toBeNull();
     await expect(accountById(d1Of(db), account.id)).resolves.not.toBeNull();
+  });
+
+  it("cancels the customer's subscription before deleting, when the webhook has not brought it yet", async () => {
+    const account = await accountRow();
+    await linkCustomer(d1Of(db), account.id, "cus_1");
+    listed = [{ id: "sub_1", status: "active" }];
+
+    const answer = await route(
+      "/account/delete",
+      post({ confirm: "yes" }, { cookie: await cookieFor(account.id) })
+    );
+
+    expect(answer.status).toBe(200);
+    expect(stripeCalls.map((call) => `${call.method} ${call.path}`)).toContain(
+      "DELETE /v1/subscriptions/sub_1"
+    );
+    await expect(accountById(d1Of(db), account.id)).resolves.toBeNull();
   });
 
   it("deletes a free account, ends the session and says it is gone", async () => {
@@ -546,6 +612,7 @@ describe("the Stripe webhook", () => {
     stripeCalls = [];
     otherCalls = [];
     stripeStatus = 200;
+    listed = [];
     subscriptionStatus = "active";
     waiting.length = 0;
     vi.stubGlobal("fetch", fakeFetch);
