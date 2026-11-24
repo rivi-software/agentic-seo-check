@@ -13,11 +13,11 @@ export default defineConfig({
   resolve: {
     alias: {
       "cloudflare:workers": new URL(
-        "test/stubs/cloudflare-workers.ts",
+        "stubs/cloudflare-workers.ts",
         import.meta.url
       ).pathname,
       "cloudflare:workflows": new URL(
-        "test/stubs/cloudflare-workflows.ts",
+        "stubs/cloudflare-workflows.ts",
         import.meta.url
       ).pathname,
     },

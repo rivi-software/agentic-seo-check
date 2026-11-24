@@ -1,4 +1,3 @@
-import { MARK_SVG } from "../../../src/brand.js";
 import { findRule } from "../../../src/core/rules/index.js";
 import { VERSION } from "../../../src/version.js";
 import { reportError } from "../analytics.js";
@@ -6,20 +5,17 @@ import { FORMER_SITE_HOST, movedToOrigin } from "../limits.js";
 import { readReport } from "../shared-reports.js";
 /**
  * The routes of the website at agentic-seo.org (issues #39 and #168), which its own Worker serves
- * (worker.ts): the homepage with the audit form, the rules, the form's answer at /audit, the
- * files a crawler asks for, the files the MCP server's pages load, and pdfmake and the fonts a
- * report's PDF is drawn with. The MCP server's own paths on the hostname go to its Worker.
+ * (worker.ts): the homepage with the audit form, the rules, the form's answer at /audit and the
+ * files a crawler asks for. The fixed files the pages load (the script, the fonts, the share
+ * images, posthog-js, pdfmake) are static assets, which Cloudflare serves before this Worker runs
+ * (scripts/assets.ts, issue #202). The MCP server's own paths on the hostname go to its Worker.
  */
-import { fontResponse, shareImageResponse } from "../ui/assets.js";
-import { SERVER_CARD, SITE_CARD } from "../ui/og.js";
-import { posthogFileResponse } from "../ui/posthog-script.js";
 import { productHuntUpvotes } from "../ui/product-hunt.js";
 import { shareImage } from "../ui/share-image.js";
 import { answerAudit, formCrawls, formOpen } from "./audit.js";
 import type { SiteEnv } from "./audit.js";
-import { LLMS_TXT, SITE_JS, SITE_ROBOTS_TXT, SITEMAP_XML } from "./files.js";
+import { LLMS_TXT, SITE_ROBOTS_TXT, SITEMAP_XML } from "./files.js";
 import { homePage, notFoundPage } from "./home.js";
-import { pdfAssetResponse } from "./pdf-assets.js";
 import {
   file,
   HTML,
@@ -227,31 +223,8 @@ const sharedRoute = (
     : methodNotAllowed("GET, HEAD");
 };
 
-/** The share image of a card at `path`: the website's, or the MCP server's, whose pages it serves. */
-const cardResponse = (request: Request, path: string): Response | null => {
-  if (path === SITE_CARD.path) {
-    return shareImageResponse(request, "site");
-  }
-
-  return path === SERVER_CARD.path
-    ? shareImageResponse(request, "server")
-    : null;
-};
-
-/**
- * posthog-js or its recorder while the analytics are on, a rule's page, a share image, a font of
- * the pages or of a report's PDF, pdfmake, or the 404 page.
- */
-const asset = (
-  request: Request,
-  path: string,
-  env: SiteEnv
-): Response | Promise<Response> =>
-  posthogFileResponse(request, path, env.POSTHOG_HOST) ??
-  ruleResponse(request, path) ??
-  cardResponse(request, path) ??
-  fontResponse(request, path) ??
-  pdfAssetResponse(request, path) ??
+/** The 404 page, for a path that is no page and no static asset. */
+const notFound = (request: Request): Promise<Response> =>
   file(request, notFoundPage(), HTML, 404);
 
 export const siteRoute = (
@@ -333,16 +306,8 @@ export const siteRoute = (
       return file(request, LLMS_TXT, "text/markdown; charset=utf-8");
     }
 
-    case "/site.js": {
-      return file(request, SITE_JS, "text/javascript; charset=utf-8");
-    }
-
-    case "/favicon.svg": {
-      return file(request, MARK_SVG, "image/svg+xml");
-    }
-
     default: {
-      return asset(request, url.pathname, env);
+      return ruleResponse(request, url.pathname) ?? notFound(request);
     }
   }
 };

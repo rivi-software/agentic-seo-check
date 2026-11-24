@@ -61,7 +61,7 @@ The SEO audit is for search engines; the AEO audit is for AI answer engines such
 `;
 
 /**
- * Where the website serves pdfmake with the code that draws a report's PDF (pdf-assets.ts), which
+ * Where the website serves pdfmake with the code that draws a report's PDF (scripts/assets.ts), which
  * that code names `drawReportPdf`.
  */
 export const PDFMAKE_PATH = "/pdfmake.js";
@@ -1052,7 +1052,7 @@ ${ANALYTICS_HELPERS_JS}
         web_vitals_attribution: false,
         network_timing: false,
       },
-      // The three extensions /ph.js bundles beside posthog-js's slim build (scripts/posthog-js.ts).
+      // The three extensions /ph.js bundles beside posthog-js's slim build (scripts/assets.ts).
       __extensionClasses: module.EXTENSIONS,
       // A recording shows this site's own copy, its layout and what the visitor does, never the
       // audited site: every field is masked, and the text and attributes of the parts that can

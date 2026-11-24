@@ -27,6 +27,7 @@ import { z } from "zod";
 import { auditAeoHtml } from "../../src/core/aeo/audit.ts";
 import { auditHtml } from "../../src/core/audit.ts";
 import { HOSTED_LIMITS } from "../../src/core/hosted.ts";
+import { POSTHOG_HOST } from "../../src/telemetry/posthog.ts";
 import {
   defines,
   readVersion,
@@ -1311,9 +1312,16 @@ describe("the hosted Worker in workerd", () => {
         "text/javascript; charset=utf-8"
       );
       expect(source).toMatch(
-        /get_explicit_consent_status[\s\S]*\nexport const TOKEN = "phc_\w+";\nexport const API_HOST = "https:\/\/posthog\.test";\n$/u
+        /get_explicit_consent_status[\s\S]*\nexport const TOKEN = "phc_\w+";\nexport const API_HOST = "[^"]+";\n$/u
       );
-      expect(source).not.toContain("sourceMappingURL");
+      // The host is the website configuration's, written in at build time (scripts/assets.ts),
+      // which configs.test.ts holds to the one the CSP allows.
+      expect([
+        source.endsWith(
+          `\nexport const API_HOST = ${JSON.stringify(POSTHOG_HOST)};\n`
+        ),
+        source.includes("sourceMappingURL"),
+      ]).toStrictEqual([true, false]);
       // The footer's Cookie settings, then the banner: both hidden until PostHog has loaded.
       expect(page).toMatch(
         /data-consent-settings hidden[\s\S]*<section class="consent" id="consent"[^>]*hidden>/u
@@ -1406,7 +1414,7 @@ describe("the hosted Worker in workerd", () => {
       const answers = await Promise.all(
         files.map(async (at) => {
           const first = await ask(at);
-          await first.arrayBuffer();
+          const sent = new Uint8Array(await first.arrayBuffer());
           const etag = first.headers.get("etag") ?? "";
 
           const again = await ask(at, { "if-none-match": etag });
@@ -1416,7 +1424,7 @@ describe("the hosted Worker in workerd", () => {
             first.headers.get("cache-control"),
             again.status,
             body.byteLength,
-            etag,
+            sent.join(","),
           ] as const;
         })
       );
@@ -1424,12 +1432,13 @@ describe("the hosted Worker in workerd", () => {
       expect(
         answers.map(([cache, status, bytes]) => [cache, status, bytes])
       ).toStrictEqual(files.map(() => ["no-cache", 304, 0]));
-      // One script, and one recorder, for both hostnames' pages.
+      // One script, and one recorder, for both hostnames' pages. Their ETags may differ locally,
+      // where the two requests ask for different encodings.
       expect(answers[2]?.[3]).toBe(answers[7]?.[3]);
       expect(answers[4]?.[3]).toBe(answers[9]?.[3]);
     });
 
-    it("serves pdfmake with the code that draws a report's PDF, and its TrueType fonts, on its own hostname only", async () => {
+    it("serves pdfmake with the code that draws a report's PDF, and its TrueType fonts", async () => {
       const files = [
         ...new Set(
           Object.values(PDF_FONTS).flatMap((font) => [font.normal, font.bold])
@@ -1451,9 +1460,6 @@ describe("the hosted Worker in workerd", () => {
         }),
       ]);
 
-      const elsewhere = await fetch(new URL(PDFMAKE_PATH, base));
-      await elsewhere.arrayBuffer();
-
       // pdfmake without its source map, then the code that draws a report's PDF with it.
       expect([
         script.res.headers.get("content-type"),
@@ -1469,7 +1475,6 @@ describe("the hosted Worker in workerd", () => {
           "0 1 0 0",
         ])
       );
-      expect(elsewhere.status).toBe(404);
     });
 
     it("audits a page for the form and answers with both reports", async () => {
