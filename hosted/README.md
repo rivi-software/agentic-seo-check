@@ -124,7 +124,7 @@ Once, before the first deploy:
     2. Merge to `main`. **Deploy the hosted server** deploys the MCP server, which drops `agentic-seo.rivi.software` from the MCP server's Worker (a deploy sets a Worker's whole list of Custom Domains), and then the website, seconds later in the same job, which takes it, as Wrangler does for a deploy without a terminal.
     3. Once the MCP server's Worker no longer has the website's route, delete from it the secrets only the website reads: `pnpm exec wrangler secret delete TURNSTILE_SECRET_KEY --config hosted/wrangler.jsonc`, and `SHARE_KEY` and `SHARE_KEY_PREVIOUS` likewise.
 
-13. **A WAF custom rule against WordPress and PHP scanners** ([issue #213](https://github.com/rivi-software/agentic-seo-check/issues/213)). Scanners ask for `/wp-admin/install.php`, `/wp-login.php`, `/xmlrpc.php` and `/.env` hundreds of times a week; neither Worker serves any of them, and without the rule each runs the website's Worker, renders the 404 page and counts a pageview in PostHog. Cloudflare blocks them with a 403 before a Worker runs. The rule lives in the zones, not in this repository: under Security, WAF, Custom rules, action *Block*.
+13. **A WAF custom rule against WordPress and PHP scanners** ([issue #213](https://github.com/rivi-software/agentic-seo-check/issues/213)). Scanners ask for `/wp-admin/install.php`, `/wp-login.php`, `/xmlrpc.php` and `/.env` hundreds of times a week; neither Worker serves any of them, and without the rule each runs the website's Worker and renders the 404 page, and a scanner that runs scripts counts a pageview in PostHog. Cloudflare blocks them with a 403 before a Worker runs. The rule lives in the zones, not in this repository: under Security, WAF, Custom rules, action *Block*.
     - On `agentic-seo.org`:
 
       ```
@@ -137,7 +137,7 @@ Once, before the first deploy:
       (http.host in {"agentic-seo.rivi.software" "mcp.agentic-seo.rivi.software" "mcp.agentic-seo-check.rivi.software"} and (starts_with(lower(http.request.uri.path), "/wp-admin") or ends_with(lower(http.request.uri.path), ".php") or starts_with(lower(http.request.uri.path), "/.env")))
       ```
 
-    A path the Workers serve one day under these prefixes needs the rule changed first. `curl -I https://agentic-seo.org/wp-admin/install.php` answers 403 with `server: cloudflare` and no `content-security-policy`, which the Worker's pages carry.
+    A path the Workers serve one day under `/wp-admin` or `/.env`, or ending in `.php` anywhere (`/api.php` too), needs the rule changed first. `curl -I https://agentic-seo.org/wp-admin/install.php` answers 403 with `server: cloudflare` and no `content-security-policy`, which the Worker's pages carry.
 
 ## Answering an abuse report
 
