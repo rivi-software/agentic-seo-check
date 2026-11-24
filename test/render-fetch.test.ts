@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { FetchOptions, RequestGate } from "../src/core/fetch.js";
+import { trackRefusals } from "../src/core/refusals.js";
 import { answerRoute, fetchThroughOptions } from "../src/core/render-fetch.js";
 import type {
   BrowserAnswer,
@@ -98,6 +99,13 @@ describe(fetchThroughOptions, () => {
     "/big.js": { body: "x".repeat(2000) },
     "/exact.js": { body: "x".repeat(1000) },
     "/form": { body: "ok" },
+    "/limited.js": { status: 429, body: "slow down" },
+    "/after.js": { body: "after" },
+    "/forbidden.js": { status: 403, body: "no" },
+    "/challenge": {
+      status: 503,
+      body: "<html><head><title>Just a moment...</title></head></html>",
+    },
   };
 
   const otherRoutes: Routes = { "/lib.js": { body: "lib" } };
@@ -237,6 +245,77 @@ describe(fetchThroughOptions, () => {
 
     expect(site.requestHeaders[own]?.["authorization"]).toBe(SECRET);
     expect(other.requestHeaders[third]?.["authorization"]).toBeUndefined();
+  });
+
+  it("fails a request whose answer the gate refuses as blocked by the client", async () => {
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(
+      optionsWith({
+        ...gate,
+        afterResponse: (url, response) =>
+          response.status === 403
+            ? { scope: "url", reason: "http_403", message: `${url.href} 403.` }
+            : undefined,
+      }),
+      `${site.origin}/`
+    );
+
+    await expect(
+      through(request(`${site.origin}/forbidden.js`))
+    ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
+  });
+
+  it("fails a document the gate refuses once it reads the page, and not a script", async () => {
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(
+      optionsWith({
+        ...gate,
+        afterBody: (url, page) =>
+          page.status === 503 && page.body?.includes("Just a moment")
+            ? { scope: "host", reason: "challenge", message: "Challenge." }
+            : undefined,
+      }),
+      `${site.origin}/`
+    );
+
+    // The script first: the challenge refuses the whole host once a document shows it.
+    const script = await through(request(`${site.origin}/challenge`));
+
+    expect(script.kind).toBe("fulfil");
+    await expect(
+      through(request(`${site.origin}/challenge`, { resourceType: "document" }))
+    ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
+  });
+
+  it("records a refusal, so a host that answered 429 is sent nothing more", async () => {
+    const { gate } = gateStub();
+    const refusals = trackRefusals();
+
+    const through = fetchThroughOptions(
+      optionsWith({
+        ...gate,
+        afterResponse: (url, response) =>
+          response.status === 429
+            ? { scope: "host", reason: "http_429", message: `${url.host} 429.` }
+            : undefined,
+      }),
+      `${site.origin}/`,
+      refusals
+    );
+
+    await expect(
+      through(request(`${site.origin}/limited.js`))
+    ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
+    await expect(
+      through(request(`${site.origin}/after.js`))
+    ).resolves.toStrictEqual({
+      kind: "fail",
+      reason: "BlockedByClient",
+    });
+    expect(site.requests).not.toContain("/after.js");
+    expect(refusals.of(`${site.origin}/after.js`)?.reason).toBe("http_429");
   });
 
   it("sends a POST with its body", async () => {

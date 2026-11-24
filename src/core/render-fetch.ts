@@ -11,6 +11,8 @@ import {
   withTimeout,
 } from "./fetch.js";
 import type { FetchOptions, FetchResult } from "./fetch.js";
+import { trackRefusals } from "./refusals.js";
+import type { Refusals } from "./refusals.js";
 
 /** A request the browser wants to send, which the audit sends for it instead (issue #230). */
 export interface BrowserRequest {
@@ -203,9 +205,12 @@ const send = async (
  */
 export const fetchThroughOptions = (
   options: FetchOptions,
-  pageUrl: string
+  pageUrl: string,
+  refusals: Refusals = trackRefusals()
 ): FetchThrough => {
-  const audit = forAuditOf(options, pageUrl);
+  // The gate also refuses a host already refused, so a site that answered 429 or a challenge to
+  // one request is sent nothing more: no retry.
+  const audit = refusals.guard(forAuditOf(options, pageUrl));
 
   const headersOrigin =
     audit.headersOrigin ??
@@ -224,16 +229,17 @@ export const fetchThroughOptions = (
     }
 
     try {
-      await askGate(audit.gate, request.url);
+      // A refusal is recorded, as for the audit's own requests, and the browser told it was blocked.
+      const answer = await refusals.run(request.url, async () => {
+        await askGate(audit.gate, request.url);
 
-      return await withTimeout(timeoutMs, (signal) =>
-        send(audit, headersOrigin, request, signal)
-      );
+        return withTimeout(timeoutMs, (signal) =>
+          send(audit, headersOrigin, request, signal)
+        );
+      });
+
+      return answer ?? fail("BlockedByClient");
     } catch (error) {
-      if (error instanceof RequestRefusedError) {
-        return fail("BlockedByClient");
-      }
-
       return fail(
         error instanceof Error && error.name === "AbortError"
           ? "TimedOut"
