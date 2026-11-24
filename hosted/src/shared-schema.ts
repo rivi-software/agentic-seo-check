@@ -163,6 +163,7 @@ const SiteAuditSchema = z.object({
   crawl: z.object({
     pagesCrawled: count,
     pagesDiscovered: count,
+    pagesListed: count.optional(),
     linksChecked: count,
     maxPages: count,
     maxDepth: count,

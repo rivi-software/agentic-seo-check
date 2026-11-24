@@ -111,6 +111,11 @@ export interface CrawlOptions extends AuditOptions {
   maxLinkChecks?: number;
   includePatterns?: string[];
   excludePatterns?: string[];
+  /**
+   * Audit exactly these pages, all on the start URL's origin and at most `maxPages`, instead of
+   * crawling from it: their links are checked, none is followed (issue #231).
+   */
+  urls?: string[];
   /** How much per-page detail to keep in the site result. */
   pageDetail?: "full" | "summary";
   /** Sitemap files to read at most, sitemap indexes included (default 25). */
@@ -928,6 +933,7 @@ export const seoCrawlOptions = (
     maxLinkChecks: options.maxLinkChecks ?? DEFAULT_CRAWL.maxLinkChecks,
     includePatterns: userPatterns(options.includePatterns, "include"),
     excludePatterns: userPatterns(options.excludePatterns, "exclude"),
+    urls: options.urls,
     fetch: fetchOpts,
     onProgress: options.onProgress,
     maxSitemaps: options.maxSitemaps,
@@ -953,8 +959,14 @@ export const auditCrawled = async (
     await crawlFieldData(result, options)
   );
 
-  // Render/Lighthouse are expensive: apply them to the start page only.
-  const startPage = site.pages.find((p) => p.depth === 0) ?? site.pages[0];
+  // Render/Lighthouse are expensive: apply them to the start page only, the first of a list. The
+  // records are in crawl order, so the first is that page.
+  const first = result.records[0]?.url;
+
+  const startPage =
+    site.pages.find((p) => p.url === first) ??
+    site.pages.find((p) => p.depth === 0) ??
+    site.pages[0];
 
   if (startPage && (options.render || options.lighthouse)) {
     await enrichPage(startPage, options);
@@ -1091,7 +1103,8 @@ export const auditTarget = async (
     }
 
     case "url": {
-      return options.crawl
+      // A list of pages is a crawl of them.
+      return options.crawl || options.urls !== undefined
         ? auditSite(resolved.url, options)
         : auditUrl(resolved.url, options);
     }

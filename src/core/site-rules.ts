@@ -1599,8 +1599,12 @@ const sitemapCoverageFindings = (scope: SiteScope): Finding[] => {
     );
   }
 
-  // A crawl that stopped early has not seen the links to every page.
-  if (!ctx.crawl.hitPageLimit && !ctx.crawlStopped) {
+  // A crawl that stopped early, or read a list of pages, has not seen the links to every page.
+  if (
+    !ctx.crawl.hitPageLimit &&
+    !ctx.crawlStopped &&
+    ctx.crawl.pagesListed === undefined
+  ) {
     const linked = new Set<string>();
 
     for (const target of ctx.linkSources.keys()) {

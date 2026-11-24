@@ -77,6 +77,11 @@ export interface AeoOptions {
   includeSubdomains?: boolean;
   includePatterns?: string[];
   excludePatterns?: string[];
+  /**
+   * With `crawl`: audit exactly these pages, all on the start URL's origin and at most `maxPages`,
+   * and follow no links (issue #231).
+   */
+  urls?: string[];
   /** Base URL for inline HTML, files and directories (default http://localhost/). */
   baseUrl?: string;
   /** Also request the page with each AI bot's User-Agent, to catch CDN or firewall blocks. */
@@ -265,6 +270,7 @@ const collectSite = async (
     siteChecks: false,
     includePatterns: userPatterns(options.includePatterns, "include"),
     excludePatterns: userPatterns(options.excludePatterns, "exclude"),
+    urls: options.urls,
     fetch: { ...options.fetch, userAgent: userAgentOf(options) },
     onProgress: options.onProgress,
   });
@@ -879,7 +885,8 @@ export const auditAeoTarget = async (
 
   switch (resolved.kind) {
     case "url": {
-      return options.crawl
+      // A list of pages is a crawl of them.
+      return options.crawl || options.urls !== undefined
         ? auditAeoSite(resolved.url, options)
         : auditAeoUrl(resolved.url, options);
     }
