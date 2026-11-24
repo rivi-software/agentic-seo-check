@@ -1,0 +1,302 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import type { FetchOptions, RequestGate } from "../src/core/fetch.js";
+import { answerRoute, fetchThroughOptions } from "../src/core/render-fetch.js";
+import type {
+  BrowserAnswer,
+  BrowserRequest,
+  RouteLike,
+} from "../src/core/render-fetch.js";
+import { startFixtureServer } from "./helpers/fixture-server.js";
+import type { FixtureServer, Routes } from "./helpers/fixture-server.js";
+
+const USER_AGENT =
+  "Mozilla/5.0 (compatible; agentic-seo-check/1.0.0; +https://agentic-seo.org/crawler)";
+
+const SECRET = "Basic c3RhZ2luZzpzZWNyZXQ=";
+
+const sign = () => ({
+  signature: "sig1=:test:",
+  "signature-input": 'sig1=("@authority");tag="web-bot-auth"',
+});
+
+/** A gate that refuses the paths in `refused` and records every URL it was asked about. */
+const gateStub = (refused: string[] = []) => {
+  const asked: string[] = [];
+
+  const gate: RequestGate = {
+    beforeRequest: (url) => {
+      asked.push(url.pathname);
+
+      return refused.includes(url.pathname)
+        ? { scope: "url", reason: "robots_txt", message: "Disallowed." }
+        : undefined;
+    },
+  };
+
+  return { gate, asked };
+};
+
+const request = (
+  url: string,
+  extra: Partial<BrowserRequest> = {}
+): BrowserRequest => ({
+  url,
+  method: "GET",
+  headers: { accept: "*/*", "user-agent": "HeadlessChrome" },
+  resourceType: "script",
+  ...extra,
+});
+
+const text = (answer: BrowserAnswer): string =>
+  answer.kind === "fulfil" ? new TextDecoder().decode(answer.body) : "";
+
+const header = (answer: BrowserAnswer, name: string): string | undefined =>
+  answer.kind === "fulfil"
+    ? answer.headers.find((h) => h.name.toLowerCase() === name)?.value
+    : undefined;
+
+const optionsWith = (gate: RequestGate, extra: FetchOptions = {}) => ({
+  userAgent: USER_AGENT,
+  sign,
+  gate,
+  ...extra,
+});
+
+/** A Playwright route that records what it was answered with. */
+const fakeRoute = () => {
+  const calls: unknown[] = [];
+
+  const route: RouteLike = {
+    fulfill: (options) => {
+      calls.push(["fulfill", options]);
+
+      return Promise.resolve();
+    },
+    abort: (code) => {
+      calls.push(["abort", code]);
+
+      return Promise.resolve();
+    },
+  };
+
+  return { route, calls };
+};
+
+describe(fetchThroughOptions, () => {
+  let site: FixtureServer;
+  let other: FixtureServer;
+
+  const siteRoutes: Routes = {
+    "/app.js": {
+      headers: { "content-type": "text/javascript" },
+      body: "console.log('app');",
+    },
+    "/private.js": { body: "secret" },
+    "/redirect": { status: 302, headers: { location: "/target" } },
+    "/target": { body: "<p>target</p>" },
+    "/big.js": { body: "x".repeat(2000) },
+    "/exact.js": { body: "x".repeat(1000) },
+    "/form": { body: "ok" },
+  };
+
+  const otherRoutes: Routes = { "/lib.js": { body: "lib" } };
+
+  beforeAll(async () => {
+    site = await startFixtureServer(siteRoutes);
+    other = await startFixtureServer(otherRoutes);
+  });
+
+  afterAll(async () => {
+    await site.close();
+    await other.close();
+  });
+
+  it("fulfils a script with its status and bytes, sent with the hosted User-Agent and the signature", async () => {
+    const { gate } = gateStub();
+    const through = fetchThroughOptions(optionsWith(gate), `${site.origin}/`);
+
+    const answer = await through(request(`${site.origin}/app.js`));
+
+    expect({
+      status: answer.kind === "fulfil" && answer.status,
+      body: text(answer),
+      type: header(answer, "content-type"),
+    }).toStrictEqual({
+      status: 200,
+      body: "console.log('app');",
+      type: "text/javascript",
+    });
+
+    const index = site.requests.lastIndexOf("/app.js");
+    const sent = site.requestHeaders[index];
+
+    // The browser's own headers go along, but not its User-Agent.
+    expect({
+      ua: sent?.["user-agent"],
+      signature: sent?.["signature"],
+      input: sent?.["signature-input"],
+      accept: sent?.["accept"],
+    }).toStrictEqual({
+      ua: USER_AGENT,
+      signature: "sig1=:test:",
+      input: 'sig1=("@authority");tag="web-bot-auth"',
+      accept: "*/*",
+    });
+  });
+
+  it("fails a request the gate refuses as blocked by the client, and sends nothing", async () => {
+    const { gate, asked } = gateStub(["/private.js"]);
+    const through = fetchThroughOptions(optionsWith(gate), `${site.origin}/`);
+
+    const answer = await through(request(`${site.origin}/private.js`));
+
+    expect(answer).toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
+    expect(asked).toContain("/private.js");
+    expect(site.requests).not.toContain("/private.js");
+  });
+
+  it("fulfils a redirect as the redirect, with its location, and does not follow it", async () => {
+    const { gate, asked } = gateStub();
+    const through = fetchThroughOptions(optionsWith(gate), `${site.origin}/`);
+    const before = site.requests.filter((p) => p === "/target").length;
+
+    const answer = await through(
+      request(`${site.origin}/redirect`, { resourceType: "document" })
+    );
+
+    expect(answer.kind === "fulfil" && answer.status).toBe(302);
+    expect(header(answer, "location")).toBe("/target");
+    expect(site.requests.filter((p) => p === "/target")).toHaveLength(before);
+    expect(asked).toStrictEqual(["/redirect"]);
+  });
+
+  it("fails a body over maxBodyBytes, and fulfils one at the cap", async () => {
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(
+      optionsWith(gate, { maxBodyBytes: 1000 }),
+      `${site.origin}/`
+    );
+
+    await expect(
+      through(request(`${site.origin}/big.js`))
+    ).resolves.toStrictEqual({
+      kind: "fail",
+      reason: "Failed",
+    });
+    expect(
+      text(await through(request(`${site.origin}/exact.js`)))
+    ).toHaveLength(1000);
+  });
+
+  it("times out at timeoutMs", async () => {
+    siteRoutes["/slow.js"] = { body: "slow", delaysMs: [500] };
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(
+      optionsWith(gate, { timeoutMs: 50 }),
+      `${site.origin}/`
+    );
+
+    await expect(
+      through(request(`${site.origin}/slow.js`))
+    ).resolves.toStrictEqual({
+      kind: "fail",
+      reason: "TimedOut",
+    });
+  });
+
+  it("fails a request the network cannot send", async () => {
+    const { gate } = gateStub();
+    const through = fetchThroughOptions(optionsWith(gate), `${site.origin}/`);
+
+    await expect(
+      through(request("http://127.0.0.1:1/nothing.js"))
+    ).resolves.toStrictEqual({
+      kind: "fail",
+      reason: "Failed",
+    });
+  });
+
+  it("sends the user's headers to the page's origin and not to another", async () => {
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(
+      optionsWith(gate, { headers: { Authorization: SECRET } }),
+      `${site.origin}/`
+    );
+
+    await through(request(`${site.origin}/app.js`));
+    await through(
+      request(`${other.origin.replace("localhost", "127.0.0.1")}/lib.js`)
+    );
+
+    const own = site.requests.lastIndexOf("/app.js");
+    const third = other.requests.lastIndexOf("/lib.js");
+
+    expect(site.requestHeaders[own]?.["authorization"]).toBe(SECRET);
+    expect(other.requestHeaders[third]?.["authorization"]).toBeUndefined();
+  });
+
+  it("sends a POST with its body", async () => {
+    const { gate } = gateStub();
+    const through = fetchThroughOptions(optionsWith(gate), `${site.origin}/`);
+
+    const answer = await through(
+      request(`${site.origin}/form`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        postData: "a=1&b=2",
+        resourceType: "fetch",
+      })
+    );
+
+    expect(text(answer)).toBe("ok");
+    const index = site.requests.lastIndexOf("/form");
+    expect(site.requestBodies[index]).toBe("a=1&b=2");
+  });
+});
+
+describe(answerRoute, () => {
+  it("fulfils with the status, the headers and the body, each set-cookie on its own line", async () => {
+    const { route, calls } = fakeRoute();
+    const body = new TextEncoder().encode("hi");
+
+    await answerRoute(route, {
+      kind: "fulfil",
+      status: 302,
+      headers: [
+        { name: "location", value: "/target" },
+        { name: "set-cookie", value: "a=1" },
+        { name: "set-cookie", value: "b=2" },
+      ],
+      body,
+    });
+
+    expect(calls).toStrictEqual([
+      [
+        "fulfill",
+        {
+          status: 302,
+          headers: { location: "/target", "set-cookie": "a=1\nb=2" },
+          body: Buffer.from(body),
+        },
+      ],
+    ]);
+  });
+
+  it("aborts with Playwright's error code for each failure", async () => {
+    const { route, calls } = fakeRoute();
+
+    await answerRoute(route, { kind: "fail", reason: "BlockedByClient" });
+    await answerRoute(route, { kind: "fail", reason: "Failed" });
+    await answerRoute(route, { kind: "fail", reason: "TimedOut" });
+
+    expect(calls).toStrictEqual([
+      ["abort", "blockedbyclient"],
+      ["abort", "failed"],
+      ["abort", "timedout"],
+    ]);
+  });
+});

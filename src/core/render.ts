@@ -5,12 +5,14 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { createInterface } from "node:readline";
 
-import type { Browser, Page } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 import type * as Playwright from "playwright";
 
 import { browserRequestHeaders, hasHeaders } from "./browser-headers.js";
 import { ExpectedError } from "./errors.js";
 import { DEFAULT_USER_AGENT } from "./fetch.js";
+import { answerRoute, browserRequestOf } from "./render-fetch.js";
+import type { FetchThrough } from "./render-fetch.js";
 
 export class RenderUnavailableError extends ExpectedError {
   constructor(message: string) {
@@ -26,6 +28,18 @@ export interface RenderOptions {
   viewport?: { width: number; height: number };
   /** Wait condition passed to Playwright. */
   waitUntil?: "load" | "domcontentloaded" | "networkidle";
+  /**
+   * Starts the browser instead of the installed Playwright (the hosted server's Browser Run).
+   * Given, neither `import("playwright")` nor the fallback to an installed Chrome runs.
+   */
+  launch?: () => Promise<Browser>;
+  /**
+   * Sends every request the browser makes, so the browser fetches nothing itself (issue #230): it
+   * applies the gate, the signature, the User-Agent and the rule for the user's headers, so
+   * `headers` is not used. Service workers are blocked and WebSockets closed, since neither would
+   * go through it.
+   */
+  fetchThrough?: FetchThrough;
 }
 
 export interface RenderOutput {
@@ -156,11 +170,8 @@ const sendHeadersToOrigin = async (
   await client.send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
 };
 
-/** Load the page in headless Chromium and return the rendered DOM. */
-export const renderPage = async (
-  url: string,
-  options: RenderOptions = {}
-): Promise<RenderOutput> => {
+/** The installed Playwright's Chromium, or else an installed Google Chrome or Edge. */
+const launchLocal = async (): Promise<Browser> => {
   let playwright: typeof Playwright;
 
   try {
@@ -188,6 +199,41 @@ export const renderPage = async (
     browser = fallback;
   }
 
+  return browser;
+};
+
+/**
+ * Answers every request of the context from `fetchThrough`, a worker's and a frame's included,
+ * which a CDP session on the page alone would miss. WebSockets are closed before they connect:
+ * request interception does not see them.
+ */
+const routeThrough = async (
+  context: BrowserContext,
+  fetchThrough: FetchThrough
+): Promise<void> => {
+  await context.route("**/*", async (route) => {
+    try {
+      const answer = await fetchThrough(
+        await browserRequestOf(route.request())
+      );
+
+      await answerRoute(route, answer);
+    } catch {
+      // A request the page gave up on, or a page that closed, has nothing left to answer.
+      await route.abort("failed").catch(() => null);
+    }
+  });
+
+  await context.routeWebSocket("**", (ws) => ws.close());
+};
+
+/** Load the page in headless Chromium and return the rendered DOM. */
+export const renderPage = async (
+  url: string,
+  options: RenderOptions = {}
+): Promise<RenderOutput> => {
+  const browser = await (options.launch ?? launchLocal)();
+  const { fetchThrough } = options;
   const timeout = options.timeoutMs ?? 30_000;
   const consoleErrors: string[] = [];
 
@@ -195,11 +241,17 @@ export const renderPage = async (
     const context = await browser.newContext({
       userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
       viewport: options.viewport ?? { width: 1366, height: 900 },
+      // A service worker fetches past the routes, so none may register; "allow" is the default.
+      serviceWorkers: fetchThrough ? "block" : "allow",
     });
+
+    if (fetchThrough) {
+      await routeThrough(context, fetchThrough);
+    }
 
     const page = await context.newPage();
 
-    if (hasHeaders(options.headers)) {
+    if (!fetchThrough && hasHeaders(options.headers)) {
       await sendHeadersToOrigin(page, options.headers, url);
     }
 

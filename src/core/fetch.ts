@@ -220,7 +220,7 @@ interface BodyRead {
   truncated: boolean;
 }
 
-const readLimited = async (
+export const readLimited = async (
   res: Response,
   maxBytes: number
 ): Promise<BodyRead> => {
@@ -372,7 +372,7 @@ type HopOutcome = { done: FetchResult } | { next: string };
  * The headers that sign a request to `current`. A signature that fails is the tool's own failure,
  * not the site's (issue #93): error tracking hears it, and the request then fails as any other.
  */
-const signatureFor = async (
+export const signatureFor = async (
   sign: NonNullable<FetchOptions["sign"]>,
   current: string
 ): Promise<Record<string, string>> => {
@@ -385,7 +385,7 @@ const signatureFor = async (
 };
 
 /** Asks the gate before a request, and throws its refusal. */
-const askGate = async (
+export const askGate = async (
   gate: RequestGate | undefined,
   current: string
 ): Promise<void> => {
@@ -402,7 +402,7 @@ const askGate = async (
 };
 
 /** Shows the gate an answer, and throws its refusal once the body is let go. */
-const showGate = async (
+export const showGate = async (
   gate: RequestGate | undefined,
   current: string,
   res: Response
@@ -456,6 +456,125 @@ const readAnswer = async (
   return done;
 };
 
+/**
+ * Runs `run` with a signal that aborts after `timeoutMs`, reading the body included, so a site
+ * that answers slowly or sends its body slowly cannot hold the audit.
+ */
+export const withTimeout = async <T>(
+  timeoutMs: number,
+  run: (signal: AbortSignal) => Promise<T>
+): Promise<T> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await run(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/** One request of a redirect walk and its answer, aborted by `signal`. */
+const sendHop = async (
+  walk: RedirectWalk,
+  current: string,
+  signal: AbortSignal
+): Promise<HopOutcome> => {
+  const { url, options, readBody, started, chain } = walk;
+
+  // A request that cannot be signed is not sent: it fails as any other request does.
+  const signature =
+    options.sign && URL.canParse(current)
+      ? await signatureFor(options.sign, current)
+      : {};
+
+  const res = await fetch(current, {
+    method: "GET",
+    redirect: "manual",
+    signal,
+    headers: {
+      "user-agent": options.userAgent ?? DEFAULT_USER_AGENT,
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "accept-language": "en,*;q=0.5",
+      ...ownHeaders(options, current, url),
+      ...signature,
+    },
+  });
+
+  await showGate(options.gate, current, res);
+
+  // A name that does not resolve fails here as it does in Node, rather than answering 409.
+  if (await isCloudflareDnsError(res)) {
+    await res.body?.cancel().catch(() => null);
+
+    return {
+      done: result(
+        url,
+        current,
+        null,
+        {},
+        null,
+        chain,
+        started,
+        `DNS resolution error: ${new URL(current).hostname} does not resolve (Cloudflare error 1001)`
+      ),
+    };
+  }
+
+  const headers = pickHeaders(res.headers);
+
+  if (REDIRECT_STATUSES.has(res.status) && headers["location"]) {
+    chain.push({ url: current, status: res.status });
+    let nextUrl: string;
+
+    try {
+      nextUrl = new URL(headers["location"], current).href;
+    } catch {
+      return {
+        done: result(
+          url,
+          current,
+          res.status,
+          headers,
+          null,
+          chain,
+          started,
+          `Invalid Location header: ${headers["location"]}`
+        ),
+      };
+    }
+
+    await res.body?.cancel().catch(() => null);
+
+    if (chain.some((h) => h.url === nextUrl) || nextUrl === current) {
+      return {
+        done: result(
+          url,
+          nextUrl,
+          res.status,
+          headers,
+          null,
+          chain,
+          started,
+          "Redirect loop"
+        ),
+      };
+    }
+
+    return { next: nextUrl };
+  }
+
+  if (!readBody) {
+    await res.body?.cancel().catch(() => null);
+
+    return {
+      done: result(url, current, res.status, headers, null, chain, started),
+    };
+  }
+
+  return { done: await readAnswer(walk, current, res, headers) };
+};
+
 const fetchHop = async (
   walk: RedirectWalk,
   current: string
@@ -465,103 +584,12 @@ const fetchHop = async (
   // The time the gate held the request (robots.txt first, a Crawl-delay) is not the site's: it
   // stays out of the response time, which response.slow judges.
   walk.started += performance.now() - asked;
-  const { url, options, readBody, timeoutMs, started, chain } = walk;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const { url, timeoutMs, started, chain } = walk;
 
   try {
-    // A request that cannot be signed is not sent: it fails as any other request does.
-    const signature =
-      options.sign && URL.canParse(current)
-        ? await signatureFor(options.sign, current)
-        : {};
-
-    const res = await fetch(current, {
-      method: "GET",
-      redirect: "manual",
-      signal: controller.signal,
-      headers: {
-        "user-agent": options.userAgent ?? DEFAULT_USER_AGENT,
-        accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "accept-language": "en,*;q=0.5",
-        ...ownHeaders(options, current, url),
-        ...signature,
-      },
-    });
-
-    await showGate(options.gate, current, res);
-
-    // A name that does not resolve fails here as it does in Node, rather than answering 409.
-    if (await isCloudflareDnsError(res)) {
-      await res.body?.cancel().catch(() => null);
-
-      return {
-        done: result(
-          url,
-          current,
-          null,
-          {},
-          null,
-          chain,
-          started,
-          `DNS resolution error: ${new URL(current).hostname} does not resolve (Cloudflare error 1001)`
-        ),
-      };
-    }
-
-    const headers = pickHeaders(res.headers);
-
-    if (REDIRECT_STATUSES.has(res.status) && headers["location"]) {
-      chain.push({ url: current, status: res.status });
-      let nextUrl: string;
-
-      try {
-        nextUrl = new URL(headers["location"], current).href;
-      } catch {
-        return {
-          done: result(
-            url,
-            current,
-            res.status,
-            headers,
-            null,
-            chain,
-            started,
-            `Invalid Location header: ${headers["location"]}`
-          ),
-        };
-      }
-
-      await res.body?.cancel().catch(() => null);
-
-      if (chain.some((h) => h.url === nextUrl) || nextUrl === current) {
-        return {
-          done: result(
-            url,
-            nextUrl,
-            res.status,
-            headers,
-            null,
-            chain,
-            started,
-            "Redirect loop"
-          ),
-        };
-      }
-
-      return { next: nextUrl };
-    }
-
-    if (!readBody) {
-      await res.body?.cancel().catch(() => null);
-
-      return {
-        done: result(url, current, res.status, headers, null, chain, started),
-      };
-    }
-
-    return { done: await readAnswer(walk, current, res, headers) };
+    return await withTimeout(timeoutMs, (signal) =>
+      sendHop(walk, current, signal)
+    );
   } catch (error) {
     // A refusal is no failure of the request: it goes to the caller as it is.
     if (error instanceof RequestRefusedError) {
@@ -580,8 +608,6 @@ const fetchHop = async (
     return {
       done: result(url, current, null, {}, null, chain, started, message),
     };
-  } finally {
-    clearTimeout(timer);
   }
 };
 
