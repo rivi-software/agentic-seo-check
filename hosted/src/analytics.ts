@@ -41,6 +41,7 @@ import {
   initializeEvent,
   MAX_CAUGHT,
   noteCaughtInCall,
+  refusedRequestEvent,
   toolCallEvent,
   unknownToolEvent,
 } from "../../src/telemetry/mcp.js";
@@ -49,6 +50,7 @@ import type {
   McpAnalytics,
   McpCaller,
   McpEventContext,
+  McpRefusedRequest,
 } from "../../src/telemetry/mcp.js";
 import { sendEvents, uuidv7 } from "../../src/telemetry/posthog.js";
 import type {
@@ -82,6 +84,8 @@ export interface HostedAnalytics {
    * none (`HostedProfile.connection`, issue #101).
    */
   connection?: string;
+  /** Hears a request the transport refused before any tool ran (issue #210). */
+  refused: (refusal: McpRefusedRequest) => void;
 }
 
 /** How long an event may take to reach PostHog; the answer has gone by then. */
@@ -532,6 +536,9 @@ export const hostedAnalytics = (
           ),
         ]);
       },
+    },
+    refused: (refusal) => {
+      send([refusedRequestEvent(refusal, context(sessionOf(undefined)))]);
     },
   };
 };
