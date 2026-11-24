@@ -1,0 +1,19 @@
+hosted/src/limits.ts
+  s_96818531f17a0e::t_75d2e1d7e7b1cd 381-383,387,390
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2da6d7e6defc43ab9bcfeb298964d84ce294300",
+  "prompts": {},
+  "sessions": {
+    "s_96818531f17a0e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ff3668c9-50c0-4cb3-8280-2d09ec2c7efa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
