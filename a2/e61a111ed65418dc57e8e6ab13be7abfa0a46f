@@ -1,0 +1,28 @@
+skills/seo-audit/SKILL.md
+  s_e92caf351f3c51::t_abc080ad468147 10
+AGENTS.md
+  s_e92caf351f3c51::t_abc080ad468147 26
+  s_e92caf351f3c51::t_763921e50cc467 36
+.changeset/background-crawls.md
+  s_e92caf351f3c51::t_7de6f0080fc54f 1-5
+hosted/README.md
+  s_e92caf351f3c51::t_abc080ad468147 127-135
+README.md
+  s_e92caf351f3c51::t_abc080ad468147 51,215,234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2e61a111ed65418dc57e8e6ab13be7abfa0a46f",
+  "prompts": {},
+  "sessions": {
+    "s_e92caf351f3c51": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48178603-ca61-4e8c-85b4-313a5de7ff44",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
