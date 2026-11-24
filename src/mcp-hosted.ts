@@ -418,7 +418,7 @@ export interface BackgroundCrawls {
 }
 
 /** How many days a background crawl's result is kept (the bucket's rule on `crawls/`). */
-const CRAWL_DAYS = 7;
+export const CRAWL_DAYS = 7;
 
 /** The arguments of seo_start_crawl: seo_crawl_site's, less the answer's shape, which comes later. */
 const {

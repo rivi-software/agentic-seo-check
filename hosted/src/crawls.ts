@@ -10,6 +10,7 @@ import { z } from "zod";
  * read the report, so the id is never logged or sent to the analytics.
  */
 import type { AeoAudit, SiteAudit } from "../../src/core/types.js";
+import { CRAWL_DAYS } from "../../src/mcp-hosted.js";
 import type {
   BackgroundCrawlOptions,
   CrawlFailure,
@@ -18,8 +19,7 @@ import type {
 import { DAY_MS, newId, REPORT_ID } from "./shared-reports.js";
 import type { ReportBucket } from "./shared-reports.js";
 
-/** How many days a crawl is kept: the bucket's lifecycle rule on crawls/ says the same. */
-export const CRAWL_DAYS = 7;
+export { CRAWL_DAYS } from "../../src/mcp-hosted.js";
 
 /** A crawl's id: 22 characters of base64url, made as a shared report's is. */
 export const CRAWL_ID: RegExp = REPORT_ID;

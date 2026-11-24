@@ -782,6 +782,20 @@ describe("the hosted server's limits", () => {
     expect(stored().count).toBe(2);
   });
 
+  it("record a background crawl's attempt that readmit refused as limited", () => {
+    const { env, ctx, points } = fakeEnv();
+
+    backgroundCrawl(env, ctx, "shop.example.com").end("limited", 0, 12);
+
+    expect(points).toStrictEqual([
+      {
+        indexes: ["shop.example.com"],
+        blobs: ["seo_start_crawl", "limited", "shop.example.com", "background"],
+        doubles: [12, 0, 0],
+      },
+    ]);
+  });
+
   it("hold a background crawl to the site's requests a minute", async () => {
     const { env, ctx } = fakeEnv({ SITE_REQUESTS: limiter(0) });
     const crawl = backgroundCrawl(env, ctx, "shop.example.com");

@@ -533,12 +533,12 @@ export interface BackgroundCrawlLimits {
   /** Throws a CallLimitError under MODE closed or no-crawls, or past the day's requests. */
   readmit: () => Promise<void>;
   gate: RequestGate;
-  /** Writes the crawl's record (tool seo_start_crawl, role "background") and counts what it sent. */
-  end: (
-    outcome: HostedCallEnd["outcome"],
-    pages: number,
-    durationMs: number
-  ) => void;
+  /**
+   * Writes the crawl's record (tool seo_start_crawl, role "background") and counts what it sent:
+   * "limited" for an attempt `readmit` refused, so the records show what MODE and the day's cap
+   * stopped.
+   */
+  end: (outcome: Outcome, pages: number, durationMs: number) => void;
 }
 
 /**
