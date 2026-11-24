@@ -1,0 +1,25 @@
+hosted/src/limits.ts
+  s_46ac76d26da34b::t_ea526723167146 179
+hosted/test/limits.test.ts
+  s_46ac76d26da34b::t_ea526723167146 958
+test/hosted.test.ts
+  s_46ac76d26da34b::t_ea526723167146 2793-2806
+src/mcp-hosted.ts
+  s_46ac76d26da34b::t_ea526723167146 1074-1075
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "44420cd37b6ef73894432d6a039afa6d23897896",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
