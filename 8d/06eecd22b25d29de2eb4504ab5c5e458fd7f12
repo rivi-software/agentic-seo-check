@@ -1,0 +1,29 @@
+hosted/scripts/defines.ts
+  s_a66ced3a0212b8::t_d469fa244694ac 58-68
+hosted/vitest.config.ts
+  s_a66ced3a0212b8::t_d469fa244694ac 3,13
+hosted/scripts/assets.ts
+  s_a66ced3a0212b8::t_d469fa244694ac 42,61,136-146,148-150,152-175,182-185,187-189,191-203,205-208,210-213,215-231,234-241,243,250-253
+  s_a66ced3a0212b8::t_d88cc4421e9678 176-180,204,209,214,242
+  s_a66ced3a0212b8::t_9c23369e4f9f50 147
+hosted/src/site/routes.ts
+  s_a66ced3a0212b8::t_17920be5e90a62 306-310
+hosted/test/worker.test.ts
+  s_a66ced3a0212b8::t_7dd4cacf67bbe6 1315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d06eecd22b25d29de2eb4504ab5c5e458fd7f12",
+  "prompts": {},
+  "sessions": {
+    "s_a66ced3a0212b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e1578cca-78dc-4300-a899-1b49575bd79f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
