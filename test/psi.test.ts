@@ -137,6 +137,59 @@ describe(pageSpeedInsights, () => {
     expect(error.message).not.toContain("example.com");
   });
 
+  it("passes on Lighthouse's error in a failed answer as the page's, without the page or a retry", async () => {
+    const message =
+      "Lighthouse returned error: FAILED_DOCUMENT_REQUEST. Lighthouse was unable to reliably load the page you requested (www.example.com/widgets/). Make sure you are testing the correct URL and that the server is properly responding to all requests. (Details: net::ERR_NAME_NOT_RESOLVED)";
+
+    const error = await failure(
+      pageSpeedInsights(PAGE, "mobile", {
+        apiKey: "k",
+        fetch: answering({ error: { code: 500, message } }, 500),
+      })
+    );
+
+    expect(error).toBeInstanceOf(ExpectedError);
+    expect(error).not.toBeInstanceOf(LabUnavailableError);
+    expect(error.message).toContain("FAILED_DOCUMENT_REQUEST");
+    expect(error.message).toContain("net::ERR_NAME_NOT_RESOLVED");
+    // Neither the page's host or path nor a retry the page itself would refuse again.
+    expect(error.message).not.toMatch(/example\.com|\/widgets\/|try again/iu);
+  });
+
+  it("takes a full URL out of Lighthouse's error too", async () => {
+    const error = await failure(
+      pageSpeedInsights(PAGE, "mobile", {
+        apiKey: "k",
+        fetch: answering(
+          {
+            error: {
+              message: `Lighthouse returned error: ERRORED_DOCUMENT_REQUEST. Lighthouse was unable to reliably load ${PAGE}. (Status code: 404)`,
+            },
+          },
+          500
+        ),
+      })
+    );
+
+    expect(error).not.toBeInstanceOf(LabUnavailableError);
+    expect(error.message).toContain("ERRORED_DOCUMENT_REQUEST");
+    expect(error.message).not.toContain("example.com");
+  });
+
+  it("says a failed answer with another error is unavailable", async () => {
+    const error = await failure(
+      pageSpeedInsights(PAGE, "mobile", {
+        apiKey: "k",
+        fetch: answering(
+          { error: { message: "Internal error encountered." } },
+          500
+        ),
+      })
+    );
+
+    expect(error).toBeInstanceOf(LabUnavailableError);
+  });
+
   it("sends no request on a cache hit", async () => {
     const { cache, store } = memory();
     const fetcher = ok();

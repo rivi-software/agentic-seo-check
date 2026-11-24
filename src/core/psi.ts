@@ -27,7 +27,7 @@ export type LabRunner = (
 export interface PsiOptions {
   /** A Google API key with the PageSpeed Insights API enabled. */
   apiKey: string;
-  /** Keeps answers, so that one run serves many audits: the hosted server keeps each for a day. */
+  /** Keeps answers, so that one run serves many audits: the hosted server keeps each for ten minutes. */
   cache?: FieldDataCache;
   /** The `fetch` to ask with, for a test. */
   fetch?: typeof fetch;
@@ -58,6 +58,26 @@ const cacheKey = async (
 /** A message with every URL in it taken out: PSI's words about a failed page quote the page. */
 const withoutUrls = (message: string): string =>
   message.replaceAll(/https?:\/\/[^\s)"']+/gu, "the page");
+
+/**
+ * `message` without the page: every URL taken out, then the page's host and path, which Google's
+ * words can quote bare.
+ */
+const withoutPage = (message: string, url: string): string => {
+  const { hostname, pathname } = new URL(url);
+  let out = withoutUrls(message).replaceAll(hostname, "the page");
+
+  if (pathname.length > 1) {
+    out = out.replaceAll(pathname, "");
+  }
+
+  return out;
+};
+
+/** A failed answer of a Google API: `{ error: { code, message } }`. */
+const PsiError = z.object({
+  error: z.looseObject({ message: z.string().max(2000) }),
+});
 
 const LhrCheck = z.looseObject({
   audits: z.record(z.string(), z.unknown()),
@@ -132,7 +152,16 @@ export const pageSpeedInsights = async (
   }
 
   if (!res.ok) {
-    await res.body?.cancel().catch(() => null);
+    const failed = PsiError.safeParse(await res.json().catch(() => null));
+    const said = failed.success ? failed.data.error.message : "";
+
+    // Lighthouse ran and the page failed it: the page's own answer, which asking again would get
+    // again, so it is said as the page's and with no retry.
+    if (said.startsWith("Lighthouse returned error")) {
+      throw new ExpectedError(
+        `PageSpeed Insights could not measure the page: ${withoutPage(said, url)}`
+      );
+    }
 
     throw new LabUnavailableError(
       `PageSpeed Insights answered HTTP ${res.status}. Try again in a few minutes.`
