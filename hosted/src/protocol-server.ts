@@ -39,21 +39,26 @@ interface Listing {
 }
 
 /**
- * The profile of the server the listing is read from. Nothing calls its tools, so nothing starts
- * a call.
+ * The profile of the server the listing is read from: the free server's, or the premium one's,
+ * whose tools list what a subscription adds (issue #230). Nothing calls its tools, so nothing
+ * starts a call.
  */
-const LISTING_PROFILE: HostedProfile = {
+const listingProfile = (premium: boolean): HostedProfile => ({
+  ...(premium && { premium: true }),
   userAgent: "",
   startCall: () =>
     Promise.reject(new Error("The listing's server calls no tool.")),
-};
+});
 
 /**
  * Asks a server `createMcpServer` built for its `initialize` and `tools/list` answers, as the
  * objects it would send: the light server sends the same objects, so the same bytes.
  */
-const readListing = async (create: CreateServer): Promise<Listing> => {
-  const server = create({ hosted: LISTING_PROFILE });
+const readListing = async (
+  create: CreateServer,
+  premium: boolean
+): Promise<Listing> => {
+  const server = create({ hosted: listingProfile(premium) });
   const [client, own] = InMemoryTransport.createLinkedPair();
   const waiting = new Map<RequestId, (message: JSONRPCMessage) => void>();
 
@@ -136,14 +141,16 @@ type CreateServer = typeof createMcpServer;
  * server answers them, `ping` and the notifications as the SDK does, and the SDK's error for any
  * other method, which the hosted server lacks too. The listing is read at the first request, once
  * for all that follow (once per isolate, as the Worker keeps one maker), and again after a failure.
+ * With `premium`, it is the premium server's listing (issue #230).
  */
 export const protocolServers = (
-  create: CreateServer = createMcpServer
+  create: CreateServer = createMcpServer,
+  { premium = false }: { premium?: boolean } = {}
 ): (() => Promise<Server>) => {
   let listing: Promise<Listing> | undefined;
 
   const listingOnce = async (): Promise<Listing> => {
-    listing ??= readListing(create);
+    listing ??= readListing(create, premium);
 
     try {
       return await listing;

@@ -249,6 +249,7 @@ const closedEnv = (bucket: ReportBucket) => {
   const env: CrawlEnv = {
     MODE: "closed",
     DAILY_REQUESTS: 100_000,
+    PAID_DAILY_REQUESTS: 100_000,
     CALLER_SITES: 10,
     PLATFORM_SITES: 100,
     SITE_REQUESTS: unused,
@@ -257,6 +258,7 @@ const closedEnv = (bucket: ReportBucket) => {
     PLATFORM_CALLS: unused,
     PLATFORM_CRAWLS: unused,
     SHARE_UPLOADS: unused,
+    RENDER_CALLS: unused,
     CALLS: {
       writeDataPoint: (point) => {
         outcomes.push(String(point?.blobs?.[1]));
@@ -345,6 +347,10 @@ const openEnv = (bucket: ReportBucket) => {
   const day: DayCounter = {
     requests: () => Promise.resolve(0),
     addRequests: (_day, count) => Promise.resolve(count),
+    paidRequests: () => Promise.resolve(0),
+    addPaidRequests: (_day, count) => Promise.resolve(count),
+    renders: () => Promise.resolve(0),
+    addRenders: (_day, count) => Promise.resolve(count),
     admitSite: () => Promise.resolve(true),
   };
 

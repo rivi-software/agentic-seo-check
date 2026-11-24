@@ -408,6 +408,11 @@ const start = (
     bindings: {
       POSTHOG_HOST: { type: "plain_text", value: POSTHOG },
       CRUX_API_KEY: { type: "secret_text", value: CRUX_KEY },
+      // No Browser Run (issue #230): locally Wrangler would launch a real Chrome, which no test
+      // does. The premium server then answers a render with the tool.render-unavailable finding.
+      ...(config === SERVER_CONFIG && {
+        BROWSER: { type: "json", value: null },
+      }),
       ...Object.fromEntries(
         Object.entries(vars).map(([name, value]) => [
           name,
@@ -2130,7 +2135,7 @@ describe("the hosted Worker in workerd", () => {
     /** A JSON-RPC message to /mcp, as a stateless client sends it. */
     const mcpPost = (
       to: StartedWorker,
-      message: typeof INITIALIZE | typeof LIST_RULES,
+      message: { method: string; params?: object },
       headers: Record<string, string> = {}
     ) =>
       fetchRead(to, `${ORIGIN}/mcp`, {
@@ -2244,6 +2249,89 @@ describe("the hosted Worker in workerd", () => {
         { error: "invalid_grant" },
       ]);
       await expect(oauthKeys(`grant:${accountId}:`)).resolves.toStrictEqual([]);
+    });
+
+    /** A tools/call of seo_audit_page with `render`, on the fixture shop's home page. */
+    const RENDER_PAGE = {
+      method: "tools/call",
+      params: {
+        name: "seo_audit_page",
+        arguments: { url: "https://shop.example.com/", render: true },
+      },
+    };
+
+    const TOOLS_LIST = { method: "tools/list" };
+
+    const ListedTools = z.object({
+      result: z.object({
+        tools: z.array(
+          z.object({
+            name: z.string(),
+            inputSchema: z.object({
+              properties: z.record(z.string(), z.unknown()),
+            }),
+          })
+        ),
+      }),
+    });
+
+    /** The tools an answer to tools/list lists with `render`. */
+    const renderTools = (text: string) =>
+      ListedTools.parse(JSON.parse(text))
+        .result.tools.filter((t) => "render" in t.inputSchema.properties)
+        .map((t) => t.name);
+
+    // One sign-in for both: the address form allows five codes a minute, and this block signs in
+    // as often.
+    it("list `render` on the premium server's seo_audit_page only, and ask an account without a subscription to subscribe before it renders (issue #230)", async () => {
+      const { access_token: token } = await signIn("premium-free@example.com");
+      const asAccount = { ...PREMIUM_HEADER, authorization: `Bearer ${token}` };
+
+      const premiumList = await mcpPost(worker, TOOLS_LIST, asAccount);
+      const freeList = await mcpPost(worker, TOOLS_LIST);
+      const { text } = await mcpPost(worker, RENDER_PAGE, asAccount);
+
+      expect(renderTools(premiumList.text)).toStrictEqual(["seo_audit_page"]);
+      expect(renderTools(freeList.text)).toStrictEqual([]);
+      expect(text).toContain(
+        "Rendering needs a subscription. Subscribe at https://agentic-seo.org/account."
+      );
+    });
+
+    it("answer a subscriber's render without a browser binding with the tool.render-unavailable finding (issue #230)", async () => {
+      const email = "premium-render@example.com";
+      const { access_token: token } = await signIn(email);
+      const periodEnd = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+
+      await accountsSql(
+        `UPDATE accounts SET subscription_status = 'active', current_period_end = ${periodEnd} WHERE email = '${email}'`
+      );
+
+      const { res, text } = await mcpPost(worker, RENDER_PAGE, {
+        ...PREMIUM_HEADER,
+        authorization: `Bearer ${token}`,
+      });
+
+      const answer = z
+        .object({
+          result: z.object({
+            isError: z.boolean().optional(),
+            structuredContent: z.object({
+              findings: z.array(
+                z.object({ rule: z.string(), message: z.string() })
+              ),
+            }),
+          }),
+        })
+        .parse(JSON.parse(text));
+
+      expect(res.status).toBe(200);
+      expect(answer.result.isError).toBeFalsy();
+      expect(
+        answer.result.structuredContent.findings.find(
+          (f) => f.rule === "tool.render-unavailable"
+        )?.message
+      ).toContain("no browser");
     });
 
     it("answer an anonymous /mcp without the premium server's KV and database", async () => {

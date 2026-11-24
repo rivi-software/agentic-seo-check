@@ -108,7 +108,8 @@ export type LimitName =
   | "CALLER_CALLS"
   | "CALLER_CRAWLS"
   | "PLATFORM_CALLS"
-  | "PLATFORM_CRAWLS";
+  | "PLATFORM_CRAWLS"
+  | "RENDER_CALLS";
 
 /** A rate limit as people read it: 300 a minute. */
 export interface RateLimitText {
@@ -169,6 +170,18 @@ const siteRefusal = (host: string): string => {
 const dailyRefusal = (limit: number): string =>
   `The hosted server has sent its ${limit.toLocaleString("en")} requests for today, its daily limit for all callers together. Audits that request a site wait until 00:00 UTC; audits of inline HTML and seo_list_rules still work. ${NO_LIMITS}`;
 
+const paidDailyRefusal = (limit: number): string =>
+  `The premium server has sent its ${limit.toLocaleString("en")} requests for subscribers today, its daily limit for all accounts together. Audits that request a site wait until 00:00 UTC; audits of inline HTML and seo_list_rules still work. ${NO_LIMITS}`;
+
+const renderCallsRefusal = (): string => {
+  const { limit, period } = rateLimit("RENDER_CALLS");
+
+  return `This account has rendered ${limit} pages on the premium server in the last ${period}, its limit per account. ${tryAgain(period)} ${NO_LIMITS}`;
+};
+
+const dailyRendersRefusal = (limit: number): string =>
+  `The premium server has rendered its ${limit.toLocaleString("en")} pages for today, its daily limit for all accounts together. Rendering waits until 00:00 UTC; audits without \`render\` still work. ${NO_LIMITS}`;
+
 const sitesRefusal = (caller: Caller, limit: number): string => {
   const sites = `${limit} different ${limit === 1 ? "site" : "sites"}`;
 
@@ -189,10 +202,17 @@ export const siteOf = (host: string): string =>
 /** The UTC date the daily limit counts for. */
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-/** The day's counts that the HostedState Durable Object keeps: requests, and each caller's sites. */
+/**
+ * The day's counts that the HostedState Durable Object keeps: requests, subscribers' requests and
+ * rendered pages (issue #230), and each caller's sites.
+ */
 export interface DayCounter {
   requests: (day: string) => Promise<number>;
   addRequests: (day: string, count: number) => Promise<number>;
+  paidRequests: (day: string) => Promise<number>;
+  addPaidRequests: (day: string, count: number) => Promise<number>;
+  renders: (day: string) => Promise<number>;
+  addRenders: (day: string, count: number) => Promise<number>;
   /** Whether `caller` may audit `site` today, counting it when it is new; see HostedState. */
   admitSite: (
     day: string,
@@ -212,6 +232,13 @@ export type DailyLimits = Pick<
 export interface LimitsEnv extends StateEnv<DayCounter>, CruxEnv {
   MODE: string;
   DAILY_REQUESTS: number;
+  /** Requests a day for paid calls, all accounts together (issue #230), apart from DAILY_REQUESTS. */
+  PAID_DAILY_REQUESTS: number;
+  /**
+   * Pages the premium server may render a day, all accounts together (issue #230). The website's
+   * Worker renders nothing and has none.
+   */
+  DAILY_RENDERS?: number;
   /** Different sites one IP address may audit a day. */
   CALLER_SITES: number;
   /** Different sites claude.ai's users, or ChatGPT's, may audit a day, all together. */
@@ -223,6 +250,8 @@ export interface LimitsEnv extends StateEnv<DayCounter>, CruxEnv {
   PLATFORM_CRAWLS: RateLimit;
   /** Reports one address may share a minute: uploads to the website, and seo_share_report. */
   SHARE_UPLOADS: RateLimit;
+  /** Pages one account may render a minute on the premium server (issue #230). */
+  RENDER_CALLS: RateLimit;
   CALLS: AnalyticsEngineDataset;
   /**
    * The Ed25519 keys that sign every request (Web Bot Auth, issue #41), a Worker secret: a JSON
@@ -231,36 +260,54 @@ export interface LimitsEnv extends StateEnv<DayCounter>, CruxEnv {
   WEB_BOT_AUTH_KEYS?: string;
 }
 
-/**
- * The day's count as this isolate last read it, by Durable Object binding: the object is asked at
- * most every 30 seconds, since the daily limit is a circuit breaker, not an exact count.
- */
-const todayCache = new WeakMap<
-  LimitsEnv["STATE"],
-  { day: string; count: number; readAt: number }
->();
+/** The day's requests: the free ones, or those of paid calls (issue #230). */
+type Budget = "free" | "paid";
 
-const requestsToday = async (env: LimitsEnv): Promise<number> => {
+/**
+ * The day's count as this isolate last read it, by budget and Durable Object binding: the object is
+ * asked at most every 30 seconds, since the daily limit is a circuit breaker, not an exact count.
+ */
+const todayCache: Record<
+  Budget,
+  WeakMap<LimitsEnv["STATE"], { day: string; count: number; readAt: number }>
+> = { free: new WeakMap(), paid: new WeakMap() };
+
+const requestsToday = async (
+  env: LimitsEnv,
+  budget: Budget = "free"
+): Promise<number> => {
   const day = today();
-  const cached = todayCache.get(env.STATE);
+  const cache = todayCache[budget];
+  const cached = cache.get(env.STATE);
 
   if (cached?.day === day && Date.now() - cached.readAt < 30_000) {
     return cached.count;
   }
 
-  const count = await globalState(env).requests(day);
-  todayCache.set(env.STATE, { day, count, readAt: Date.now() });
+  const state = globalState(env);
+
+  const count = await (budget === "paid"
+    ? state.paidRequests(day)
+    : state.requests(day));
+
+  cache.set(env.STATE, { day, count, readAt: Date.now() });
 
   return count;
 };
 
 const countRequests = async (
   env: LimitsEnv,
-  requests: number
+  requests: number,
+  budget: Budget = "free"
 ): Promise<void> => {
   const day = today();
-  const count = await globalState(env).addRequests(day, requests);
-  todayCache.set(env.STATE, { day, count, readAt: Date.now() });
+  const state = globalState(env);
+
+  const count = await (budget === "paid"
+    ? state.addPaidRequests(day, requests)
+    : state.addRequests(day, requests));
+
+  todayCache[budget].set(env.STATE, { day, count, readAt: Date.now() });
 };
 
 const sitesLimit = (env: LimitsEnv, caller: Caller): number =>
@@ -362,7 +409,21 @@ const checkMode = (env: LimitsEnv, crawl: boolean): void => {
 };
 
 /** Throws the refusal of a call that requests sites once the day's requests are sent. */
-const checkDay = async (env: LimitsEnv): Promise<void> => {
+const checkDay = async (
+  env: LimitsEnv,
+  budget: Budget = "free"
+): Promise<void> => {
+  if (budget === "paid") {
+    if ((await requestsToday(env, "paid")) >= env.PAID_DAILY_REQUESTS) {
+      throw new CallLimitError(
+        paidDailyRefusal(env.PAID_DAILY_REQUESTS),
+        "paid_daily_requests"
+      );
+    }
+
+    return;
+  }
+
   if ((await requestsToday(env)) >= env.DAILY_REQUESTS) {
     throw new CallLimitError(
       dailyRefusal(env.DAILY_REQUESTS),
@@ -371,11 +432,30 @@ const checkDay = async (env: LimitsEnv): Promise<void> => {
   }
 };
 
+/**
+ * Throws the refusal of a render past the account's renders a minute or the day's renders. The
+ * day's count is asked each time, not cached: a render is rare, and the cap guards a bill.
+ */
+const checkRender = async (env: LimitsEnv, caller: Caller): Promise<void> => {
+  const allowed = await env.RENDER_CALLS.limit({ key: caller.key });
+
+  if (!allowed.success) {
+    throw new CallLimitError(renderCallsRefusal(), "render_calls");
+  }
+
+  const limit = env.DAILY_RENDERS ?? 0;
+
+  if ((await globalState(env).renders(today())) >= limit) {
+    throw new CallLimitError(dailyRendersRefusal(limit), "daily_renders");
+  }
+};
+
 /** Throws the refusal of a tool call that the mode or a limit keeps out. */
 const admit = async (
   env: LimitsEnv,
   caller: Caller,
-  call: HostedCallInfo
+  call: HostedCallInfo,
+  budget: Budget
 ): Promise<void> => {
   checkMode(env, call.crawl);
 
@@ -411,8 +491,12 @@ const admit = async (
     }
   }
 
+  if (call.render) {
+    await checkRender(env, caller);
+  }
+
   if (call.fetches) {
-    await checkDay(env);
+    await checkDay(env, budget);
   }
 
   // Last, so that a call another limit refuses uses up no site.
@@ -421,6 +505,11 @@ const admit = async (
       sitesRefusal(caller, sitesLimit(env, caller)),
       `${scope}_sites`
     );
+  }
+
+  // Once every limit let the call through, so a refused call uses up no render.
+  if (call.render) {
+    await globalState(env).addRenders(today(), 1);
   }
 };
 
@@ -515,7 +604,8 @@ const countSent = (
   env: LimitsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
   sent: Sent,
-  report: ReportTask | undefined
+  report: ReportTask | undefined,
+  budget: Budget = "free"
 ): void => {
   const uncounted = sent.requests - sent.counted;
 
@@ -524,7 +614,7 @@ const countSent = (
 
     const count = async (): Promise<void> => {
       try {
-        await countRequests(env, uncounted);
+        await countRequests(env, uncounted, budget);
       } catch (error) {
         console.error(
           `Could not count ${uncounted} requests: ${error instanceof Error ? error.message : String(error)}`
@@ -581,7 +671,8 @@ const siteGate = (
   ctx: Pick<ExecutionContext, "waitUntil">,
   sent: Sent,
   report: ReportTask | undefined,
-  reaches?: Reaches
+  reaches?: Reaches,
+  budget: Budget = "free"
 ): RequestGate => ({
   beforeRequest: async (url) => {
     if (reaches && !(await reaches.site(url.hostname))) {
@@ -610,7 +701,7 @@ const siteGate = (
     sent.byHost.set(url.hostname, (sent.byHost.get(url.hostname) ?? 0) + 1);
 
     if (sent.requests - sent.counted >= COUNT_BATCH) {
-      countSent(env, ctx, sent, report);
+      countSent(env, ctx, sent, report, budget);
     }
   },
 });
@@ -698,6 +789,9 @@ export const hostedProfile = (
     });
   };
 
+  // A paid call's requests count against the subscribers' day, not the free one (issue #230).
+  const budget: Budget = paid ? "paid" : "free";
+
   const profile: HostedProfile = {
     userAgent: USER_AGENT,
     sign: requestSigner(
@@ -710,7 +804,7 @@ export const hostedProfile = (
       const started = Date.now();
 
       try {
-        await admit(env, caller, call);
+        await admit(env, caller, call, budget);
       } catch (error) {
         // A limit, or the limits' own failure, which is no limit (issue #93).
         keep(call, outcomeOf(error), {
@@ -737,7 +831,8 @@ export const hostedProfile = (
                 site: pageSites(env, caller, call.host),
                 competitors,
               }
-            : undefined
+            : undefined,
+          budget
         ),
         end: ({ outcome, pages }) => {
           const durationMs = Date.now() - started;
@@ -760,7 +855,7 @@ export const hostedProfile = (
             }
           }
 
-          countSent(env, ctx, sent, report);
+          countSent(env, ctx, sent, report, budget);
         },
       };
     },

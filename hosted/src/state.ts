@@ -52,7 +52,8 @@ export const globalState = <T>(env: StateEnv<T>): T =>
 
 /**
  * What every isolate of the Worker shares: the day's count of outgoing requests, for the daily
- * limit (the rate limiting binding counts per 10 or 60 seconds only), the sites each caller audited
+ * limit (the rate limiting binding counts per 10 or 60 seconds only), and apart from it the day's
+ * requests of paid calls and the pages rendered (issue #230), the sites each caller audited
  * today, for the daily cap on sites (issue #73), and OpenAI's ChatGPT connector ranges, which a
  * Cron Trigger refreshes. One object, named "global" in the EU jurisdiction (`globalState`), holds
  * them.
@@ -86,6 +87,45 @@ export class HostedState extends DurableObject<Env> {
   async addRequests(day: string, count: number): Promise<number> {
     const total = (await this.requests(day)) + count;
     await this.ctx.storage.put<DayCount>("requests", { day, count: total });
+
+    return total;
+  }
+
+  /** Requests of paid calls counted for `day` (issue #230), apart from `requests`. */
+  async paidRequests(day: string): Promise<number> {
+    return await this.dayCount("paid-requests", day);
+  }
+
+  /** Adds `count` requests of paid calls to `day` and answers the day's total. */
+  async addPaidRequests(day: string, count: number): Promise<number> {
+    return await this.addDayCount("paid-requests", day, count);
+  }
+
+  /** Pages the premium server rendered on `day` (issue #230). */
+  async renders(day: string): Promise<number> {
+    return await this.dayCount("renders", day);
+  }
+
+  /** Adds `count` rendered pages to `day` and answers the day's total. */
+  async addRenders(day: string, count: number): Promise<number> {
+    return await this.addDayCount("renders", day, count);
+  }
+
+  /** The count kept under `key` for `day`; a day not stored yet has none. */
+  private async dayCount(key: string, day: string): Promise<number> {
+    const stored = await this.ctx.storage.get<DayCount>(key);
+
+    return stored?.day === day ? stored.count : 0;
+  }
+
+  /** Adds `count` to `day` under `key` and answers the day's total. A new day starts from zero. */
+  private async addDayCount(
+    key: string,
+    day: string,
+    count: number
+  ): Promise<number> {
+    const total = (await this.dayCount(key, day)) + count;
+    await this.ctx.storage.put<DayCount>(key, { day, count: total });
 
     return total;
   }

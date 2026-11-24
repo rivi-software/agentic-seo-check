@@ -7,6 +7,8 @@
  * (issue #84). Each answer names the conversation it belongs to, and `send_feedback` lets an agent
  * tell the developers what it missed (issue #101). A crawl too large or slow for a client's wait
  * runs in the background: seo_start_crawl starts it and seo_crawl_result answers it (issue #209).
+ * On the premium server, a subscriber's seo_audit_page may render the page in the server's
+ * browser, whose every request goes through the same gate (issue #230).
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -21,6 +23,7 @@ import {
 } from "./core/aeo/audit.js";
 import type { AeoOptions, SiteAuditsOptions } from "./core/aeo/audit.js";
 import { auditHtml, auditSite, auditUrl } from "./core/audit.js";
+import type { AuditOptions } from "./core/audit.js";
 import {
   comparePages,
   competitorCounts,
@@ -66,6 +69,7 @@ import {
   urlListOption,
 } from "./mcp-shared.js";
 import type { ErrorDescription } from "./mcp-shared.js";
+import { SubscriptionNeededError } from "./subscription.js";
 import {
   conversationIdOf,
   noteCall,
@@ -93,6 +97,8 @@ export interface HostedCallInfo {
   competitors?: string[];
   /** seo_share_report: the call keeps a report on the website, which a limit of its own holds. */
   shares?: boolean;
+  /** A subscriber's call renders its page in the server's browser (issue #230): limits of its own hold it. */
+  render?: boolean;
 }
 
 /** How a hosted tool call ended. */
@@ -119,8 +125,18 @@ export type HostedPaid = "subscription" | "per_call";
 
 /** What the hosted server (hosted/src/index.ts) adds to the tools. */
 export interface HostedProfile {
-  /** Set on the premium host when the call is paid for; no tool reads it yet. */
+  /**
+   * The premium server (premium.agentic-seo.org, issue #229): its tools list what a subscription
+   * adds, such as `render` (issue #230), and say so.
+   */
+  premium?: boolean;
+  /** Set on the premium host when the call is paid for; a paid feature needs it. */
   paid?: HostedPaid;
+  /**
+   * The server's browser (Browser Run, issue #230), which a subscriber's `render` launches once per
+   * call. The browser fetches nothing itself: the audit sends each of its requests through the gate.
+   */
+  browser?: AuditOptions["browser"];
   /** The User-Agent of every request the tools send; it keeps the agentic-seo-check product token. */
   userAgent: string;
   /** Signs each request the tools send (Web Bot Auth, issue #41); without it they go unsigned. */
@@ -162,6 +178,9 @@ export interface HostedProfile {
  */
 export type LimitReason =
   | "paused"
+  | "render_calls"
+  | "daily_renders"
+  | "paid_daily_requests"
   | "no_crawls"
   | "caller_calls"
   | "caller_crawls"
@@ -187,8 +206,19 @@ export class CallLimitError extends ExpectedError {
 
 const LIMITS = HOSTED_LIMITS;
 
+/** What the hosted server obeys, on both hosts. */
+const ROBOTS_NOTE =
+  "The hosted server obeys robots.txt for every request it sends (the group for agentic-seo-check, or `*` without one), and its crawls wait between requests as Crawl-delay asks. ";
+
 /** What every hosted tool says it cannot do, and where to go instead. */
-const HOSTED_NOTE = `This is the hosted server: it requests pages from Cloudflare's network, so it cannot reach localhost, private networks or sites behind a login, cannot read build directories, does not render JavaScript or run Lighthouse, and limits requests per site and per caller. The local server does all of that: \`${LOCAL_SERVER}\`. The hosted server obeys robots.txt for every request it sends (the group for agentic-seo-check, or \`*\` without one), and its crawls wait between requests as Crawl-delay asks. `;
+const HOSTED_NOTE = `This is the hosted server: it requests pages from Cloudflare's network, so it cannot reach localhost, private networks or sites behind a login, cannot read build directories, does not render JavaScript or run Lighthouse, and limits requests per site and per caller. The local server does all of that: \`${LOCAL_SERVER}\`. ${ROBOTS_NOTE}`;
+
+/** HOSTED_NOTE on the premium server, which renders for subscribers (issue #230). */
+const PREMIUM_NOTE = `This is the premium hosted server: it requests pages from Cloudflare's network, so it cannot reach localhost, private networks or sites behind a login, cannot read build directories, does not run Lighthouse, and limits requests per site and per account. With a subscription, seo_audit_page renders JavaScript with \`render: true\`, in a browser that fetches nothing itself: this server sends each of its requests, under the same rules. The local server does all of that without limits: \`${LOCAL_SERVER}\`. ${ROBOTS_NOTE}`;
+
+/** The note of the server's own host. */
+const noteFor = (premium: boolean): string =>
+  premium ? PREMIUM_NOTE : HOSTED_NOTE;
 
 const description = (schema: z.ZodType): string => schema.description ?? "";
 
@@ -339,6 +369,17 @@ const AUDIT_PAGE_INPUT = {
   ...hostedOptions,
   ...agentArguments,
 };
+
+/** `render` on the premium server's seo_audit_page (issue #230). */
+const render = z
+  .boolean()
+  .optional()
+  .describe(
+    "With `url`: also render the page with JavaScript in this server's browser and compare it with the server HTML (SPA/CSR problems). Needs a subscription. One render a call; the browser's requests count as the audit's."
+  );
+
+/** seo_audit_page's arguments on the premium server: `render` beside the rest. */
+const PREMIUM_AUDIT_PAGE_INPUT = { ...AUDIT_PAGE_INPUT, render };
 
 /** The arguments of seo_crawl_site. */
 const CRAWL_SITE_INPUT = {
@@ -786,14 +827,40 @@ const inConversation = async (
   };
 };
 
-/** The options of an audit on the hosted server: the caller's, with the hosted fetch. */
+/**
+ * The options of an audit on the hosted server: the caller's, with the hosted fetch. With
+ * `profile`, a call that asks to `render` gets the server's browser, on a paid call only.
+ */
 const auditOptions = (
-  input: Parameters<typeof toOptions>[0],
-  fetch: FetchOptions
-) => ({
+  input: Parameters<typeof toOptions>[0] & { render?: boolean },
+  fetch: FetchOptions,
+  profile?: HostedProfile
+): ReturnType<typeof toOptions> & Pick<AuditOptions, "render" | "browser"> => ({
   ...toOptions(input),
   fetch: { ...fetch, timeoutMs: input.timeoutMs },
+  ...(input.render &&
+    profile?.paid &&
+    profile.browser && { render: true, browser: profile.browser }),
 });
+
+/**
+ * Whether a call renders: `render` on the premium server, for a URL. Without a subscription it
+ * throws, before the call counts and before any browser starts.
+ */
+const rendersFor = (
+  profile: HostedProfile,
+  asked: boolean | undefined
+): boolean => {
+  if (!(asked && profile.premium)) {
+    return false;
+  }
+
+  if (!profile.paid) {
+    throw new SubscriptionNeededError();
+  }
+
+  return true;
+};
 
 /**
  * The server's key and cache when the call asks for field data; a server without a key says so
@@ -868,35 +935,35 @@ export const crawlFailure = (error: unknown): CrawlFailure =>
   describeError(error);
 
 /** seo_audit_page: one page, by URL or as HTML. */
-const AUDIT_PAGE = {
+const auditPageTool = (premium: boolean) => ({
   ...readOnlyTool("Audit one page for SEO", { openWorld: true }),
   description:
     `Audit a single page and return prioritised, actionable findings (rule id, severity, message, recommendation, CSS selector, evidence) with a \`fix\` for each: the exact edits that resolve it, quoting the code to replace (\`{{…}}\` marks words the author writes). ` +
     `Checks title, meta description, headings, canonical, robots/noindex, viewport/lang, Open Graph/Twitter cards, images, links, hreflang, structured data (JSON-LD/microdata), content quality and the HTTP response. ` +
     `Provide either \`url\` (a public http(s) URL) or \`html\` (raw HTML string, e.g. from a template or test render). ` +
-    `Set \`fieldData: true\` for the Core Web Vitals of real visits (LCP, INP, CLS) from the Chrome UX Report, which Google ranks on. ${
-      HOSTED_NOTE
-    }Typical workflow: audit, apply the \`fix\` of each error and warning in the source code, then re-check with \`rules\` (the rules you fixed) and \`baseline\` (the finding ids) to confirm they are fixed and nothing new appeared. ${docsNote(
+    `Set \`fieldData: true\` for the Core Web Vitals of real visits (LCP, INP, CLS) from the Chrome UX Report, which Google ranks on. ${noteFor(
+      premium
+    )}Typical workflow: audit, apply the \`fix\` of each error and warning in the source code, then re-check with \`rules\` (the rules you fixed) and \`baseline\` (the finding ids) to confirm they are fixed and nothing new appeared. ${docsNote(
       "hosted"
     )}`,
-  inputSchema: AUDIT_PAGE_INPUT,
-};
+  inputSchema: premium ? PREMIUM_AUDIT_PAGE_INPUT : AUDIT_PAGE_INPUT,
+});
 
 /** seo_crawl_site: a site, up to the hosted crawl's limits. */
-const CRAWL_SITE = {
+const crawlSiteTool = (premium: boolean) => ({
   ...readOnlyTool("Crawl a site and audit every page", { openWorld: true }),
   description:
     `Crawl internal links from a start URL (at most ${LIMITS.maxPages} pages, depth ${LIMITS.maxDepth}), audit every HTML page, and run site-wide checks: robots.txt, XML sitemap coverage (missing/noindex/non-canonical/broken URLs), broken internal links with their sources, redirect chains, duplicate titles/descriptions/H1s/content, orphan and deep pages, soft-404 behaviour, http→https and www redirects, hreflang return links. ` +
     `Returns site findings plus \`issues\` (page findings rolled up by rule with example URLs) and per-page scores. Use seo_audit_page on a specific URL for full per-page detail. ` +
     `The crawl checks at most ${LIMITS.maxLinkChecks} link targets and reads at most ${LIMITS.maxSitemaps} sitemaps. ` +
-    `For a large or slow site, whose crawl can outlast your client's wait for an answer, use seo_start_crawl and then seo_crawl_result instead. ${
-      HOSTED_NOTE
-    }${docsNote("hosted")}`,
+    `For a large or slow site, whose crawl can outlast your client's wait for an answer, use seo_start_crawl and then seo_crawl_result instead. ${noteFor(
+      premium
+    )}${docsNote("hosted")}`,
   inputSchema: CRAWL_SITE_INPUT,
-};
+});
 
 /** seo_start_crawl: seo_crawl_site's crawl, in the background (issue #209). */
-const START_CRAWL = {
+const startCrawlTool = (premium: boolean) => ({
   title: "Start a crawl in the background",
   annotations: {
     title: "Start a crawl in the background",
@@ -908,11 +975,11 @@ const START_CRAWL = {
   description:
     `Start the crawl seo_crawl_site runs (the same options and limits: at most ${LIMITS.maxPages} pages, depth ${LIMITS.maxDepth}) in the background, and answer at once with its \`id\`. ` +
     `Use it for a large or slow site, whose crawl can outlast your client's wait for an answer. The crawl builds both audits from one crawl: the SEO audit, with \`rules\`, \`disableRules\`, \`baseline\`, \`keyword\` and \`includeInfo\` as in seo_crawl_site, and the AEO audit with its defaults. ` +
-    `Call seo_crawl_result with the id after a minute or two, and again while it answers \`running\`. The server keeps the result for ${CRAWL_DAYS} days; anyone with the id can read it, so treat the id as a secret. ${
-      HOSTED_NOTE
-    }${docsNote("hosted")}`,
+    `Call seo_crawl_result with the id after a minute or two, and again while it answers \`running\`. The server keeps the result for ${CRAWL_DAYS} days; anyone with the id can read it, so treat the id as a secret. ${noteFor(
+      premium
+    )}${docsNote("hosted")}`,
   inputSchema: START_CRAWL_INPUT,
-};
+});
 
 /** seo_crawl_result: a background crawl's state, or its audit once it is done (issue #209). */
 const CRAWL_RESULT = {
@@ -927,7 +994,7 @@ const CRAWL_RESULT = {
 };
 
 /** seo_aeo_audit: a page or a site, for answer engines. */
-const AEO_AUDIT = {
+const aeoAuditTool = (premium: boolean) => ({
   ...readOnlyTool("Audit a page or site for answer engines (AEO)", {
     openWorld: true,
   }),
@@ -935,25 +1002,25 @@ const AEO_AUDIT = {
     `Answer engine optimization audit: can AI answer engines (ChatGPT search, Claude, Perplexity, Google AI Overviews and AI Mode, Copilot, Gemini) reach, quote and trust the content? ` +
     `Checks robots.txt for each AI crawler (search crawlers, answer bots, training bots), Content-Signal lines and the shared \`__usage_ai-training\` opt-out, /llms.txt, nosnippet/max-snippet/data-nosnippet, Bing's noarchive/nocache for Copilot, noai, content that needs JavaScript, question headings without a direct answer, FAQPage/HowTo markup that the page does not show, article author and dates, and Organization/Person entities with sameAs. ` +
     `Returns its own AEO score, a per-bot \`crawlers\` table and findings with rule ids (aeo.*). ` +
-    `Provide one of \`url\` (one page, or a site with \`crawl: true\`) or \`html\`. ${
-      HOSTED_NOTE
-    }The local server can also request the page with each AI bot's User-Agent (\`aiBots\`). ${docsNote(
+    `Provide one of \`url\` (one page, or a site with \`crawl: true\`) or \`html\`. ${noteFor(
+      premium
+    )}The local server can also request the page with each AI bot's User-Agent (\`aiBots\`). ${docsNote(
       "hosted"
     )}`,
   inputSchema: AEO_AUDIT_INPUT,
-};
+});
 
 /** seo_compare_pages: a page beside its competitors' pages (issue #129). */
-const COMPARE_PAGES = {
+const comparePagesTool = (premium: boolean) => ({
   ...readOnlyTool("Compare a page with competitors' pages", {
     openWorld: true,
   }),
   description: compareDescription(
     "hosted",
-    `${HOSTED_NOTE}It obeys each competitor's robots.txt as any page's, and lists a competitor that robots.txt, its site or a limit keeps out with that answer. Each competitor's site counts toward the different sites a caller may audit in a day; a comparison counts as one tool call. `
+    `${noteFor(premium)}It obeys each competitor's robots.txt as any page's, and lists a competitor that robots.txt, its site or a limit keeps out with that answer. Each competitor's site counts toward the different sites a caller may audit in a day; a comparison counts as one tool call. `
   ),
   inputSchema: COMPARE_PAGES_INPUT,
-};
+});
 
 /** What send_feedback answers: the feedback was kept, and nothing else changed. */
 const FEEDBACK_ANSWER = `Your feedback was recorded for the developers of ${PRODUCT_NAME}. It adds or changes no tools: continue with the tools listed.`;
@@ -976,95 +1043,116 @@ const FEEDBACK = {
 };
 
 const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
-  server.registerTool("seo_audit_page", AUDIT_PAGE, (input) =>
-    inConversation(profile, input.conversation_id, () => {
-      noteOptions(input);
+  server.registerTool(
+    "seo_audit_page",
+    auditPageTool(profile.premium === true),
+    (input) =>
+      inConversation(profile, input.conversation_id, () => {
+        noteOptions(input);
 
-      const { html: source, url: target } = input;
-      // `html` wins over `url`; an empty `html` counts only when a `url` came with it.
-      const inline = source !== undefined && Boolean(source || target);
+        const { html: source, url: target } = input;
+        // `html` wins over `url`; an empty `html` counts only when a `url` came with it.
+        const inline = source !== undefined && Boolean(source || target);
 
-      if (!inline && !target) {
-        // `target` tells the tool's own refusal from the schema's, which has no reason (issue #121).
-        return fail(
-          new InputError("Provide `url` or `html`.", { reason: "target" })
-        );
-      }
-
-      let host: string | null = null;
-      let field: FieldDataOptions | undefined;
-
-      try {
-        host = inline || !target ? null : allowedHost(target);
-        // Inline HTML is no URL the Chrome UX Report could have.
-        field = fieldDataOf(profile, input.fieldData && host !== null);
-      } catch (error) {
-        return fail(error);
-      }
-
-      return runCall(
-        profile,
-        { tool: "seo_audit_page", fetches: !inline, crawl: false, host },
-        async (fetch) => {
-          const options = {
-            ...auditOptions(input, fetch),
-            baseUrl: input.baseUrl,
-            // Inline HTML asks for no key: the audit answers that it has no URL to ask for.
-            fieldData: inline ? input.fieldData : field,
-          };
-
-          const audit =
-            inline || !target
-              ? await auditHtml(
-                  source ?? "",
-                  { url: input.baseUrl, source: "html", target: "inline-html" },
-                  options
-                )
-              : await auditUrl(target, options);
-
-          return {
-            result: respond(audit, input.format, input.detail),
-            pages: 1,
-            audit,
-          };
+        if (!inline && !target) {
+          // `target` tells the tool's own refusal from the schema's, which has no reason (issue #121).
+          return fail(
+            new InputError("Provide `url` or `html`.", { reason: "target" })
+          );
         }
-      );
-    })
+
+        let host: string | null = null;
+        let field: FieldDataOptions | undefined;
+        let renders = false;
+
+        try {
+          host = inline || !target ? null : allowedHost(target);
+          // Inline HTML is no URL the Chrome UX Report could have.
+          field = fieldDataOf(profile, input.fieldData && host !== null);
+          // Inline HTML has no page for a browser to load.
+          renders =
+            rendersFor(profile, "render" in input && input.render === true) &&
+            host !== null;
+        } catch (error) {
+          return fail(error);
+        }
+
+        return runCall(
+          profile,
+          {
+            tool: "seo_audit_page",
+            fetches: !inline,
+            crawl: false,
+            host,
+            ...(renders && { render: true }),
+          },
+          async (fetch) => {
+            const options = {
+              ...auditOptions({ ...input, render: renders }, fetch, profile),
+              baseUrl: input.baseUrl,
+              // Inline HTML asks for no key: the audit answers that it has no URL to ask for.
+              fieldData: inline ? input.fieldData : field,
+            };
+
+            const audit =
+              inline || !target
+                ? await auditHtml(
+                    source ?? "",
+                    {
+                      url: input.baseUrl,
+                      source: "html",
+                      target: "inline-html",
+                    },
+                    options
+                  )
+                : await auditUrl(target, options);
+
+            return {
+              result: respond(audit, input.format, input.detail),
+              pages: 1,
+              audit,
+            };
+          }
+        );
+      })
   );
 };
 
 const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
-  server.registerTool("seo_crawl_site", CRAWL_SITE, (input) =>
-    inConversation(profile, input.conversation_id, () => {
-      noteOptions(input, input.pageDetail);
+  server.registerTool(
+    "seo_crawl_site",
+    crawlSiteTool(profile.premium === true),
+    (input) =>
+      inConversation(profile, input.conversation_id, () => {
+        noteOptions(input, input.pageDetail);
 
-      let host: string;
-      let field: FieldDataOptions | undefined;
+        let host: string;
+        let field: FieldDataOptions | undefined;
 
-      try {
-        host = allowedHost(input.url);
-        field = fieldDataOf(profile, input.fieldData);
-      } catch (error) {
-        return fail(error);
-      }
-
-      return runCall(
-        profile,
-        { tool: "seo_crawl_site", fetches: true, crawl: true, host },
-        async (fetch) => {
-          const audit = await auditSite(
-            input.url,
-            crawlOptions(input, fetch, field)
-          );
-
-          return {
-            result: respond(audit, input.format, input.detail),
-            pages: pagesOf(audit),
-            audit,
-          };
+        try {
+          host = allowedHost(input.url);
+          field = fieldDataOf(profile, input.fieldData);
+        } catch (error) {
+          return fail(error);
         }
-      );
-    })
+
+        return runCall(
+          profile,
+          { tool: "seo_crawl_site", fetches: true, crawl: true, host },
+          async (fetch) => {
+            const audit = await auditSite(
+              input.url,
+              crawlOptions(input, fetch, field)
+            );
+
+            return {
+              result: respond(audit, input.format, input.detail),
+              pages: pagesOf(audit),
+              audit,
+            };
+          }
+        );
+      })
   );
 };
 
@@ -1098,51 +1186,54 @@ const registerStartCrawl = (
   server: McpServer,
   profile: HostedProfile
 ): void => {
-  server.registerTool("seo_start_crawl", START_CRAWL, (input) =>
-    inConversation(profile, input.conversation_id, () => {
-      noteCall({
-        page_detail: input.pageDetail,
-        recheck: input.baseline !== undefined,
-      });
+  server.registerTool(
+    "seo_start_crawl",
+    startCrawlTool(profile.premium === true),
+    (input) =>
+      inConversation(profile, input.conversation_id, () => {
+        noteCall({
+          page_detail: input.pageDetail,
+          recheck: input.baseline !== undefined,
+        });
 
-      const { crawls } = profile;
+        const { crawls } = profile;
 
-      if (!crawls) {
-        return crawlsOff();
-      }
-
-      let host: string;
-
-      try {
-        host = allowedHost(input.url);
-        // The crawl asks with the server's key later; a server without one says so now.
-        fieldDataOf(profile, input.fieldData);
-      } catch (error) {
-        return fail(error);
-      }
-
-      // The analytics' arguments stay out of what the crawl keeps: they are no option of the crawl.
-      const {
-        conversation_id: _conversation,
-        context: _context,
-        llm_model: _model,
-        ...options
-      } = input;
-
-      return runCall(
-        profile,
-        { tool: "seo_start_crawl", fetches: true, crawl: true, host },
-        // The crawl sends its requests later, through a gate of its own; this call sends none.
-        async () => {
-          const { id, startedAt } = await crawls.start(options);
-
-          return {
-            result: respondRunning(id, startedAt, true),
-            pages: 0,
-          };
+        if (!crawls) {
+          return crawlsOff();
         }
-      );
-    })
+
+        let host: string;
+
+        try {
+          host = allowedHost(input.url);
+          // The crawl asks with the server's key later; a server without one says so now.
+          fieldDataOf(profile, input.fieldData);
+        } catch (error) {
+          return fail(error);
+        }
+
+        // The analytics' arguments stay out of what the crawl keeps: they are no option of the crawl.
+        const {
+          conversation_id: _conversation,
+          context: _context,
+          llm_model: _model,
+          ...options
+        } = input;
+
+        return runCall(
+          profile,
+          { tool: "seo_start_crawl", fetches: true, crawl: true, host },
+          // The crawl sends its requests later, through a gate of its own; this call sends none.
+          async () => {
+            const { id, startedAt } = await crawls.start(options);
+
+            return {
+              result: respondRunning(id, startedAt, true),
+              pages: 0,
+            };
+          }
+        );
+      })
   );
 };
 
@@ -1220,68 +1311,71 @@ const registerCrawlResult = (
 };
 
 const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
-  server.registerTool("seo_aeo_audit", AEO_AUDIT, (input) =>
-    inConversation(profile, input.conversation_id, () => {
-      // A list of pages is a crawl of them.
-      const crawl =
-        input.url !== undefined && (input.crawl || input.urls !== undefined);
+  server.registerTool(
+    "seo_aeo_audit",
+    aeoAuditTool(profile.premium === true),
+    (input) =>
+      inConversation(profile, input.conversation_id, () => {
+        // A list of pages is a crawl of them.
+        const crawl =
+          input.url !== undefined && (input.crawl || input.urls !== undefined);
 
-      noteOptions(input, crawl ? input.pageDetail : undefined);
+        noteOptions(input, crawl ? input.pageDetail : undefined);
 
-      if ((input.url === undefined) === (input.html === undefined)) {
-        return fail(
-          new InputError("Provide exactly one of `url` or `html`.", {
-            reason: "target",
-          })
-        );
-      }
-
-      let host: string | null = null;
-
-      try {
-        host = input.url === undefined ? null : allowedHost(input.url);
-      } catch (error) {
-        return fail(error);
-      }
-
-      return runCall(
-        profile,
-        { tool: "seo_aeo_audit", fetches: host !== null, crawl, host },
-        async (fetch) => {
-          const options: AeoOptions = {
-            ...auditOptions(input, fetch),
-            baseUrl: input.baseUrl,
-            maxPages: input.maxPages,
-            maxDepth: input.maxDepth,
-            concurrency: input.concurrency,
-            respectRobots: true,
-            includeSubdomains: input.includeSubdomains,
-            urls: input.urls,
-            pageDetail: input.pageDetail,
-          };
-
-          let audit: AeoAudit;
-
-          if (input.url === undefined) {
-            audit = await auditAeoHtml(
-              input.html ?? "",
-              { url: input.baseUrl, target: "inline-html" },
-              options
-            );
-          } else if (crawl) {
-            audit = await auditAeoSite(input.url, options);
-          } else {
-            audit = await auditAeoUrl(input.url, options);
-          }
-
-          return {
-            result: respondAeo(audit, input.format, input.detail),
-            pages: pagesOf(audit),
-            audit,
-          };
+        if ((input.url === undefined) === (input.html === undefined)) {
+          return fail(
+            new InputError("Provide exactly one of `url` or `html`.", {
+              reason: "target",
+            })
+          );
         }
-      );
-    })
+
+        let host: string | null = null;
+
+        try {
+          host = input.url === undefined ? null : allowedHost(input.url);
+        } catch (error) {
+          return fail(error);
+        }
+
+        return runCall(
+          profile,
+          { tool: "seo_aeo_audit", fetches: host !== null, crawl, host },
+          async (fetch) => {
+            const options: AeoOptions = {
+              ...auditOptions(input, fetch),
+              baseUrl: input.baseUrl,
+              maxPages: input.maxPages,
+              maxDepth: input.maxDepth,
+              concurrency: input.concurrency,
+              respectRobots: true,
+              includeSubdomains: input.includeSubdomains,
+              urls: input.urls,
+              pageDetail: input.pageDetail,
+            };
+
+            let audit: AeoAudit;
+
+            if (input.url === undefined) {
+              audit = await auditAeoHtml(
+                input.html ?? "",
+                { url: input.baseUrl, target: "inline-html" },
+                options
+              );
+            } else if (crawl) {
+              audit = await auditAeoSite(input.url, options);
+            } else {
+              audit = await auditAeoUrl(input.url, options);
+            }
+
+            return {
+              result: respondAeo(audit, input.format, input.detail),
+              pages: pagesOf(audit),
+              audit,
+            };
+          }
+        );
+      })
   );
 };
 
@@ -1306,151 +1400,173 @@ const registerComparePages = (
   server: McpServer,
   profile: HostedProfile
 ): void => {
-  server.registerTool("seo_compare_pages", COMPARE_PAGES, (input) =>
-    inConversation(profile, input.conversation_id, () => {
-      noteOptions(input);
+  server.registerTool(
+    "seo_compare_pages",
+    comparePagesTool(profile.premium === true),
+    (input) =>
+      inConversation(profile, input.conversation_id, () => {
+        noteOptions(input);
 
-      let host: string;
-      let competitors: string[];
-      let field: FieldDataOptions | undefined;
+        let host: string;
+        let competitors: string[];
+        let field: FieldDataOptions | undefined;
 
-      try {
-        host = allowedHost(input.url);
-        // A list with only the page itself in it fails here, before the call counts.
-        competitors = [
-          ...new Set(
-            competitorsOf(input.url, input.competitors).map(allowedHost)
-          ),
-        ].filter((h) => h !== host);
-        field = fieldDataOf(profile, input.fieldData);
-      } catch (error) {
-        return fail(error);
-      }
-
-      return runCall(
-        profile,
-        {
-          tool: "seo_compare_pages",
-          fetches: true,
-          crawl: false,
-          host,
-          competitors,
-        },
-        async (fetch) => {
-          const comparison = await comparePages(input.url, input.competitors, {
-            keyword: input.keyword,
-            fieldData: field,
-            fetch: { ...fetch, timeoutMs: input.timeoutMs },
-          });
-
-          return {
-            result: respondComparison(comparison, input.format, input.detail),
-            pages: comparisonReport(comparison).pages,
-            properties: comparisonProperties(comparison),
-          };
+        try {
+          host = allowedHost(input.url);
+          // A list with only the page itself in it fails here, before the call counts.
+          competitors = [
+            ...new Set(
+              competitorsOf(input.url, input.competitors).map(allowedHost)
+            ),
+          ].filter((h) => h !== host);
+          field = fieldDataOf(profile, input.fieldData);
+        } catch (error) {
+          return fail(error);
         }
-      );
-    })
+
+        return runCall(
+          profile,
+          {
+            tool: "seo_compare_pages",
+            fetches: true,
+            crawl: false,
+            host,
+            competitors,
+          },
+          async (fetch) => {
+            const comparison = await comparePages(
+              input.url,
+              input.competitors,
+              {
+                keyword: input.keyword,
+                fieldData: field,
+                fetch: { ...fetch, timeoutMs: input.timeoutMs },
+              }
+            );
+
+            return {
+              result: respondComparison(comparison, input.format, input.detail),
+              pages: comparisonReport(comparison).pages,
+              properties: comparisonProperties(comparison),
+            };
+          }
+        );
+      })
   );
 };
 
 /** seo_share_report: both audits, kept on the website as a report behind a secret link. */
-const SHARE_REPORT = {
+const shareReportTool = (premium: boolean) => ({
   title: SHARE_ANNOTATIONS.title,
   annotations: SHARE_ANNOTATIONS,
   description: shareDescription(
     "hosted",
-    `${HOSTED_NOTE}The report says it was audited by this server. `
+    `${noteFor(premium)}The report says it was audited by this server. `
   ),
   inputSchema: SHARE_REPORT_INPUT,
-};
+});
 
 const registerShareReport = (
   server: McpServer,
   profile: HostedProfile
 ): void => {
-  server.registerTool("seo_share_report", SHARE_REPORT, (input) =>
-    inConversation(profile, input.conversation_id, () => {
-      const { share } = profile;
+  server.registerTool(
+    "seo_share_report",
+    shareReportTool(profile.premium === true),
+    (input) =>
+      inConversation(profile, input.conversation_id, () => {
+        const { share } = profile;
 
-      if (!share) {
-        return fail(
-          new ExpectedError("Sharing reports is switched off on this server.", {
-            reason: "sharing_off",
-          })
-        );
-      }
-
-      let host: string;
-
-      try {
-        host = allowedHost(input.url);
-      } catch (error) {
-        return fail(error);
-      }
-
-      return runCall(
-        profile,
-        {
-          tool: "seo_share_report",
-          fetches: true,
-          crawl: input.crawl,
-          host,
-          shares: true,
-        },
-        async (fetch) => {
-          const report = await auditForShare(input.url, {
-            crawl: input.crawl,
-            includeInfo: input.includeInfo,
-            fetch: { ...fetch, timeoutMs: input.timeoutMs },
-            maxPages: LIMITS.maxPages,
-            maxDepth: LIMITS.maxDepth,
-            concurrency: LIMITS.concurrency,
-            maxLinkChecks: LIMITS.maxLinkChecks,
-            maxSitemaps: LIMITS.maxSitemaps,
-            maxSitemapBytes: LIMITS.maxSitemapBytes,
-            respectRobots: true,
-            pageDetail: "summary",
-          });
-
-          return {
-            result: respondShare(report, await share(report)),
-            pages: report.kind === "site" ? report.seo.pages.length : 1,
-            audit: report.seo,
-          };
+        if (!share) {
+          return fail(
+            new ExpectedError(
+              "Sharing reports is switched off on this server.",
+              {
+                reason: "sharing_off",
+              }
+            )
+          );
         }
-      );
-    })
+
+        let host: string;
+
+        try {
+          host = allowedHost(input.url);
+        } catch (error) {
+          return fail(error);
+        }
+
+        return runCall(
+          profile,
+          {
+            tool: "seo_share_report",
+            fetches: true,
+            crawl: input.crawl,
+            host,
+            shares: true,
+          },
+          async (fetch) => {
+            const report = await auditForShare(input.url, {
+              crawl: input.crawl,
+              includeInfo: input.includeInfo,
+              fetch: { ...fetch, timeoutMs: input.timeoutMs },
+              maxPages: LIMITS.maxPages,
+              maxDepth: LIMITS.maxDepth,
+              concurrency: LIMITS.concurrency,
+              maxLinkChecks: LIMITS.maxLinkChecks,
+              maxSitemaps: LIMITS.maxSitemaps,
+              maxSitemapBytes: LIMITS.maxSitemapBytes,
+              respectRobots: true,
+              pageDetail: "summary",
+            });
+
+            return {
+              result: respondShare(report, await share(report)),
+              pages: report.kind === "site" ? report.seo.pages.length : 1,
+              audit: report.seo,
+            };
+          }
+        );
+      })
   );
 };
 
 /** seo_list_rules: the local server's tool, with the arguments for the analytics. */
 const LIST_RULES_TOOL = { ...LIST_RULES, inputSchema: LIST_RULES_INPUT };
 
+/** The tools of the free server, or of the premium one, by name. */
+const toolsFor = (premium: boolean) => ({
+  seo_audit_page: auditPageTool(premium),
+  seo_crawl_site: crawlSiteTool(premium),
+  seo_start_crawl: startCrawlTool(premium),
+  seo_crawl_result: CRAWL_RESULT,
+  seo_aeo_audit: aeoAuditTool(premium),
+  seo_compare_pages: comparePagesTool(premium),
+  seo_share_report: shareReportTool(premium),
+  seo_list_rules: LIST_RULES_TOOL,
+  send_feedback: FEEDBACK,
+});
+
+const countedTools = (premium: boolean): ReadonlyMap<string, CountedTool> =>
+  new Map(
+    Object.entries(toolsFor(premium)).map(([tool, listed]) => [
+      tool,
+      {
+        arguments: new Set(Object.keys(listed.inputSchema)),
+        description: listed.description,
+      },
+    ])
+  );
+
 /**
  * The hosted server's tools, with the names of their arguments and their descriptions, for its
  * analytics: a call to any other tool is an unknown tool's event, and a call's event lists only the
  * arguments its tool has (issues #84 and #101).
  */
-export const HOSTED_TOOLS: ReadonlyMap<string, CountedTool> = new Map(
-  Object.entries({
-    seo_audit_page: AUDIT_PAGE,
-    seo_crawl_site: CRAWL_SITE,
-    seo_start_crawl: START_CRAWL,
-    seo_crawl_result: CRAWL_RESULT,
-    seo_aeo_audit: AEO_AUDIT,
-    seo_compare_pages: COMPARE_PAGES,
-    seo_share_report: SHARE_REPORT,
-    seo_list_rules: LIST_RULES_TOOL,
-    send_feedback: FEEDBACK,
-  }).map(([tool, listed]) => [
-    tool,
-    {
-      arguments: new Set(Object.keys(listed.inputSchema)),
-      description: listed.description,
-    },
-  ])
-);
+export const HOSTED_TOOLS = countedTools(false);
+
+/** HOSTED_TOOLS on the premium server (issue #230): its notes, and `render`. */
+export const PREMIUM_TOOLS = countedTools(true);
 
 /**
  * The tool a feedback names, as its event keeps it: one of this server's, or `other`. The agent

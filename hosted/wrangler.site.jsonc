@@ -56,7 +56,10 @@
     // issue #232): the website's alone, so the MCP server's configuration has no such namespace.
     { "name": "WAITLIST_SIGNUPS", "namespace_id": "35007", "simple": { "limit": 5, "period": 60 } },
     // Sign-in codes one IP address may ask for a minute (src/accounts/codes.ts, issue #229).
-    { "name": "SIGN_IN_CODES", "namespace_id": "35008", "simple": { "limit": 5, "period": 60 } }
+    { "name": "SIGN_IN_CODES", "namespace_id": "35008", "simple": { "limit": 5, "period": 60 } },
+    // Pages one premium account may render a minute (issue #230): the MCP server's, which the
+    // website shares with its other limits though it renders nothing.
+    { "name": "RENDER_CALLS", "namespace_id": "35009", "simple": { "limit": 10, "period": 60 } }
   ],
   // The MCP server's Durable Object, so the form's requests count in the same day. It runs the code
   // the MCP server last deployed, which deploys first: keep its methods additive (src/state.ts).
@@ -119,9 +122,10 @@
   "vars": {
     // "open"; "no-crawls" audits a homepage alone; "closed" turns the form off. Change it and deploy.
     "MODE": "open",
-    // The MCP server's DAILY_REQUESTS, CALLER_SITES and PLATFORM_SITES: the form checks the day's
+    // The MCP server's DAILY_REQUESTS, PAID_DAILY_REQUESTS, CALLER_SITES and PLATFORM_SITES: the form checks the day's
     // counts it shares with the MCP server against them (issue #73).
     "DAILY_REQUESTS": 100000,
+    "PAID_DAILY_REQUESTS": 100000,
     "CALLER_SITES": 10,
     "PLATFORM_SITES": 100,
     // The public site key of the Turnstile widget ("agentic-seo-check website audit form",

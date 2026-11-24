@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { Browser } from "playwright";
 import {
   afterEach,
   assert,
@@ -25,11 +26,14 @@ import {
   hostedUrlProblem,
   siteRefusal,
 } from "../src/core/hosted.js";
+import type { RequestLike, RouteLike } from "../src/core/render-fetch.js";
+import { RenderUnavailableError } from "../src/core/render.js";
 import type { SharedReport } from "../src/core/share.js";
 import {
   CallLimitError,
   guarded,
   HOSTED_TOOLS,
+  PREMIUM_TOOLS,
   runBackgroundCrawl,
 } from "../src/mcp-hosted.js";
 import type {
@@ -103,6 +107,102 @@ interface Profile {
   calls: HostedCallInfo[];
   ends: HostedCallEnd[];
 }
+
+/** What the fake browser's route handler is handed: Playwright's route, as render-fetch.ts reads it. */
+type FakeRoute = RouteLike & { request: () => RequestLike };
+
+/**
+ * A browser with just what renderPage asks of it, which launches nothing: its navigation goes
+ * through the context's route, as Browser Run's does, and fails as Chromium's does when the route
+ * aborts it.
+ */
+const refusingBrowser = (): Browser => {
+  let handler: ((route: FakeRoute) => Promise<void>) | undefined;
+  let current = "about:blank";
+
+  const tab = {
+    on: () => tab,
+    goto: async (url: string) => {
+      let aborted: string | undefined;
+      current = url;
+
+      await handler?.({
+        request: () => ({
+          url: () => url,
+          method: () => "GET",
+          allHeaders: () => Promise.resolve({}),
+          resourceType: () => "document",
+          postData: () => null,
+        }),
+        abort: (code) => {
+          aborted = code;
+
+          return Promise.resolve();
+        },
+        fulfill: () => Promise.resolve(),
+      });
+
+      if (aborted) {
+        throw new Error(`page.goto: net::ERR_BLOCKED_BY_CLIENT at ${url}`);
+      }
+
+      return null;
+    },
+    waitForTimeout: () => Promise.resolve(),
+    content: () => Promise.resolve("<html></html>"),
+    url: () => current,
+  };
+
+  const context = {
+    route: (_pattern: string, answer: (route: FakeRoute) => Promise<void>) => {
+      handler = answer;
+
+      return Promise.resolve();
+    },
+    routeWebSocket: () => Promise.resolve(),
+    newPage: () => Promise.resolve(tab),
+  };
+
+  const browser = {
+    newContext: () => Promise.resolve(context),
+    close: () => Promise.resolve(),
+  };
+
+  // SAFETY: renderPage calls only the methods above; the rest of Playwright's Browser is never read.
+  // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- a stand-in has a part of Browser only, which TypeScript sees no overlap with
+  return browser as unknown as Browser;
+};
+
+/** A browser that is never there, as Browser Run when it has none free. */
+const unavailableBrowser = () =>
+  vi.fn<() => Promise<Browser>>(() =>
+    Promise.reject(new RenderUnavailableError("No browser is free."))
+  );
+
+/** A listed tool's `render` argument, if it has one. */
+const renderOf = (tool: { inputSchema: { properties?: object } }) =>
+  tool.inputSchema.properties && "render" in tool.inputSchema.properties
+    ? tool.inputSchema.properties.render
+    : undefined;
+
+/** The premium server's profile: `paid` when the account has a subscription. */
+const premiumWith = (
+  launch: () => Promise<Browser>,
+  paid?: HostedProfile["paid"],
+  options: Parameters<typeof profileWith>[0] = {}
+) => {
+  const made = profileWith(options);
+
+  return {
+    ...made,
+    profile: {
+      ...made.profile,
+      premium: true,
+      browser: { launch },
+      ...(paid && { paid }),
+    },
+  };
+};
 
 /** A hosted profile that lets every call through, with `gate` as the server's own limits. */
 const profileWith = (
@@ -2576,6 +2676,196 @@ describe("the hosted server", () => {
       });
       expect(started.map((c) => c.fetches)).toStrictEqual([false]);
       expect(calls[0]?.properties?.reason).toBe("field_data");
+    });
+  });
+
+  describe("its rendering for subscribers (issue #230)", () => {
+    const SHOP = "https://shop.example.com/";
+
+    const serveShop = () =>
+      serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nAllow: /\n",
+        },
+        [SHOP]: {
+          body: page("Shop home page for the fixture", "<p>Widgets.</p>"),
+        },
+      });
+
+    it("lists `render` on the premium server's seo_audit_page only", async () => {
+      const client = await connect(premiumWith(unavailableBrowser()).profile);
+      const { tools } = await client.listTools();
+
+      expect(
+        tools.filter((t) => renderOf(t) !== undefined).map((t) => t.name)
+      ).toStrictEqual(["seo_audit_page"]);
+      expect(
+        renderOf(
+          tools.find((t) => t.name === "seo_audit_page") ?? { inputSchema: {} }
+        )
+      ).toMatchObject({ type: "boolean" });
+
+      // Each tool that says what the hosted server cannot do says what the premium one adds.
+      const noted = tools.filter((t) =>
+        t.description?.includes("from Cloudflare's network")
+      );
+
+      expect(noted.map((t) => t.name).toSorted()).toStrictEqual([
+        "seo_aeo_audit",
+        "seo_audit_page",
+        "seo_compare_pages",
+        "seo_crawl_site",
+        "seo_share_report",
+        "seo_start_crawl",
+      ]);
+
+      for (const tool of noted) {
+        expect(tool.description).toContain("premium hosted server");
+        expect(tool.description).toContain("`render: true`");
+        expect(tool.description).not.toContain("does not render JavaScript");
+      }
+    });
+
+    it("keeps `render` off the free server, even for a profile with a browser and a subscription", async () => {
+      const launch = unavailableBrowser();
+      const { profile } = premiumWith(launch, "subscription");
+      const client = await connect({ ...profile, premium: false });
+      const { tools } = await client.listTools();
+
+      serveShop();
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, render: true },
+      });
+
+      expect(tools.filter((t) => renderOf(t) !== undefined)).toStrictEqual([]);
+      expect(result.isError).toBeFalsy();
+      expect(launch).not.toHaveBeenCalled();
+    });
+
+    it("counts the premium server's tools in its analytics, with `render` and their descriptions", async () => {
+      const client = await connect(premiumWith(unavailableBrowser()).profile);
+      const { tools } = await client.listTools();
+
+      expect(
+        namedArguments(
+          [...PREMIUM_TOOLS].map(([tool, counted]) => [tool, counted.arguments])
+        )
+      ).toStrictEqual(
+        namedArguments(
+          tools.map((t) => [
+            t.name,
+            Object.keys(t.inputSchema.properties ?? {}),
+          ])
+        )
+      );
+
+      for (const tool of tools) {
+        expect(PREMIUM_TOOLS.get(tool.name)?.description).toBe(
+          tool.description
+        );
+      }
+    });
+
+    it("asks an account without a subscription to subscribe, before the call counts and with no browser launched", async () => {
+      serveShop();
+
+      const launch = unavailableBrowser();
+      const { profile, calls } = premiumWith(launch);
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, render: true },
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toBe(
+        "Agentic SEO Check error: Rendering needs a subscription. Subscribe at https://agentic-seo.org/account."
+      );
+
+      expect(launch).not.toHaveBeenCalled();
+      expect(calls).toStrictEqual([]);
+    });
+
+    it("renders with the server's browser for a subscriber, once per call, and tells the limits", async () => {
+      serveShop();
+
+      const launch = unavailableBrowser();
+      const { profile, calls } = premiumWith(launch, "subscription");
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, render: true },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(
+        rulesOf(Findings.parse(result.structuredContent).findings)
+      ).toContain("tool.render-unavailable");
+      expect(launch).toHaveBeenCalledOnce();
+      expect(calls.map((c) => c.render)).toStrictEqual([true]);
+    });
+
+    it("launches no browser for a subscriber's call without `render`, or for inline HTML", async () => {
+      serveShop();
+
+      const launch = unavailableBrowser();
+      const { profile, calls } = premiumWith(launch, "subscription");
+      const client = await connect(profile);
+
+      await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP },
+      });
+      await client.callTool({
+        name: "seo_audit_page",
+        arguments: {
+          html: page("Inline page for the fixture", ""),
+          render: true,
+        },
+      });
+
+      expect(launch).not.toHaveBeenCalled();
+      expect(calls.map((c) => c.render ?? false)).toStrictEqual([false, false]);
+    });
+
+    it("answers with the site's refusal when the gate refuses the page the browser asks for", async () => {
+      serveShop();
+
+      let pageRequests = 0;
+      const refusal = "The site refused the rendered page.";
+
+      const { profile, ends } = premiumWith(
+        () => Promise.resolve(refusingBrowser()),
+        "subscription",
+        {
+          gate: {
+            beforeRequest: (url) => {
+              pageRequests += url.href === SHOP ? 1 : 0;
+
+              // The audit's own request passes; the browser's, the second, is refused.
+              return url.href === SHOP && pageRequests > 1
+                ? { scope: "url", reason: "robots_txt", message: refusal }
+                : undefined;
+            },
+          },
+        }
+      );
+
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, render: true },
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toContain(refusal);
+      expect(ends.map((e) => e.outcome)).toStrictEqual(["refused"]);
     });
   });
 });
