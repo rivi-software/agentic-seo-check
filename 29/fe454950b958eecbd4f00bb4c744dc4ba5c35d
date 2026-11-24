@@ -1,0 +1,73 @@
+hosted/wrangler.jsonc
+  s_a66ced3a0212b8::t_a7666b6e5a75a1 33-39
+hosted/README.md
+  s_a66ced3a0212b8::t_dcc20dae435d16 24
+  s_a66ced3a0212b8::t_fd3a838def3d7a 25
+  s_a66ced3a0212b8::t_803bb419f26316 11-12,23,88
+hosted/stubs/cloudflare-workflows.ts
+  s_a66ced3a0212b8::t_4298a3b2279190 1-7
+hosted/src/ui/style.ts
+  s_a66ced3a0212b8::t_5d372a7e2d6f0a 15
+hosted/src/index.ts
+  s_a66ced3a0212b8::t_7b6c747e756974 227-229,231-232,234,287
+  s_a66ced3a0212b8::t_183e43493b4c9c 33
+hosted/src/site/files.ts
+  s_a66ced3a0212b8::t_5d372a7e2d6f0a 64,1055
+hosted/test/configs.test.ts
+  s_a66ced3a0212b8::t_183e43493b4c9c 57-64
+hosted/wrangler.site.jsonc
+  s_a66ced3a0212b8::t_b6f706c5918a58 20-21,23,26-33
+hosted/stubs/cloudflare-workers.ts
+  s_a66ced3a0212b8::t_4298a3b2279190 1-18
+hosted/tsconfig.json
+  s_a66ced3a0212b8::t_4298a3b2279190 20
+hosted/scripts/asset-sources.ts
+  s_a66ced3a0212b8::t_aefaf42039d3c0 1-6,8,10,12,14,16,18,20
+  s_a66ced3a0212b8::t_183e43493b4c9c 7,9,11,13,15,17,19
+hosted/test/worker.test.ts
+  s_a66ced3a0212b8::t_0f174eeb5d8843 30,1315,1318,1417,1427,1435-1436,1441
+  s_a66ced3a0212b8::t_4c41f496d88f96 1317,1319-1324
+hosted/vitest.config.ts
+  s_a66ced3a0212b8::t_4298a3b2279190 16,20
+hosted/src/site/pdf-script.ts
+  s_a66ced3a0212b8::t_5d372a7e2d6f0a 7
+hosted/src/fresh.ts
+  s_a66ced3a0212b8::t_803bb419f26316 2-4
+.gitignore
+  s_a66ced3a0212b8::t_5d372a7e2d6f0a 10
+AGENTS.md
+  s_a66ced3a0212b8::t_803bb419f26316 26,57
+hosted/src/site/routes.ts
+  s_a66ced3a0212b8::t_3fa9b411c14dc7 8-11,17,226-227,310
+hosted/src/site/modules.d.ts
+  s_a66ced3a0212b8::t_5d372a7e2d6f0a 2-3
+hosted/src/site/pdf.ts
+  s_a66ced3a0212b8::t_5d372a7e2d6f0a 115
+hosted/scripts/assets.ts
+  s_a66ced3a0212b8::t_8521246b1cb055 1-6,9-32,34-35,37-40,43-46,97-98,101-102,104-107,110-153,159-200,203-212,214-215,218-227,232-247
+  s_a66ced3a0212b8::t_aefaf42039d3c0 7-8,33,42,48-60,71-74,76-96,99-100,108-109,216-217
+  s_a66ced3a0212b8::t_1473261336919e 36,103,154-158,213
+  s_a66ced3a0212b8::t_a8e61bd6c4188b 41,75,201-202
+  s_a66ced3a0212b8::t_4c41f496d88f96 63,70
+  s_a66ced3a0212b8::t_b6f706c5918a58 228-231
+  s_a66ced3a0212b8::t_4298a3b2279190 61-62,64-69
+  s_a66ced3a0212b8::t_409c8af3ecc778 47
+hosted/src/site/worker.ts
+  s_a66ced3a0212b8::t_dd201a35886298 20-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29fe454950b958eecbd4f00bb4c744dc4ba5c35d",
+  "prompts": {},
+  "sessions": {
+    "s_a66ced3a0212b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e1578cca-78dc-4300-a899-1b49575bd79f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
