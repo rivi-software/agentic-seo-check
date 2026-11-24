@@ -1,0 +1,98 @@
+README.md
+  s_4b72ccb8986f05::t_6b571bb37ee376 126-128,261,264,273
+  s_4b72ccb8986f05::t_4ab7b21f1e3145 274
+skills/seo-audit/SKILL.md
+  s_4b72ccb8986f05::t_6b571bb37ee376 18
+hosted/src/shared-schema.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 166
+src/core/report/markdown.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 358
+hosted/wrangler.site.jsonc
+  s_4b72ccb8986f05::t_6b571bb37ee376 101-104,108-109
+src/mcp-shared.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 52-65
+hosted/src/index.ts
+  s_4b72ccb8986f05::t_8e8eaa48430fab 129
+  s_4b72ccb8986f05::t_6b571bb37ee376 39-40,80-82,88-89,119-128,130-132,150-161,175
+src/core/aeo/audit.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 80-84,273,896-897
+  s_4b72ccb8986f05::t_b60040efcbb7ad 788
+hosted/test/refused-requests.test.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 1-216
+test/url-list.test.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 1-180
+src/core/types.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 741-742
+hosted/src/limits.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 1-2,260-300,302,306-319,321,325-337
+package.json
+  s_4b72ccb8986f05::t_6b571bb37ee376 3
+src/core/site-rules.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 1602-1607
+hosted/src/analytics.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 44,53,87-88,541-542
+  s_4b72ccb8986f05::t_23d2ae4055e7da 543
+hosted/src/site/report-data.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 419
+src/mcp-hosted.ts
+  s_4b72ccb8986f05::t_83e4e2abcd2c8c 836
+  s_4b72ccb8986f05::t_6b571bb37ee376 66,341,470,1220-1224,1254
+hosted/src/refused-requests.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 1-76
+test/hosted.test.ts
+  s_4b72ccb8986f05::t_227185d12af64a 2157-2178
+  s_4b72ccb8986f05::t_9d0f7af6a157a2 29-34,1477
+  s_4b72ccb8986f05::t_6b571bb37ee376 235-254,1424-1476
+  s_4b72ccb8986f05::t_406fdf4f6f8b1f 1478-1479,2179-2180
+hosted/README.md
+  s_4b72ccb8986f05::t_6b571bb37ee376 7,13,15-16,19,129-142,167-170
+  s_4b72ccb8986f05::t_8e8eaa48430fab 143
+hosted/test/protocol-server.test.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 1-217
+hosted/wrangler.jsonc
+  s_4b72ccb8986f05::t_6b571bb37ee376 119-122,126-127
+hosted/src/protocol-server.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 1-207
+hosted/test/worker.test.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 738-739,758-819
+src/core/audit.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 114-118,936,962-969,1106-1107
+src/cli.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 7-12,296-299,400,427-437,446-458,460-468,520-521,539
+hosted/test/limits.test.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 7,39-40,61,131,175-177,348-411
+  s_4b72ccb8986f05::t_43f1d360430e99 412
+src/core/crawl.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 36,84-88,223-246,518,525-531,533-539,605-608,613,628-629,654,690,692,865-868,870,877,980-992
+src/telemetry/mcp.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 302,838-863
+  s_4b72ccb8986f05::t_f6e3fa4ccc5ccc 864-867
+src/mcp.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 61,250,325,487-491,557,582-583
+AGENTS.md
+  s_4b72ccb8986f05::t_8e8eaa48430fab 26
+src/core/report/text.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 1256
+src/core/url-list.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 1-92
+hosted/test/configs.test.ts
+  s_4b72ccb8986f05::t_6b571bb37ee376 60-63
+CHANGELOG.md
+  s_4b72ccb8986f05::t_6b571bb37ee376 3-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8253335f7a5a006382267a2925f64a847efc5a32",
+  "prompts": {},
+  "sessions": {
+    "s_4b72ccb8986f05": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3411a3ce-546b-4b43-9c44-cd1806eebe01",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
