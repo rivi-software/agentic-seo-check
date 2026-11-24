@@ -1,5 +1,11 @@
 # @rivi-software/agentic-seo-check
 
+## 1.3.2
+
+### Patch Changes
+
+- 0638568: The tool is tested with fast-xml-parser 5.12.1, which reads sitemaps with long attribute values faster, and Playwright 1.65.1, the optional dependency behind `--render`. The ranges in `package.json` are unchanged.
+
 ## 1.3.1
 
 ### Patch Changes
