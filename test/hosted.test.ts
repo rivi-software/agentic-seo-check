@@ -3261,7 +3261,11 @@ describe("the hosted server", () => {
       expect(withLab.filter((url) => url === SHOP)).toHaveLength(1);
     });
 
-    it("answers with the site's refusal and runs no lab when robots.txt keeps the server from the page", async () => {
+    // The page's own fetch is refused here, before the lab is reached. The lab gate's own refusal,
+    // which no robots.txt can give in this path once the fetch was let through (both read the one
+    // robots.txt the call keeps, and the lab measures the URL the fetch ended at), is held by the
+    // lab gate's test above and by test/audit-lab.test.ts.
+    it("answers with the site's refusal of the page's fetch, which comes before the lab, and runs no lab", async () => {
       serve({
         "https://shop.example.com/robots.txt": {
           headers: { "content-type": "text/plain" },

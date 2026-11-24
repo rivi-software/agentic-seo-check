@@ -58,6 +58,35 @@ describe("a supplied lab runner", () => {
     expect(lab).not.toHaveBeenCalled();
   });
 
+  it("asks the lab gate, not the page's gate, and answers its refusal with no lab run", async () => {
+    const lab = vi.fn<LabRunner>(() => Promise.resolve(lhr));
+
+    const labGate: RequestGate = {
+      beforeRequest: () => ({
+        message: "robots.txt keeps the lab out.",
+        scope: "url",
+        reason: "robots_txt",
+      }),
+    };
+
+    await expect(
+      audit({
+        lighthouse: true,
+        lab,
+        fetch: {
+          gate: {
+            beforeRequest: () => undefined,
+          },
+          labGate,
+        },
+      })
+    ).rejects.toMatchObject({
+      name: "RequestRefusedError",
+      message: "robots.txt keeps the lab out.",
+    });
+    expect(lab).not.toHaveBeenCalled();
+  });
+
   it("gives tool.lighthouse-unavailable when the runner is unavailable", async () => {
     const result = await audit({
       lighthouse: true,
