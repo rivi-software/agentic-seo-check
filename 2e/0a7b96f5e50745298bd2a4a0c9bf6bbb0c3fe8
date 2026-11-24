@@ -1,0 +1,33 @@
+hosted/src/accounts/codes.ts
+  s_46ac76d26da34b::t_930f1249080e85 19-24
+  s_46ac76d26da34b::t_e0d8e360447395 4-5,48-52,91,94-102,127-131,153-154,156-158,160-163,165,168,173,176-189
+hosted/migrations-accounts/0001_accounts.sql
+  s_46ac76d26da34b::t_e0d8e360447395 27-28,40-45
+hosted/test/accounts-codes.test.ts
+  s_46ac76d26da34b::t_e8ecfbd33f3027 208-213
+  s_46ac76d26da34b::t_b92a1595025da3 194-196,198-202,204,216
+  s_46ac76d26da34b::t_45ba84f788495f 49-67
+  s_46ac76d26da34b::t_e4707c704eff39 14,192-193,197,203,205-207,214-215,217-220,226-238,242-244,249-250,260-261,264-265,267-268
+  s_46ac76d26da34b::t_9ff7752b091f94 221-225,239-241,245-248,251-259,262-263,266
+  s_46ac76d26da34b::t_34892a22eaed31 269-270
+hosted/src/premium/authorize.ts
+  s_46ac76d26da34b::t_591b0499117a8f 185
+hosted/src/site/account-routes.ts
+  s_46ac76d26da34b::t_591b0499117a8f 222
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2e0a7b96f5e50745298bd2a4a0c9bf6bbb0c3fe8",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
