@@ -144,8 +144,10 @@
     // turns signing in off.
     "ACCOUNTS_FROM": "premium@rivi.software",
     // The Stripe price of the premium subscription (price_...), set in Stripe's Dashboard so the
-    // price changes without a deploy. Empty keeps Subscribe off.
-    "STRIPE_PRICE": ""
+    // price changes without a deploy. Empty keeps Subscribe off. This one is the sandbox's EUR 5 a
+    // month, tax included (product "Agentic SEO Check Premium", txcd_10103001); a live price
+    // replaces it with the live keys at launch.
+    "STRIPE_PRICE": "price_1UfMq9D0IJGW6zjS1HysS23O"
   },
   // Errors only, as the Worker logs them: no invocation logs, which carry request details.
   // Traces stay off (issue #208): the span of every outgoing fetch keeps url.full, url.path and
