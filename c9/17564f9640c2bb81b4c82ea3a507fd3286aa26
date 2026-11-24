@@ -1,0 +1,14 @@
+hosted/README.md
+  h_dae04dab58d73e 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c917564f9640c2bb81b4c82ea3a507fd3286aa26",
+  "prompts": {},
+  "humans": {
+    "h_dae04dab58d73e": {
+      "author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
