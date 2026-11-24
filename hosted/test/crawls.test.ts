@@ -17,6 +17,7 @@ import {
 
 import { auditSiteBoth } from "../../src/core/aeo/audit.ts";
 import type { AeoAudit, SiteAudit } from "../../src/core/types.ts";
+import { runBackgroundCrawl } from "../../src/mcp-hosted.ts";
 import type { BackgroundCrawlOptions } from "../../src/mcp-hosted.ts";
 import {
   siteRoutes,
@@ -36,6 +37,7 @@ import {
   readCrawl,
 } from "../src/crawls.ts";
 import type { CrawlEnv } from "../src/crawls.ts";
+import type { DayCounter } from "../src/limits.ts";
 import type { ReportBucket } from "../src/shared-reports.ts";
 
 /** An R2 bucket in memory, with what the store uses of one, and the keys it was asked for. */
@@ -289,6 +291,153 @@ describe("an attempt of a background crawl", () => {
     expect(sent).toStrictEqual(["https://posthog.test/batch/"]);
     expect(handed.length).toBeGreaterThan(0);
     expect(outcomes).toStrictEqual(["limited"]);
+  });
+});
+
+/** A rate limiter that allows everything. */
+const allow: RateLimit = {
+  limit: () => Promise.resolve({ success: true }),
+};
+
+/** The bindings of an attempt under MODE `open`, with a day that has room, and `bucket`. */
+const openEnv = (bucket: ReportBucket) => {
+  const { env, outcomes } = closedEnv(bucket);
+
+  const day: DayCounter = {
+    requests: () => Promise.resolve(0),
+    addRequests: (_day, count) => Promise.resolve(count),
+    admitSite: () => Promise.resolve(true),
+  };
+
+  const open: CrawlEnv = {
+    ...env,
+    MODE: "open",
+    STATE_JURISDICTION: "none",
+    SITE_REQUESTS: allow,
+    STATE: {
+      getByName: () => day,
+      jurisdiction: () => ({ getByName: () => day }),
+    },
+  };
+
+  return { env: open, outcomes };
+};
+
+/** A `waitUntil` that drops what it is handed: the attempt waits for its own work. */
+const IGNORED = {
+  waitUntil: (promise: Promise<unknown>) => {
+    promise.catch(() => null);
+  },
+};
+
+const ROBOTS_TXT = "User-agent: *\nAllow: /\n";
+
+/**
+ * Serves shop.example.com in place of the network: its home page links to `/a` and `/b`, which
+ * answer `linked`, and PostHog takes events. It answers the URLs of the site it was asked for.
+ */
+const serveShop = (linked: number) => {
+  const asked: string[] = [];
+
+  vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+
+    if (url.hostname === "posthog.test") {
+      return Promise.resolve(Response.json({ status: 1 }));
+    }
+
+    asked.push(url.pathname);
+
+    if (url.pathname === "/robots.txt") {
+      return Promise.resolve(new Response(ROBOTS_TXT));
+    }
+
+    if (url.pathname === "/") {
+      return Promise.resolve(
+        new Response(
+          '<!doctype html><html lang="en"><head><title>Shop</title></head><body><a href="/a">A</a><a href="/b">B</a></body></html>',
+          { headers: { "content-type": "text/html" } }
+        )
+      );
+    }
+
+    if (url.pathname === "/a" || url.pathname === "/b") {
+      return Promise.resolve(
+        new Response("<!doctype html><title>Page</title>", {
+          status: linked,
+          headers: { "content-type": "text/html" },
+        })
+      );
+    }
+
+    return Promise.resolve(new Response("Not found", { status: 404 }));
+  });
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
+
+  return asked;
+};
+
+/** Runs the crawl, then throws, as a bug in building the AEO audit would. */
+const buggy: typeof runBackgroundCrawl = async (...args) => {
+  await runBackgroundCrawl(...args);
+
+  throw new Error("A bug in building the AEO audit.");
+};
+
+describe("an attempt of a background crawl that has asked the site", () => {
+  it("never retries once the crawl is over, when its end cannot be written", async () => {
+    const { bucket } = memoryBucket();
+    const id = newCrawlId();
+
+    await keepCrawl(bucket, id, OPTIONS);
+    bucket.put = () => Promise.reject(new Error("R2 is unavailable."));
+    serveShop(200);
+
+    const { env, outcomes } = openEnv(bucket);
+    const attempt = crawlAttempt(env, IGNORED, id);
+
+    await expect(attempt).rejects.toBeInstanceOf(NonRetryableError);
+    await expect(attempt).rejects.toThrow("could not keep the crawl's result");
+    expect(outcomes).toStrictEqual(["error"]);
+  });
+
+  it("never retries an error after a site refused the crawl partway", async () => {
+    const { bucket } = memoryBucket();
+    const id = newCrawlId();
+
+    // One request at a time, so the 429 comes before the crawl asks for the next page.
+    await keepCrawl(bucket, id, { ...OPTIONS, concurrency: 1 });
+    const asked = serveShop(429);
+
+    const { env, outcomes } = openEnv(bucket);
+    const attempt = crawlAttempt(env, IGNORED, id, buggy);
+
+    await expect(attempt).rejects.toBeInstanceOf(NonRetryableError);
+    await expect(attempt).rejects.toThrow("A bug in building the AEO audit.");
+    // The site answered 429 to a page the crawl asked for, and was asked nothing after it.
+    expect(asked.filter((path) => path === "/a" || path === "/b")).toHaveLength(
+      1
+    );
+    expect(outcomes).toStrictEqual(["error"]);
+  });
+
+  it("leaves an error before any refusal to the step's retry", async () => {
+    const { bucket } = memoryBucket();
+    const id = newCrawlId();
+
+    await keepCrawl(bucket, id, OPTIONS);
+    serveShop(200);
+
+    const { env } = openEnv(bucket);
+
+    const attempt = crawlAttempt(env, IGNORED, id, () =>
+      Promise.reject(new Error("A bug before any request."))
+    );
+
+    await expect(attempt).rejects.toThrow("A bug before any request.");
+    await expect(attempt).rejects.not.toBeInstanceOf(NonRetryableError);
   });
 });
 

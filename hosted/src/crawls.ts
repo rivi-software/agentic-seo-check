@@ -15,6 +15,7 @@ import { z } from "zod";
 import { WEBSITE_URL } from "../../src/brand.js";
 import { ExpectedError } from "../../src/core/errors.js";
 import { RequestRefusedError } from "../../src/core/fetch.js";
+import type { RequestGate } from "../../src/core/fetch.js";
 import { hostedFetch } from "../../src/core/hosted.js";
 import type { AeoAudit, SiteAudit } from "../../src/core/types.js";
 import {
@@ -345,14 +346,17 @@ export interface CrawlEnv extends LimitsEnv, AnalyticsEnv {
  * `backgroundCrawl`, writes its end to the bucket, and answers the number of pages it read, all
  * the step keeps. A site's refusal or a limit ends the crawl failed at once, as the hosted server
  * asks a site nothing again once it refused: when that end cannot be written either, the attempt
- * throws a NonRetryableError, so the Workflow writes it once and asks the site nothing more. Any
- * other error is reported and thrown, for the step's one retry. It resolves once the work it handed
- * to `waitUntil` is done.
+ * throws a NonRetryableError, so the Workflow writes it once and asks the site nothing more. So
+ * does any error once a site answered a request with a refusal (a 403, a 429, a challenge), which
+ * a crawl does not throw, or once the crawl is over, its end's write included: a retry would ask
+ * the sites again. Any other error is reported and thrown, for the step's one retry. It resolves
+ * once the work it handed to `waitUntil` is done. `run` runs the crawl; a test hands its own.
  */
 export const crawlAttempt = (
   env: CrawlEnv,
   outer: Pick<ExecutionContext, "waitUntil">,
-  id: string
+  id: string,
+  run: typeof runBackgroundCrawl = runBackgroundCrawl
 ): Promise<{ pages: number }> => {
   const { ctx, settle } = heldWork(outer);
   const bucket = env.SHARED_REPORTS;
@@ -374,6 +378,33 @@ export const crawlAttempt = (
     );
 
     const started = Date.now();
+    /** Whether a site refused a request of the crawl: then the attempt is never retried. */
+    let refused = false;
+    /** Whether the crawl ended, so only its end is left to write. */
+    let crawled = false;
+
+    const noted = <T>(refusal: T): T => {
+      if (refusal) {
+        refused = true;
+      }
+
+      return refusal;
+    };
+
+    /** The crawl's gate, which notes each refusal a site answered with, and the one that stopped it. */
+    const noticing = (gate: RequestGate): RequestGate => ({
+      ...gate,
+      afterResponse:
+        gate.afterResponse &&
+        ((url, response) => noted(gate.afterResponse?.(url, response))),
+      afterBody:
+        gate.afterBody &&
+        ((url, result) => noted(gate.afterBody?.(url, result))),
+      crawlStopped: (refusal) => {
+        refused = true;
+        gate.crawlStopped?.(refusal);
+      },
+    });
 
     try {
       await limits.readmit();
@@ -387,23 +418,50 @@ export const crawlAttempt = (
         crawl: true,
       });
 
-      const audits = await runBackgroundCrawl(
+      const audits = await run(
         options,
-        fetch,
+        { ...fetch, gate: fetch.gate && noticing(fetch.gate) },
         cruxOptions(env, WEBSITE_URL)
       );
 
-      await endCrawl(bucket, id, audits);
+      // The crawl is over and has asked the sites all it will: from here on, no error retries.
+      crawled = true;
 
       const pages = audits.seo.pages.length;
+
+      try {
+        await endCrawl(bucket, id, audits);
+      } catch (error) {
+        report(error, "crawl_end");
+        limits.end("error", 0, Date.now() - started);
+
+        throw new NonRetryableError(
+          "The hosted server could not keep the crawl's result."
+        );
+      }
+
       limits.end("ok", pages, Date.now() - started);
 
       return { pages };
     } catch (error) {
+      if (error instanceof NonRetryableError) {
+        throw error;
+      }
+
       if (!(error instanceof ExpectedError)) {
-        // The attempt's record counts what it sent; the step tries once more.
+        // The attempt's record counts what it sent.
         limits.end("error", 0, Date.now() - started);
 
+        // A site refused the crawl, or the crawl was over: a retry would ask that site again.
+        if (refused || crawled) {
+          void reportError(env, ctx, error, CRAWL_ROUTE);
+
+          throw new NonRetryableError(
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+
+        // The step tries once more.
         throw error;
       }
 
