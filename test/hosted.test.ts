@@ -2790,6 +2790,20 @@ describe("the hosted server", () => {
       expect(calls).toStrictEqual([]);
     });
 
+    it("audits inline html for an account without a subscription, since html never renders", async () => {
+      const launch = unavailableBrowser();
+      const { profile } = premiumWith(launch);
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { html: "<html><title>Shop</title></html>", render: true },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(launch).not.toHaveBeenCalled();
+    });
+
     it("renders with the server's browser for a subscriber, once per call, and tells the limits", async () => {
       serveShop();
 

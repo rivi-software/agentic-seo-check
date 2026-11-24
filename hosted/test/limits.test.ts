@@ -955,7 +955,7 @@ describe("the hosted server's limits", () => {
 
       expect(answers.filter((a) => a === "admitted")).toHaveLength(10);
       expect(answers.at(-1)).toBe(
-        "This account has rendered 10 pages on the premium server in the last minute, its limit per account. Try again in a minute. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp"
+        "This account has asked for 10 renders on the premium server in the last minute, its limit per account. Try again in a minute. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp"
       );
       await expect(reasonOf(profile.startCall(RENDER))).resolves.toBe(
         "render_calls"

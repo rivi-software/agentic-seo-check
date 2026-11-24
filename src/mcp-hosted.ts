@@ -1071,8 +1071,8 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
           field = fieldDataOf(profile, input.fieldData && host !== null);
           // Inline HTML has no page for a browser to load.
           renders =
-            rendersFor(profile, "render" in input && input.render === true) &&
-            host !== null;
+            host !== null &&
+            rendersFor(profile, "render" in input && input.render === true);
         } catch (error) {
           return fail(error);
         }

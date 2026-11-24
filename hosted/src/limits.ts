@@ -176,7 +176,7 @@ const paidDailyRefusal = (limit: number): string =>
 const renderCallsRefusal = (): string => {
   const { limit, period } = rateLimit("RENDER_CALLS");
 
-  return `This account has rendered ${limit} pages on the premium server in the last ${period}, its limit per account. ${tryAgain(period)} ${NO_LIMITS}`;
+  return `This account has asked for ${limit} renders on the premium server in the last ${period}, its limit per account. ${tryAgain(period)} ${NO_LIMITS}`;
 };
 
 const dailyRendersRefusal = (limit: number): string =>
