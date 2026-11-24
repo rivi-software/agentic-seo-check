@@ -1,0 +1,38 @@
+src/core/render-fetch.ts
+  s_46ac76d26da34b::t_204047272c1fbc 257-258,261-330,332-349,352-373,381-399,402-403,421,423-432,434-435,437-438,441-446,452,473-479,481,489-490,492,542,562,590,614-615
+  s_46ac76d26da34b::t_2e843ed5dba34f 331,350-351,374-380
+  s_46ac76d26da34b::t_bab418329105f9 487-488,491
+  s_46ac76d26da34b::t_5770c8b0779232 493
+test/helpers/fixture-server.ts
+  s_46ac76d26da34b::t_8c409aee02dde2 15-16,149-161
+  s_46ac76d26da34b::t_da563677de0588 162
+test/render-fetch.test.ts
+  s_46ac76d26da34b::t_a6ecbba2a5a970 52-54
+  s_46ac76d26da34b::t_2906875521fd2d 109-111,113-116,514,523,527,541,607
+  s_46ac76d26da34b::t_569fa3c099a1d9 532
+  s_46ac76d26da34b::t_2e843ed5dba34f 547-568,581,583-587,589-593
+  s_46ac76d26da34b::t_ed800fd99e9fcc 108,112,515-522,524-526,528-531,533-540,542-546,569-580,582,588,594-606,608-632
+test/render-console.test.ts
+  s_46ac76d26da34b::t_9be26e5b3100bb 66-100
+src/core/render.ts
+  s_46ac76d26da34b::t_2906875521fd2d 372
+  s_46ac76d26da34b::t_1859806295dc26 364-371,373-388,392,400
+hosted/README.md
+  s_46ac76d26da34b::t_6690bd5abb80fb 96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1d38ef70d70a043d2c715113054e6199ceaabc5e",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
