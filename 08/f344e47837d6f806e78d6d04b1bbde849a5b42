@@ -1,0 +1,49 @@
+hosted/scripts/wrangler.ts
+  s_8a2912af5d411d::t_d3761158ca7d89 23-24,26
+hosted/wrangler.site.jsonc
+  s_8a2912af5d411d::t_53f9f76d7772c2 77-78,87-88
+hosted/src/site/audit.ts
+  s_8a2912af5d411d::t_4e0554bbdf8068 378
+hosted/src/site/premium-page.ts
+  s_8a2912af5d411d::t_53f9f76d7772c2 152
+.github/workflows/deploy-hosted.yml
+  s_8a2912af5d411d::t_d3761158ca7d89 92-100
+hosted/README.md
+  s_8a2912af5d411d::t_1c4c53272ea9b8 86
+  s_8a2912af5d411d::t_921e6a7b4227af 12
+  s_8a2912af5d411d::t_d3761158ca7d89 78,155
+package.json
+  s_8a2912af5d411d::t_d3761158ca7d89 66
+hosted/src/site/worker.ts
+  s_8a2912af5d411d::t_53f9f76d7772c2 15,73-85
+  s_8a2912af5d411d::t_0d1fcf2d48fd86 86
+hosted/test/configs.test.ts
+  s_8a2912af5d411d::t_921e6a7b4227af 42-53
+hosted/test/waitlist.test.ts
+  s_8a2912af5d411d::t_31d872c0147ee5 17,73,193,196-198,295-296,299-300,304-311,400,403-404,408,411
+hosted/src/site/waitlist.ts
+  s_8a2912af5d411d::t_4e0554bbdf8068 398
+  s_8a2912af5d411d::t_35c15bc3de0bee 335-350,425,427
+  s_8a2912af5d411d::t_bc4663528ee5ba 139
+hosted/src/site/forms.ts
+  s_8a2912af5d411d::t_4e0554bbdf8068 58-61,63-70,74-75,90-95
+hosted/migrations/0001_waitlist.sql
+  s_8a2912af5d411d::t_921e6a7b4227af 3-4
+  s_8a2912af5d411d::t_d3761158ca7d89 7-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "08f344e47837d6f806e78d6d04b1bbde849a5b42",
+  "prompts": {},
+  "sessions": {
+    "s_8a2912af5d411d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8366c11-29dd-4d51-b721-c4c6c6e13aee",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
