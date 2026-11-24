@@ -1,0 +1,28 @@
+hosted/test/accounts-codes.test.ts
+  s_46ac76d26da34b::t_d112277a86f7ae 75-81
+  s_46ac76d26da34b::t_0e7664aca10cef 124
+  s_46ac76d26da34b::t_a1a13c579f1065 22-24,105-107,168
+  s_46ac76d26da34b::t_7ac5de8ea5aaf7 135-142
+  s_46ac76d26da34b::t_1e77127d264da9 1-21,25-47,56,59-60,111-113,117,120,122,126-128,164-165,170-171
+  s_46ac76d26da34b::t_771fde15eb9c14 48-55,57-58,61-74,82-104,108-110,114-116,118-119,121,123,125,129-134,143-163,166-167,169
+hosted/src/accounts/codes.ts
+  s_46ac76d26da34b::t_1e77127d264da9 1-174
+hosted/src/site/forms.ts
+  s_46ac76d26da34b::t_2add5e8e3a6240 64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a550f3cf5cfda458f31193777d2acfb49f9285d0",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
