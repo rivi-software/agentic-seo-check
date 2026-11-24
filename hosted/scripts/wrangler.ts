@@ -5,8 +5,10 @@
  * `hosted:*` and `site:*` scripts of package.json go through it.
  *   node hosted/scripts/wrangler.ts deploy
  *   node hosted/scripts/wrangler.ts deploy --config wrangler.site.jsonc
+ * `dev` also passes the secrets in hosted/.dev.secrets, when that file exists.
  */
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { defines, SERVER_CONFIG } from "./defines.ts";
@@ -30,11 +32,39 @@ const built =
         `${name}:${value}`,
       ]);
 
+const SECRETS_FILE = new URL("../.dev.secrets", import.meta.url);
+
+/**
+ * `KEY=value` lines of the git-ignored hosted/.dev.secrets (Stripe's test keys), for `dev` only.
+ * They go in as `--var`: Wrangler reads process.env only when no .dev.vars exists, and this
+ * directory's is committed.
+ */
+const localSecrets = (): string[] => {
+  if (command !== "dev" || !existsSync(SECRETS_FILE)) {
+    return [];
+  }
+
+  return readFileSync(SECRETS_FILE, "utf-8")
+    .split("\n")
+    .flatMap((raw) => {
+      const line = raw.trim();
+      const at = line.indexOf("=");
+
+      return line.startsWith("#") || at < 1
+        ? []
+        : ["--var", `${line.slice(0, at)}:${line.slice(at + 1)}`];
+    });
+};
+
 // pnpm puts node_modules/.bin on the PATH of the scripts it runs.
-const { status, error } = spawnSync("wrangler", [command, ...rest, ...built], {
-  cwd: fileURLToPath(new URL("../", import.meta.url)),
-  stdio: "inherit",
-});
+const { status, error } = spawnSync(
+  "wrangler",
+  [command, ...rest, ...built, ...localSecrets()],
+  {
+    cwd: fileURLToPath(new URL("../", import.meta.url)),
+    stdio: "inherit",
+  }
+);
 
 if (error) {
   throw error;

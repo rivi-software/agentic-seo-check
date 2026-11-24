@@ -81,6 +81,35 @@ The CLI's `share`, the local MCP server's `seo_share_report` and the library's `
 - **Off** without the database, the email binding, `WAITLIST_FROM` or Turnstile: the page then says the waitlist is closed. Locally, Wrangler writes each email to a file under `.wrangler/tmp/email/` and logs its path.
 - To read the list: `pnpm exec wrangler d1 execute agentic-seo-check-waitlist --remote -c hosted/wrangler.site.jsonc --command "SELECT price, role, features, count(*) FROM waitlist WHERE confirmed_at IS NOT NULL GROUP BY 1, 2, 3"`.
 
+## Premium accounts
+
+An account ([issue #229](https://github.com/rivi-software/agentic-seo-check/issues/229)) is an email address with a Stripe subscription, which lifts the hosted server's limits for the agents that sign in with it. The website's `/account` signs in with a 6-digit code emailed to the address (valid 10 minutes, 5 attempts, kept as a SHA-256 only), keeps a signed `__Host-account` cookie for 30 days, starts Stripe Checkout and deletes the account (`src/accounts/`, `src/site/account-page.ts`, `account-routes.ts`). `premium.agentic-seo.org` is the MCP server behind OAuth (`src/premium/`): the same tools, with the account's limits, once an agent's user has signed in and consented. `agentic-seo.org/mcp` is unchanged for anonymous callers and serves no OAuth discovery.
+
+- **Storage.** The D1 database `agentic-seo-check-accounts` (EU), bound as `ACCOUNTS` to both Workers; its tables are in `migrations-accounts/`. An account keeps its address, its Stripe customer and subscription and when the period ends, and no audit or site. The OAuth grants and tokens are in the KV namespace `OAUTH_KV` (EU), on the MCP server's Worker.
+- **Test keys.** While the Stripe keys start with `sk_test_`, the premium host is a test: nobody is charged, and the privacy policy and terms need not be live. Switch to the live keys only after them.
+
+### Setting up premium accounts
+
+The deploy fails until these exist:
+
+1. **The database and the namespace**, once, with their ids in the configurations:
+   - `pnpm exec wrangler d1 create agentic-seo-check-accounts --location weur --jurisdiction eu`, its id in `wrangler.site.jsonc` and in `wrangler.jsonc`.
+   - `pnpm exec wrangler kv namespace create OAUTH_KV --jurisdiction=eu`, its id in `wrangler.jsonc`.
+   - The deploy job applies the database's migrations before the website (`pnpm run site:migrate-accounts`); run it by hand once before the first deploy to check it.
+2. **The custom domain `premium.agentic-seo.org`**: `wrangler.jsonc` asks for it, and the first deploy creates the record, so the name must be free.
+3. **The Turnstile widget** of step 7 gets `premium.agentic-seo.org` in its hostnames: the premium sign-in uses it.
+4. **Stripe** (sandbox first, then live):
+   1. Turn on *Managed Payments*. Stripe then sells as the merchant of record and handles the tax.
+   2. Make a product with the tax code `txcd_10103001` and a monthly price. Put the price's id in `STRIPE_PRICE` in `wrangler.site.jsonc`.
+   3. Add a webhook endpoint `https://agentic-seo.org/api/stripe` for `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated` and `customer.subscription.deleted`, with the API version `2025-03-31.basil` or later (`STRIPE_VERSION` in `src/accounts/stripe.ts`).
+   4. In the Checkout settings, link the terms of use and the privacy notice.
+5. **The secrets.** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (the endpoint's signing secret) and `ACCOUNT_SESSION_KEY` (`openssl rand -base64 32 | pnpm run site:secret ACCOUNT_SESSION_KEY`) on the website's Worker (`pnpm run site:secret <NAME>`); `TURNSTILE_SECRET_KEY` on the MCP server's Worker as well (`pnpm run hosted:secret TURNSTILE_SECRET_KEY`), since the premium sign-in checks it there. Keys that leaked are rolled in Stripe's dashboard, then set again.
+6. **The privacy policy** at help.rivi.software says what an account keeps, for what and for how long, before the live keys go in.
+
+### Trying it locally
+
+`hosted/.dev.vars` is committed, so Stripe's test keys go in the git-ignored `hosted/.dev.secrets`, as `KEY=value` lines (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `ACCOUNT_SESSION_KEY`); `pnpm run hosted:dev` and `site:dev` pass them to Wrangler as `--var`. Once a configuration has a `secrets` list, Wrangler loads from `.dev.vars` only the secrets it lists, and reads `process.env` only when no `.dev.vars` exists. Wrangler gives every request the hostname of the first route, and the forms check the `Origin`, so a browser cannot click through the premium sign-in locally; the workerd tests (`pnpm run hosted:test`) run the whole round trip. A request with the header `x-agentic-seo-premium: 1` reaches the premium server on any hostname. The sign-in's emails are files under `.wrangler/tmp/email/`.
+
 ## Deploys
 
 [`deploy-hosted.yml`](../.github/workflows/deploy-hosted.yml) deploys both Workers with each push to `main` that changes what their bundles are built from (`src/`, `hosted/` but its tests and docs, `package.json`, the lockfile), in one job: the MCP server first, then the website's new D1 migrations (`pnpm run site:migrate`, which applies each one once), then the website. A release is such a push too: its version commit changes the version in `package.json`, which both bundles carry. So a fix reaches both as soon as it is merged, before the release that brings it to npm; between releases they run `main` under the last release's version number. A change to a limit or `MODE` goes live when it is merged.
