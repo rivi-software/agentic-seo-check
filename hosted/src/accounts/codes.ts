@@ -38,13 +38,6 @@ export type CheckResult =
   | { account: Account }
   | { error: "wrong" | "expired" | "locked" };
 
-interface CodeRow {
-  code_hash: string;
-  attempts: number;
-  expires_at: number;
-  sent_at: number;
-}
-
 /** A code from 000000 to 999999, each as likely as another: values past the last whole multiple are redrawn. */
 const newCode = (): string => {
   const limit = 4_294_000_000 - (4_294_000_000 % 1_000_000);
@@ -134,28 +127,29 @@ export const checkCode = async (
     return { error: "wrong" };
   }
 
-  const row = await env.ACCOUNTS.prepare(
-    "SELECT code_hash, attempts, expires_at, sent_at FROM sign_in_codes WHERE email = ?"
+  // Claimed in one statement before comparing, so parallel guesses cannot each read "attempts < 5"
+  // and all get a try: only CODE_ATTEMPTS of them get the hash back.
+  const claimed = await env.ACCOUNTS.prepare(
+    `UPDATE sign_in_codes SET attempts = attempts + 1
+     WHERE email = ? AND attempts < ? AND expires_at >= ?
+     RETURNING code_hash`
   )
-    .bind(email)
-    .first<CodeRow>();
+    .bind(email, CODE_ATTEMPTS, now)
+    .first<{ code_hash: string }>();
 
-  if (row === null || now > row.expires_at) {
-    return { error: "expired" };
-  }
-
-  // Before comparing, so a locked code cannot be guessed at any more.
-  if (row.attempts >= CODE_ATTEMPTS) {
-    return { error: "locked" };
-  }
-
-  if ((await sha256Hex(code.trim())) !== row.code_hash) {
-    await env.ACCOUNTS.prepare(
-      "UPDATE sign_in_codes SET attempts = attempts + 1 WHERE email = ?"
+  if (claimed === null) {
+    const row = await env.ACCOUNTS.prepare(
+      "SELECT attempts, expires_at FROM sign_in_codes WHERE email = ?"
     )
       .bind(email)
-      .run();
+      .first<{ attempts: number; expires_at: number }>();
 
+    return {
+      error: row === null || now > row.expires_at ? "expired" : "locked",
+    };
+  }
+
+  if ((await sha256Hex(code.trim())) !== claimed.code_hash) {
     return { error: "wrong" };
   }
 
@@ -163,7 +157,7 @@ export const checkCode = async (
   const used = await env.ACCOUNTS.prepare(
     "DELETE FROM sign_in_codes WHERE email = ? AND code_hash = ? RETURNING email"
   )
-    .bind(email, row.code_hash)
+    .bind(email, claimed.code_hash)
     .first<{ email: string }>();
 
   if (used === null) {

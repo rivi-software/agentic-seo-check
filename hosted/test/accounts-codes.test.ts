@@ -149,6 +149,26 @@ describe("sign-in codes", () => {
       });
     });
 
+    it("gives parallel wrong guesses no more than the attempts", async () => {
+      await sendCode(env(), "me@example.com", null, NOW);
+
+      const code = lastCode();
+      const wrong = code === "000000" ? "000001" : "000000";
+
+      const answers = await Promise.all(
+        Array.from({ length: CODE_ATTEMPTS * 3 }, () =>
+          checkCode(env(), "me@example.com", wrong, NOW + 1)
+        )
+      );
+
+      expect(
+        answers.filter((a) => "error" in a && a.error === "wrong")
+      ).toHaveLength(CODE_ATTEMPTS);
+      await expect(
+        checkCode(env(), "me@example.com", code, NOW + 2)
+      ).resolves.toStrictEqual({ error: "locked" });
+    });
+
     it("answers expired after the minutes", async () => {
       await sendCode(env(), "me@example.com", null, NOW);
 
