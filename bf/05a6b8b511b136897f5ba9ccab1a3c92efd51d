@@ -1,0 +1,19 @@
+.changeset/bump-fast-xml-parser-playwright.md
+  s_ceac632b3c4039::t_6f256cf8d5f183 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bf05a6b8b511b136897f5ba9ccab1a3c92efd51d",
+  "prompts": {},
+  "sessions": {
+    "s_ceac632b3c4039": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac39da33-80fa-42c2-b764-619700e14d79",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
