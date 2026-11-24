@@ -1,0 +1,77 @@
+hosted/test/psi.test.ts
+  s_46ac76d26da34b::t_06d3dc3f45cace 4
+  s_46ac76d26da34b::t_b18e86c66c8e0e 1-3,5-23,25-26,30-40,52,56,60-71,87-102
+  s_46ac76d26da34b::t_eb926fc0f3e077 24,27-29,53-55,57-59,72-82,86
+  s_46ac76d26da34b::t_2c246dc2243adb 41-51
+  s_46ac76d26da34b::t_04be350e3cc7be 83-85
+hosted/src/psi.ts
+  s_46ac76d26da34b::t_0cde71b0a327b7 1-36
+hosted/test/worker.test.ts
+  s_46ac76d26da34b::t_51b1dfcd18aecb 2301-2302,2304-2308,2310-2312,2314-2323,2327-2338,2349-2371
+  s_46ac76d26da34b::t_04be350e3cc7be 2324-2326
+  s_46ac76d26da34b::t_d503bb4653f54d 2372
+src/core/fetch.ts
+  s_46ac76d26da34b::t_10d3b75e02d8a0 144-148
+  s_46ac76d26da34b::t_5d3ed8f7ee05c7 143
+hosted/test/configs.test.ts
+  s_46ac76d26da34b::t_a758cb57975a29 168-179
+src/subscription.ts
+  s_46ac76d26da34b::t_ef4e6ab728002d 8-11,15,17
+hosted/test/audit-form.test.ts
+  s_46ac76d26da34b::t_ab8acd9f13ea37 159
+src/mcp-hosted.ts
+  s_46ac76d26da34b::t_04be350e3cc7be 43,881-884
+  s_46ac76d26da34b::t_3023d3d2dbff20 103-104,148-152,196,230-234,398-418,869-870,873-877,880,890-896,900-901,903,905-906,913,1121,1130-1142,1155,1159-1164,1168-1171,1648
+  s_46ac76d26da34b::t_64b45549def2cb 1165-1167
+hosted/wrangler.site.jsonc
+  s_46ac76d26da34b::t_0cde71b0a327b7 62-65
+hosted/src/crux.ts
+  s_46ac76d26da34b::t_0cde71b0a327b7 19-22,26-28,30,32,36,42,57-59
+  s_46ac76d26da34b::t_e2a4170836fc64 60
+hosted/src/limits.ts
+  s_46ac76d26da34b::t_0cde71b0a327b7 25,113-114,184-189,240,263-264,508
+  s_46ac76d26da34b::t_80d05439afe696 509-514
+  s_46ac76d26da34b::t_e15f2a0527986f 515-516
+hosted/test/limits.test.ts
+  s_46ac76d26da34b::t_a758cb57975a29 122,200-202,1084-1095,1097-1123
+  s_46ac76d26da34b::t_04be350e3cc7be 1096
+  s_46ac76d26da34b::t_cdced20a3e702d 1124
+src/core/hosted.ts
+  s_46ac76d26da34b::t_39308970154cf6 450
+  s_46ac76d26da34b::t_04be350e3cc7be 453-455
+  s_46ac76d26da34b::t_10d3b75e02d8a0 441-449,451-452,456-459,489
+hosted/wrangler.jsonc
+  s_46ac76d26da34b::t_0cde71b0a327b7 73-76
+  s_46ac76d26da34b::t_3c312b898d840e 125
+test/hosted.test.ts
+  s_46ac76d26da34b::t_0279de515dfeb9 28-29,59,62-63
+  s_46ac76d26da34b::t_0c5729a6134c76 570-605
+  s_46ac76d26da34b::t_1d37c3565b3978 3062-3076,3080,3082,3092,3100-3102,3104-3109,3111,3121-3127,3129,3131-3144,3146-3266
+  s_46ac76d26da34b::t_80d05439afe696 225-248,3077-3079,3081,3083-3091,3093-3099,3110,3112-3120,3128,3130
+  s_46ac76d26da34b::t_04be350e3cc7be 3103,3145
+  s_46ac76d26da34b::t_e07e47f5e204eb 64
+hosted/src/index.ts
+  s_46ac76d26da34b::t_04be350e3cc7be 52
+  s_46ac76d26da34b::t_0cde71b0a327b7 38,111-112,158-160,162
+  s_46ac76d26da34b::t_06d3dc3f45cace 42,146-147,161
+hosted/test/crawls.test.ts
+  s_46ac76d26da34b::t_ab8acd9f13ea37 262
+src/core/audit.ts
+  s_46ac76d26da34b::t_10d3b75e02d8a0 533
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b64441d0aba4af3f9b4731cd312c6c08c42d8161",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
