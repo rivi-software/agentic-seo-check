@@ -8,6 +8,8 @@ import type { LhrLike } from "../src/core/lighthouse.js";
 import { performanceFindings } from "../src/core/performance-rules.js";
 import { LabUnavailableError } from "../src/core/psi.js";
 import type { LabRunner } from "../src/core/psi.js";
+import { RenderUnavailableError } from "../src/core/render.js";
+import type { RenderBrowser } from "../src/core/render.js";
 import lhrJson from "./fixtures/psi-lhr.json" with { type: "json" };
 import { siteRoutes, startFixtureServer } from "./helpers/fixture-server.js";
 import type { FixtureServer } from "./helpers/fixture-server.js";
@@ -127,6 +129,45 @@ describe("a supplied lab runner", () => {
 
     expect(local).not.toHaveProperty("source");
     expect(local).not.toHaveProperty("notMeasured");
+  });
+
+  it("starts the lab and the render together, not one after the other", async () => {
+    const started: string[] = [];
+    const met: string[] = [];
+
+    // Each fake waits, a second at most, for the other to start: one after the other, the first
+    // would give up alone.
+    const meet = async (name: string): Promise<void> => {
+      started.push(name);
+
+      await vi.waitFor(() => {
+        expect(started).toHaveLength(2);
+      });
+
+      met.push(name);
+    };
+
+    const lab: LabRunner = async () => {
+      await meet("lab");
+
+      return lhr;
+    };
+
+    const launch = async (): Promise<RenderBrowser> => {
+      await meet("render");
+
+      throw new RenderUnavailableError("No browser in this test.");
+    };
+
+    const result = await audit({
+      lighthouse: true,
+      render: true,
+      lab,
+      browser: { launch },
+    });
+
+    expect(met.toSorted()).toStrictEqual(["lab", "render"]);
+    expect(result.performance?.source).toBe("pagespeed-insights");
   });
 
   it("reads the metrics of the fixture", async () => {

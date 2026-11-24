@@ -586,12 +586,23 @@ const enrichPage = async (
   const url = audit.response?.finalUrl ?? audit.url;
   const extra: Finding[] = [];
 
-  if (options.render) {
-    extra.push(...(await renderFindings(audit, options, url)));
-  }
+  if (options.lab && options.render && options.lighthouse) {
+    // A supplied lab runs elsewhere (Google's servers, issue #222), so it need not wait for the
+    // render: both at once save a minute. A local Lighthouse launches its own Chrome, so it waits.
+    const [rendered, measured] = await Promise.all([
+      renderFindings(audit, options, url),
+      lighthouseFindings(audit, options, url),
+    ]);
 
-  if (options.lighthouse) {
-    extra.push(...(await lighthouseFindings(audit, options, url)));
+    extra.push(...rendered, ...measured);
+  } else {
+    if (options.render) {
+      extra.push(...(await renderFindings(audit, options, url)));
+    }
+
+    if (options.lighthouse) {
+      extra.push(...(await lighthouseFindings(audit, options, url)));
+    }
   }
 
   if (extra.length) {
