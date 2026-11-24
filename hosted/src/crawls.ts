@@ -34,15 +34,19 @@ import {
   USER_AGENT,
 } from "./limits.js";
 import type { LimitsEnv, Outcome } from "./limits.js";
-import { expiryAfter, newId, readKept, REPORT_ID } from "./shared-reports.js";
+import { expiryAfter, readKept } from "./shared-reports.js";
 import type { ReportBucket } from "./shared-reports.js";
 import { requestSigner } from "./signing.js";
 
-/** A crawl's id: 22 characters of base64url, made as a shared report's is. */
-export const CRAWL_ID: RegExp = REPORT_ID;
+/**
+ * A crawl's id: 32 hex digits. It is the Workflow's instance id too, which may not start with `-`,
+ * as base64url may, so a shared report's id would fail about one crawl in 64.
+ */
+export const CRAWL_ID = /^[\da-f]{32}$/u;
 
 /** A new crawl id, of 128 random bits, which nobody guesses. */
-export const newCrawlId = (): string => newId();
+export const newCrawlId = (): string =>
+  Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("hex");
 
 const keyOf = (id: string): string => `crawls/${id}`;
 
@@ -100,6 +104,7 @@ const readStored = async (
   now: Date
 ): Promise<{ crawl: StoredCrawl; times: CrawlTimes | undefined } | null> => {
   const stored = await readKept(bucket, id, {
+    idPattern: CRAWL_ID,
     key: keyOf,
     schema: StoredCrawlSchema,
     metadata: ({ startedAt }) => ({ startedAt }),

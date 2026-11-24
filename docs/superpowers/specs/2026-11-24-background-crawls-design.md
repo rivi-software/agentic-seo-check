@@ -43,7 +43,7 @@ The maintainer chose approach 1.
 **`seo_start_crawl`** takes the inputs of `seo_crawl_site` (the same schema, `CRAWL_SITE_INPUT`, and the same caps from `HOSTED_LIMITS`), plus `conversation_id` as every hosted tool does. It checks the URL (`allowedHost`) and field data (`fieldDataOf`), admits the call through `profile.startCall` with `crawl: true`, starts a Workflow instance and answers at once with:
 
 ```json
-{ "id": "<22 characters of base64url>", "status": "running", "next": "Call seo_crawl_result with this id ..." }
+{ "id": "<32 hex digits>", "status": "running", "next": "Call seo_crawl_result with this id ..." }
 ```
 
 It is not read-only (it starts work that keeps a result), so its annotations say so, as `seo_share_report`'s do.
@@ -64,7 +64,7 @@ Both tools are added to `HOSTED_TOOLS` so the analytics know their arguments. `s
 ### Running the crawl (a Cloudflare Workflow in the MCP server's Worker)
 
 - `hosted/wrangler.jsonc` binds a Workflow, `CRAWLS`, with a class `CrawlWorkflow` exported from `hosted/src/index.ts` (code in a new `hosted/src/crawls.ts`).
-- The instance id is the crawl id: 128 random bits as base64url, made as `keepReport` makes a report's.
+- The instance id is the crawl id: 128 random bits as hex, since an instance id may not start with `-`, as base64url may.
 - The Workflow's only param is the crawl id. Workflows cannot be pinned to the EU, and a caller's key is an IP address, so nothing personal and no URL goes into the Workflow's own state. `seo_start_crawl` writes the `running` object to R2 (EU) with the crawl's options (the tool's input less `format`, `detail` and `conversation_id`) before it creates the instance, and the Workflow reads them from there. The caller's key is kept nowhere: the caller's limits were settled at admission, and a crawl's gate checks no caller (`siteGate` gets no caller for a crawl). The object's options are removed when the result is written.
 - The crawl runs as one step: `auditSiteBoth(url, options)` with the hosted fetch (`hostedFetch` with `USER_AGENT`, `requestSigner`, and a gate built in the Workflow from `env` the way `hostedProfile` builds it: `siteGate`, the day's count, `SITE_REQUESTS`). The step writes the result to R2 and returns only a small summary (pages, outcome), well under a step's return limit.
 - The step retries at most once, with a delay, and never after a `RequestRefusedError` or a `CallLimitError`: a refusal is the site's answer and is not asked again. A failure is written to R2 as `failed` with its message, so `seo_crawl_result` can answer it.

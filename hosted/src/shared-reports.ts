@@ -103,8 +103,8 @@ export interface Kept<T, M> {
 }
 
 /**
- * The object kept under `key(id)`, its JSON checked against `schema`, or null when the id is
- * malformed, there is none, `metadata` reads its metadata as null, it has expired, or it does not
+ * The object kept under `key(id)`, its JSON checked against `schema`, or null when the id does not
+ * match `idPattern`, there is none, `metadata` reads its metadata as null, it has expired, or it does not
  * parse. A malformed id never reaches the bucket, so no id names another key. Shared reports and
  * background crawls read their objects through it.
  */
@@ -112,18 +112,20 @@ export const readKept = async <T, M>(
   bucket: ReportBucket,
   id: string,
   {
+    idPattern,
     key,
     schema,
     metadata: readMetadata,
     now,
   }: {
+    idPattern: RegExp;
     key: (id: string) => string;
     schema: z.ZodType<T>;
     metadata: (metadata: Record<string, string>) => M | null;
     now: Date;
   }
 ): Promise<Kept<T, M> | null> => {
-  if (!REPORT_ID.test(id)) {
+  if (!idPattern.test(id)) {
     return null;
   }
 
@@ -175,6 +177,7 @@ export const readReport = async (
   now = new Date()
 ): Promise<StoredReport | null> => {
   const kept = await readKept(bucket, id, {
+    idPattern: REPORT_ID,
     key: keyOf,
     schema: SharedReportSchema,
     metadata: reportMetadata,

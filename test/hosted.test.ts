@@ -2035,7 +2035,7 @@ describe("the hosted server", () => {
   });
 
   describe("its background crawls (issue #209)", () => {
-    const CRAWL_ID = "Q3Jhd2xJZEZvclRoZVRlc3Q";
+    const CRAWL_ID = "0f3c9a1e5b7d2468ace0f1357b9d2c4e";
     const STARTED_AT = "2026-11-24T10:00:00.000Z";
 
     /** A store of crawls that keeps their states in a Map and runs nothing. */

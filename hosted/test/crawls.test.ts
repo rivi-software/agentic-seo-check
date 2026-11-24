@@ -217,12 +217,16 @@ describe("the store of background crawls", () => {
     await expect(storedCrawlOptions(bucket, broken)).resolves.toBeNull();
   });
 
-  it("makes ids of 22 base64url characters, each new", () => {
-    const ids = Array.from({ length: 100 }, newCrawlId);
+  it("makes ids of 32 hex digits, each new, that a Workflow takes as its instance's", () => {
+    const ids = Array.from({ length: 1000 }, newCrawlId);
 
-    expect(CRAWL_ID.source).toBe("^[\\w-]{22}$");
+    expect(CRAWL_ID.source).toBe("^[\\da-f]{32}$");
     expect(ids.every((id) => CRAWL_ID.test(id))).toBeTruthy();
-    expect(new Set(ids).size).toBe(100);
+    // The pattern Cloudflare Workflows holds an instance's id to.
+    expect(
+      ids.every((id) => /^[\w][\w-]*$/u.test(id) && id.length <= 100)
+    ).toBeTruthy();
+    expect(new Set(ids).size).toBe(1000);
   });
 });
 
