@@ -118,7 +118,7 @@ Billing provider:
   - No record of audits or sites.
 - **`sign_in_codes`:** one short-lived code per address, kept only as a hash, with an attempt count and an expiry. It serves both the website and the OAuth sign-in.
 - **`OAUTH_KV`:** a KV namespace created with `--jurisdiction=eu`. The grant's plain `userId` is the opaque account id, and `metadata` stays empty. The email address goes only into the encrypted `props`, if anywhere.
-- **Deleting an account:** from the account page. It deletes the row, revokes its grants through the provider's API, and cancels an active subscription at Stripe first.
+- **Deleting an account:** from the account page. It cancels an active subscription at Stripe first, then deletes the row. Its OAuth grants live in the MCP Worker's KV, out of the website's reach, so a token whose account is gone is answered 401 at its next call, and the grants expire by their own TTL.
 
 ### Sign-in
 
