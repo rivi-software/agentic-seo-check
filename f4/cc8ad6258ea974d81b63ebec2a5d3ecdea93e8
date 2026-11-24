@@ -1,0 +1,21 @@
+docs/superpowers/plans/2026-11-24-hosted-premium-accounts.md
+  s_46ac76d26da34b::t_68f8ef2243632f 1-347
+docs/superpowers/specs/2026-11-24-hosted-premium-accounts-design.md
+  s_46ac76d26da34b::t_185997da633204 121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f4cc8ad6258ea974d81b63ebec2a5d3ecdea93e8",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
