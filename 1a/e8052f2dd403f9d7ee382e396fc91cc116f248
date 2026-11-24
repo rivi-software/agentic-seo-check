@@ -1,0 +1,44 @@
+hosted/src/entitlement.ts
+  s_46ac76d26da34b::t_7f72dcb8f878ef 5,11
+  s_46ac76d26da34b::t_1c0810bd88a3e3 1-4,6-10,12-63
+src/mcp-hosted.ts
+  s_46ac76d26da34b::t_1c0810bd88a3e3 107-109,112-113
+hosted/src/limits.ts
+  s_46ac76d26da34b::t_1c0810bd88a3e3 594-595,603
+  s_46ac76d26da34b::t_394abec4b9762e 619,686-691
+hosted/src/analytics.ts
+  s_46ac76d26da34b::t_1c0810bd88a3e3 408,429-430,471-472
+  s_46ac76d26da34b::t_7f72dcb8f878ef 61
+hosted/README.md
+  s_46ac76d26da34b::t_7f72dcb8f878ef 19
+hosted/src/callers.ts
+  s_46ac76d26da34b::t_1c0810bd88a3e3 13-20
+  s_46ac76d26da34b::t_316ab890dd3d5d 12
+hosted/test/analytics.test.ts
+  s_46ac76d26da34b::t_1d021a63c4ca8e 711-759
+hosted/test/entitlement.test.ts
+  s_46ac76d26da34b::t_394abec4b9762e 55-57,59,62-63
+  s_46ac76d26da34b::t_7f72dcb8f878ef 7,9,48
+  s_46ac76d26da34b::t_1d021a63c4ca8e 1-6,8,10-47,49-54,58,60-61,64-114
+  s_46ac76d26da34b::t_39467d40ed6b6a 115-119
+hosted/test/limits.test.ts
+  s_46ac76d26da34b::t_1d021a63c4ca8e 5,246-264,268-269
+  s_46ac76d26da34b::t_7f72dcb8f878ef 265-267
+  s_46ac76d26da34b::t_335978e4dbdae3 270
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ae8052f2dd403f9d7ee382e396fc91cc116f248",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
