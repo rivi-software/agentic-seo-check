@@ -1,0 +1,82 @@
+docs/superpowers/plans/2026-11-24-background-crawls.md
+  s_46ac76d26da34b::t_7039e7065c23c1 1-234
+docs/superpowers/specs/2026-11-24-background-crawls-design.md
+  s_46ac76d26da34b::t_7039e7065c23c1 1-114
+hosted/test/worker.test.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 9,272,275-320,557,561,907-953
+hosted/vitest.config.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 12,19-20
+  s_46ac76d26da34b::t_f06408080932d5 21-22
+src/core/aeo/audit.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 772-775,788,792-795
+hosted/wrangler.jsonc
+  s_46ac76d26da34b::t_7039e7065c23c1 80-82,120-124
+src/core/hosted.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 84-86
+hosted/src/shared-reports.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 8-9,62-68,81,83,98-104,106-109,111,114-128,132,138-140,143-144,153-155,159-185,187-188
+hosted/src/analytics.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 184,187
+hosted/test/stubs/cloudflare-workers.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 18-20
+  s_46ac76d26da34b::t_b11e72162b0151 2-5
+hosted/test/limits.test.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 9,825-905
+hosted/test/stubs/cloudflare-workflows.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 1-7
+AGENTS.md
+  s_46ac76d26da34b::t_b387677118070f 26
+  s_46ac76d26da34b::t_7039e7065c23c1 36
+test/aeo.test.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 846-867
+package.json
+  s_46ac76d26da34b::t_7039e7065c23c1 3
+hosted/test/configs.test.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 151-161
+hosted/README.md
+  s_46ac76d26da34b::t_7039e7065c23c1 188-196,199
+hosted/test/crawls.test.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 1-510
+README.md
+  s_46ac76d26da34b::t_7039e7065c23c1 51,218,237
+src/mcp-hosted.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 8-9,16-22,34,42,49,68,74,151-155,389-451,820-869,891-892,898-928,1055-1058,1071-1221,1439-1440,1469-1470
+hosted/src/index.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 31,58-59,144
+src/mcp-shared.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 317-331,350
+skills/seo-audit/SKILL.md
+  s_46ac76d26da34b::t_7039e7065c23c1 10
+hosted/src/limits.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 4,347-348,356,362-380,414-415,433-442,459-461,463,618-666,716
+CHANGELOG.md
+  s_46ac76d26da34b::t_7039e7065c23c1 3-8
+hosted/test/stubs/workflow-entrypoint.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 1-10
+test/hosted.test.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 19,29-40,53,113,125,398,402,898-906,913,2037-2374
+  s_46ac76d26da34b::t_8a39de1ad23cab 2375-2376
+hosted/src/pages.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 11-15,303
+  s_46ac76d26da34b::t_7e779876bd0f87 10
+hosted/src/crawls.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 1-539
+hosted/test/pages.test.ts
+  s_46ac76d26da34b::t_7039e7065c23c1 104-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b818fa53df02a9f0927b2ecfd5fb996c682927ad",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
