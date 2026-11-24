@@ -16,6 +16,7 @@ import {
 } from "vitest";
 
 import { auditSiteBoth } from "../../src/core/aeo/audit.ts";
+import { CRAWL_DAYS } from "../../src/core/hosted.ts";
 import type { AeoAudit, SiteAudit } from "../../src/core/types.ts";
 import { runBackgroundCrawl } from "../../src/mcp-hosted.ts";
 import type { BackgroundCrawlOptions } from "../../src/mcp-hosted.ts";
@@ -27,14 +28,13 @@ import type { FixtureServer } from "../../test/helpers/fixture-server.ts";
 import type { ErrorTask } from "../src/analytics.ts";
 import {
   backgroundCrawls,
-  CRAWL_DAYS,
   CRAWL_ID,
   crawlAttempt,
-  crawlOptions,
   endCrawl,
   keepCrawl,
   newCrawlId,
   readCrawl,
+  storedCrawlOptions,
 } from "../src/crawls.ts";
 import type { CrawlEnv } from "../src/crawls.ts";
 import type { DayCounter } from "../src/limits.ts";
@@ -125,13 +125,16 @@ describe("the store of background crawls", () => {
     await expect(keepCrawl(bucket, id, OPTIONS, START)).resolves.toBe(
       START.toISOString()
     );
-    await expect(crawlOptions(bucket, id)).resolves.toStrictEqual(OPTIONS);
+    await expect(storedCrawlOptions(bucket, id)).resolves.toStrictEqual({
+      options: OPTIONS,
+      times: metadata,
+    });
     expect(objects.get(`crawls/${id}`)?.customMetadata).toStrictEqual(metadata);
 
     await endCrawl(bucket, id, { seo, aeo }, END);
 
     // The end keeps the start's times, and none of the options.
-    await expect(crawlOptions(bucket, id)).resolves.toBeNull();
+    await expect(storedCrawlOptions(bucket, id)).resolves.toBeNull();
     expect({
       metadata: objects.get(`crawls/${id}`)?.customMetadata,
       options: "options" in JSON.parse(objects.get(`crawls/${id}`)?.body ?? ""),
@@ -141,7 +144,11 @@ describe("the store of background crawls", () => {
   it("reads running, done and failed, each with its times", async () => {
     const { bucket } = memoryBucket();
     const [running, done, failed] = [newCrawlId(), newCrawlId(), newCrawlId()];
-    const failure = { message: "robots.txt disallows it.", refused: true };
+
+    const failure = {
+      message: "robots.txt disallows it.",
+      type: "permission" as const,
+    };
 
     await keepCrawl(bucket, running, OPTIONS, START);
     await keepCrawl(bucket, done, OPTIONS, START);
@@ -180,7 +187,9 @@ describe("the store of background crawls", () => {
     // A malformed id never reaches the bucket.
     asked.length = 0;
     await expect(readCrawl(bucket, "../reports/x", END)).resolves.toBeNull();
-    await expect(crawlOptions(bucket, "../reports/x")).resolves.toBeNull();
+    await expect(
+      storedCrawlOptions(bucket, "../reports/x")
+    ).resolves.toBeNull();
     expect(asked).toStrictEqual([]);
   });
 
@@ -205,7 +214,7 @@ describe("the store of background crawls", () => {
 
     await expect(readCrawl(bucket, broken, END)).resolves.toBeNull();
     await expect(readCrawl(bucket, paused, END)).resolves.toBeNull();
-    await expect(crawlOptions(bucket, broken)).resolves.toBeNull();
+    await expect(storedCrawlOptions(bucket, broken)).resolves.toBeNull();
   });
 
   it("makes ids of 22 base64url characters, each new", () => {
@@ -216,6 +225,13 @@ describe("the store of background crawls", () => {
     expect(new Set(ids).size).toBe(100);
   });
 });
+
+/** A `waitUntil` that drops what it is handed: the attempt waits for its own work. */
+const IGNORED = {
+  waitUntil: (promise: Promise<unknown>) => {
+    promise.catch(() => null);
+  },
+};
 
 /** A rate limiter the attempt never reaches: MODE keeps it out first. */
 const unused: RateLimit = {
@@ -292,6 +308,25 @@ describe("an attempt of a background crawl", () => {
     expect(handed.length).toBeGreaterThan(0);
     expect(outcomes).toStrictEqual(["limited"]);
   });
+
+  it("ends a crawl a limit stopped failed, typed as seo_crawl_site types it", async () => {
+    const { bucket } = memoryBucket();
+    const id = newCrawlId();
+
+    await keepCrawl(bucket, id, OPTIONS, START);
+
+    const { env, outcomes } = closedEnv(bucket);
+
+    await expect(crawlAttempt(env, IGNORED, id)).resolves.toStrictEqual({
+      pages: 0,
+    });
+    await expect(readCrawl(bucket, id, END)).resolves.toMatchObject({
+      status: "failed",
+      startedAt: START.toISOString(),
+      failure: { type: "validation" },
+    });
+    expect(outcomes).toStrictEqual(["limited"]);
+  });
 });
 
 /** A rate limiter that allows everything. */
@@ -321,13 +356,6 @@ const openEnv = (bucket: ReportBucket) => {
   };
 
   return { env: open, outcomes };
-};
-
-/** A `waitUntil` that drops what it is handed: the attempt waits for its own work. */
-const IGNORED = {
-  waitUntil: (promise: Promise<unknown>) => {
-    promise.catch(() => null);
-  },
 };
 
 const ROBOTS_TXT = "User-agent: *\nAllow: /\n";

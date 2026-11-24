@@ -7,9 +7,12 @@
  */
 import { MAKER, PRODUCT_NAME, REPOSITORY_URL } from "../../src/brand.js";
 import { LOCAL_PRODUCT_TOKEN } from "../../src/core/fetch.js";
-import { HOSTED_LIMITS, LOCAL_SERVER } from "../../src/core/hosted.js";
+import {
+  CRAWL_DAYS,
+  HOSTED_LIMITS,
+  LOCAL_SERVER,
+} from "../../src/core/hosted.js";
 import { SHARE_DAYS } from "../../src/core/share.js";
-import { CRAWL_DAYS } from "../../src/mcp-hosted.js";
 import {
   BOT_ORIGIN,
   MCP_URL,

@@ -14,16 +14,10 @@ import { z } from "zod";
 
 import { WEBSITE_URL } from "../../src/brand.js";
 import { ExpectedError } from "../../src/core/errors.js";
-import { RequestRefusedError } from "../../src/core/fetch.js";
 import type { RequestGate } from "../../src/core/fetch.js";
-import { hostedFetch } from "../../src/core/hosted.js";
+import { CRAWL_DAYS, hostedFetch } from "../../src/core/hosted.js";
 import type { AeoAudit, SiteAudit } from "../../src/core/types.js";
-import {
-  CallLimitError,
-  CRAWL_DAYS,
-  crawlFailure,
-  runBackgroundCrawl,
-} from "../../src/mcp-hosted.js";
+import { crawlFailure, runBackgroundCrawl } from "../../src/mcp-hosted.js";
 import type {
   BackgroundCrawlOptions,
   BackgroundCrawls,
@@ -33,13 +27,16 @@ import type {
 import { inRequest, reportError, reportTask } from "./analytics.js";
 import type { AnalyticsEnv, ErrorRoute, ReportTask } from "./analytics.js";
 import { cruxOptions } from "./crux.js";
-import { backgroundCrawl, BOT_ORIGIN, USER_AGENT } from "./limits.js";
+import {
+  backgroundCrawl,
+  BOT_ORIGIN,
+  outcomeOf,
+  USER_AGENT,
+} from "./limits.js";
 import type { LimitsEnv, Outcome } from "./limits.js";
-import { DAY_MS, newId, REPORT_ID } from "./shared-reports.js";
+import { expiryAfter, newId, readKept, REPORT_ID } from "./shared-reports.js";
 import type { ReportBucket } from "./shared-reports.js";
 import { requestSigner } from "./signing.js";
-
-export { CRAWL_DAYS } from "../../src/mcp-hosted.js";
 
 /** A crawl's id: 22 characters of base64url, made as a shared report's is. */
 export const CRAWL_ID: RegExp = REPORT_ID;
@@ -66,13 +63,18 @@ const StoredCrawlSchema = z.object({
   options: kept<BackgroundCrawlOptions>(),
   seo: kept<SiteAudit>(),
   aeo: kept<AeoAudit>(),
-  failure: z.object({ message: z.string(), refused: z.boolean() }).optional(),
+  failure: z
+    .object({
+      message: z.string(),
+      type: z.enum(["validation", "permission", "rate_limited", "internal"]),
+    })
+    .optional(),
 });
 
 type StoredCrawl = z.infer<typeof StoredCrawlSchema>;
 
 /** The crawl's times, which the start writes and the end keeps. */
-interface CrawlTimes {
+export interface CrawlTimes {
   startedAt: string;
   expiresAt: string;
 }
@@ -89,40 +91,31 @@ const write = (
   });
 
 /**
- * The crawl kept under `id` with its expiry, or null when the id is malformed, there is none, it
- * has expired or it no longer reads as a crawl. A malformed id never reaches the bucket, so no id
- * names another key.
+ * The crawl kept under `id` and its times, or null when the id is malformed, there is none, it has
+ * expired or it no longer reads as a crawl.
  */
 const readStored = async (
   bucket: ReportBucket,
   id: string,
   now: Date
-): Promise<StoredCrawl | null> => {
-  if (!CRAWL_ID.test(id)) {
+): Promise<{ crawl: StoredCrawl; times: CrawlTimes | undefined } | null> => {
+  const stored = await readKept(bucket, id, {
+    key: keyOf,
+    schema: StoredCrawlSchema,
+    metadata: ({ startedAt }) => ({ startedAt }),
+    now,
+  });
+
+  if (!stored) {
     return null;
   }
 
-  const object = await bucket.get(keyOf(id));
+  const { startedAt } = stored.metadata;
 
-  if (!object) {
-    return null;
-  }
-
-  const { expiresAt } = object.customMetadata ?? {};
-
-  if (!expiresAt || Date.parse(expiresAt) <= now.getTime()) {
-    await object.body.cancel();
-
-    return null;
-  }
-
-  try {
-    const parsed = StoredCrawlSchema.safeParse(JSON.parse(await object.text()));
-
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
+  return {
+    crawl: stored.value,
+    times: startedAt ? { startedAt, expiresAt: stored.expiresAt } : undefined,
+  };
 };
 
 /** What `stored` says of where the crawl stands, or null when it lacks what its status needs. */
@@ -159,7 +152,7 @@ export const keepCrawl = async (
   now = new Date()
 ): Promise<string> => {
   const startedAt = now.toISOString();
-  const expiresAt = new Date(now.getTime() + CRAWL_DAYS * DAY_MS).toISOString();
+  const expiresAt = expiryAfter(CRAWL_DAYS, now);
 
   await write(
     bucket,
@@ -171,41 +164,55 @@ export const keepCrawl = async (
   return startedAt;
 };
 
-/** The options a running crawl was started with, or null when there is no such crawl running. */
-export const crawlOptions = async (
+/**
+ * The options a running crawl was started with, and its times, which its end keeps, or null when
+ * there is no such crawl running.
+ */
+export const storedCrawlOptions = async (
   bucket: ReportBucket,
   id: string
-): Promise<BackgroundCrawlOptions | null> => {
+): Promise<{
+  options: BackgroundCrawlOptions;
+  times: CrawlTimes | undefined;
+} | null> => {
   const stored = await readStored(bucket, id, new Date());
 
-  return stored?.status === "running" && stored.options ? stored.options : null;
+  return stored?.crawl.status === "running" && stored.crawl.options
+    ? { options: stored.crawl.options, times: stored.times }
+    : null;
+};
+
+/** The times the start of the crawl under `id` wrote, read from the bucket, or undefined. */
+const startTimes = async (
+  bucket: ReportBucket,
+  id: string
+): Promise<CrawlTimes | undefined> => {
+  const start = await bucket.get(keyOf(id));
+  const { startedAt, expiresAt } = start?.customMetadata ?? {};
+
+  await start?.body.cancel();
+
+  return startedAt && expiresAt ? { startedAt, expiresAt } : undefined;
 };
 
 /**
  * Writes the end of a crawl, its two audits or how it failed, over its start: the options go, and
- * the start's times stay, so the crawl expires when the start said. A crawl whose start is no
+ * the start's times stay, so the crawl expires when the start said. `startedWith` is those times
+ * when the caller read them already; without them, the end reads them. A crawl whose start is no
  * longer in the bucket is kept from now on, since its result is worth more than its age.
  */
 export const endCrawl = async (
   bucket: ReportBucket,
   id: string,
   end: { seo: SiteAudit; aeo: AeoAudit } | { failure: CrawlFailure },
-  now = new Date()
+  now = new Date(),
+  startedWith?: CrawlTimes
 ): Promise<void> => {
-  const start = await bucket.get(keyOf(id));
-  const { startedAt, expiresAt } = start?.customMetadata ?? {};
-
-  await start?.body.cancel();
-
-  const times: CrawlTimes =
-    startedAt && expiresAt
-      ? { startedAt, expiresAt }
-      : {
-          startedAt: now.toISOString(),
-          expiresAt: new Date(
-            now.getTime() + CRAWL_DAYS * DAY_MS
-          ).toISOString(),
-        };
+  const times: CrawlTimes = startedWith ??
+    (await startTimes(bucket, id)) ?? {
+      startedAt: now.toISOString(),
+      expiresAt: expiryAfter(CRAWL_DAYS, now),
+    };
 
   const endedAt = now.toISOString();
 
@@ -238,7 +245,7 @@ export const readCrawl = async (
 ): Promise<CrawlState | null> => {
   const stored = await readStored(bucket, id, now);
 
-  return stored ? stateOf(stored) : null;
+  return stored ? stateOf(stored.crawl) : null;
 };
 
 /** What a crawl's Workflow is given: the crawl's id, whose options wait in the bucket. */
@@ -302,15 +309,6 @@ const CRAWL_STEP = {
   timeout: "10 minutes",
 } as const;
 
-/** The outcome a crawl's record gives an error the crawl expected. */
-const outcomeOf = (error: ExpectedError): Outcome => {
-  if (error instanceof CallLimitError) {
-    return "limited";
-  }
-
-  return error instanceof RequestRefusedError ? "refused" : "error";
-};
-
 /**
  * A `waitUntil` that keeps what it is handed, and `settle`, which waits for all of it, and for what
  * that adds in turn. Nothing says work a step hands to `waitUntil` outlives the step, so an
@@ -363,12 +361,14 @@ export const crawlAttempt = (
   const report = reportTask(env, ctx, CRAWL_ROUTE);
 
   const attempt = async (): Promise<{ pages: number }> => {
-    const options = await crawlOptions(bucket, id);
+    const stored = await storedCrawlOptions(bucket, id);
 
     // The crawl ended or expired: there is nothing left to run.
-    if (!options) {
+    if (!stored) {
       return { pages: 0 };
     }
+
+    const { options, times } = stored;
 
     const limits = backgroundCrawl(
       env,
@@ -378,6 +378,35 @@ export const crawlAttempt = (
     );
 
     const started = Date.now();
+
+    /**
+     * Writes the crawl's end, then its record. An end that cannot be written is reported, and the
+     * attempt throws `unkept` as a NonRetryableError, for the Workflow to write: never a retry.
+     */
+    const finish = async (
+      end: Parameters<typeof endCrawl>[2],
+      outcome: Outcome,
+      pages: number,
+      unkept: string
+    ): Promise<{ pages: number }> => {
+      try {
+        await endCrawl(bucket, id, end, new Date(), times);
+      } catch (error) {
+        report(error, "crawl_end");
+        limits.end(
+          outcome === "ok" ? "error" : outcome,
+          0,
+          Date.now() - started
+        );
+
+        throw new NonRetryableError(unkept);
+      }
+
+      limits.end(outcome, pages, Date.now() - started);
+
+      return { pages };
+    };
+
     /** Whether a site refused a request of the crawl: then the attempt is never retried. */
     let refused = false;
     /** Whether the crawl ended, so only its end is left to write. */
@@ -427,22 +456,12 @@ export const crawlAttempt = (
       // The crawl is over and has asked the sites all it will: from here on, no error retries.
       crawled = true;
 
-      const pages = audits.seo.pages.length;
-
-      try {
-        await endCrawl(bucket, id, audits);
-      } catch (error) {
-        report(error, "crawl_end");
-        limits.end("error", 0, Date.now() - started);
-
-        throw new NonRetryableError(
-          "The hosted server could not keep the crawl's result."
-        );
-      }
-
-      limits.end("ok", pages, Date.now() - started);
-
-      return { pages };
+      return await finish(
+        audits,
+        "ok",
+        audits.seo.pages.length,
+        "The hosted server could not keep the crawl's result."
+      );
     } catch (error) {
       if (error instanceof NonRetryableError) {
         throw error;
@@ -465,18 +484,13 @@ export const crawlAttempt = (
         throw error;
       }
 
-      limits.end(outcomeOf(error), 0, Date.now() - started);
-
-      try {
-        await endCrawl(bucket, id, { failure: crawlFailure(error) });
-      } catch (error_) {
-        report(error_, "crawl_end");
-
-        // The site's answer, or the limit's, for the Workflow to write: never a retry.
-        throw new NonRetryableError(error.message);
-      }
-
-      return { pages: 0 };
+      // The site's answer, or the limit's: the crawl ends failed, never retried.
+      return await finish(
+        { failure: crawlFailure(error) },
+        outcomeOf(error),
+        0,
+        error.message
+      );
     }
   };
 

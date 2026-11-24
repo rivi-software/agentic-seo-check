@@ -5,6 +5,8 @@
  * and the MCP server what its own seo_share_report audited. The bucket's lifecycle rule deletes a
  * report after SHARE_DAYS; until it does, a report past its day reads as gone.
  */
+import type { z } from "zod";
+
 import { SHARE_DAYS } from "../../src/core/share.js";
 import type { ShareLink, SharedReport } from "../../src/core/share.js";
 import { ORIGIN } from "./limits.js";
@@ -54,7 +56,11 @@ const ID_BYTES = 16;
 /** An id as /report/<id> has it: 22 characters of base64url. */
 export const REPORT_ID = /^[\w-]{22}$/u;
 
-export const DAY_MS = 86_400_000;
+const DAY_MS = 86_400_000;
+
+/** When something kept `now` for `days` days expires, as its metadata has it. */
+export const expiryAfter = (days: number, now: Date): string =>
+  new Date(now.getTime() + days * DAY_MS).toISOString();
 
 /** A new id of ID_BYTES random bytes, in base64url as REPORT_ID reads it. */
 export const newId = (): string =>
@@ -76,7 +82,7 @@ export const keepReport = async (
 ): Promise<ShareLink> => {
   const id = newId();
 
-  const expiresAt = new Date(now.getTime() + SHARE_DAYS * DAY_MS).toISOString();
+  const expiresAt = expiryAfter(SHARE_DAYS, now);
 
   await bucket.put(keyOf(id), JSON.stringify(report), {
     httpMetadata: { contentType: "application/json" },
@@ -91,6 +97,76 @@ export const keepReport = async (
   return { url: `${ORIGIN}${reportPath(id)}`, expiresAt };
 };
 
+/** What `readKept` found: the value, checked, the metadata the reader took, and the expiry. */
+export interface Kept<T, M> {
+  value: T;
+  metadata: M;
+  expiresAt: string;
+}
+
+/**
+ * The object kept under `key(id)`, its JSON checked against `schema`, or null when the id is
+ * malformed, there is none, `metadata` reads its metadata as null, it has expired, or it does not
+ * parse. A malformed id never reaches the bucket, so no id names another key. Shared reports and
+ * background crawls read their objects through it.
+ */
+export const readKept = async <T, M>(
+  bucket: ReportBucket,
+  id: string,
+  {
+    key,
+    schema,
+    metadata: readMetadata,
+    now,
+  }: {
+    key: (id: string) => string;
+    schema: z.ZodType<T>;
+    metadata: (metadata: Record<string, string>) => M | null;
+    now: Date;
+  }
+): Promise<Kept<T, M> | null> => {
+  if (!REPORT_ID.test(id)) {
+    return null;
+  }
+
+  const object = await bucket.get(key(id));
+
+  if (!object) {
+    return null;
+  }
+
+  const kept = object.customMetadata ?? {};
+  const { expiresAt } = kept;
+  const metadata = readMetadata(kept);
+
+  if (
+    !expiresAt ||
+    metadata === null ||
+    Date.parse(expiresAt) <= now.getTime()
+  ) {
+    await object.body.cancel();
+
+    return null;
+  }
+
+  try {
+    const parsed = schema.safeParse(JSON.parse(await object.text()));
+
+    return parsed.success ? { value: parsed.data, metadata, expiresAt } : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Who shared a report and when, from its metadata, or null when it lacks either. */
+const reportMetadata = ({
+  source,
+  sharedAt,
+}: Record<string, string>): { source: ReportSource; sharedAt: string } | null =>
+  sharedAt && (source === "upload" || source === "hosted")
+    ? { source, sharedAt }
+    : null;
+
 /**
  * The report kept under `id`, checked against the schema again, or null when there is none, it has
  * expired, or it no longer reads as a report.
@@ -100,37 +176,14 @@ export const readReport = async (
   id: string,
   now = new Date()
 ): Promise<StoredReport | null> => {
-  if (!REPORT_ID.test(id)) {
-    return null;
-  }
+  const kept = await readKept(bucket, id, {
+    key: keyOf,
+    schema: SharedReportSchema,
+    metadata: reportMetadata,
+    now,
+  });
 
-  const object = await bucket.get(keyOf(id));
-
-  if (!object) {
-    return null;
-  }
-
-  const { source, sharedAt, expiresAt } = object.customMetadata ?? {};
-
-  if (
-    !(sharedAt && expiresAt) ||
-    (source !== "upload" && source !== "hosted") ||
-    Date.parse(expiresAt) <= now.getTime()
-  ) {
-    await object.body.cancel();
-
-    return null;
-  }
-
-  let parsed: ReturnType<typeof SharedReportSchema.safeParse>;
-
-  try {
-    parsed = SharedReportSchema.safeParse(JSON.parse(await object.text()));
-  } catch {
-    return null;
-  }
-
-  return parsed.success
-    ? { id, report: parsed.data, source, sharedAt, expiresAt }
+  return kept
+    ? { id, report: kept.value, ...kept.metadata, expiresAt: kept.expiresAt }
     : null;
 };

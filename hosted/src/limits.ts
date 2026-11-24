@@ -1,4 +1,5 @@
 import { WEBSITE_URL } from "../../src/brand.js";
+import { RequestRefusedError } from "../../src/core/fetch.js";
 import type { RequestGate } from "../../src/core/fetch.js";
 import { LOCAL_SERVER } from "../../src/core/hosted.js";
 /**
@@ -353,6 +354,16 @@ const admit = async (
  */
 export type Outcome = HostedCallEnd["outcome"] | "limited";
 
+/** The outcome of a call `error` ended: a limit's, a site's refusal, or any other error. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
+export const outcomeOf = (error: unknown): Outcome => {
+  if (error instanceof CallLimitError) {
+    return "limited";
+  }
+
+  return error instanceof RequestRefusedError ? "refused" : "error";
+};
+
 /** A call's record as the analytics hear it (analytics.ts): no hostname, which is for abuse reports only. */
 export interface CallRecord {
   tool: string;
@@ -624,7 +635,7 @@ export const hostedProfile = (
         await admit(env, caller, call);
       } catch (error) {
         // A limit, or the limits' own failure, which is no limit (issue #93).
-        keep(call, error instanceof CallLimitError ? "limited" : "error", {
+        keep(call, outcomeOf(error), {
           durationMs: Date.now() - started,
           requests: 0,
           pages: 0,

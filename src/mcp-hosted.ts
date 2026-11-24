@@ -31,6 +31,7 @@ import { RequestRefusedError } from "./core/fetch.js";
 import type { FetchOptions, RequestGate } from "./core/fetch.js";
 import type { FieldDataOptions } from "./core/field-data.js";
 import {
+  CRAWL_DAYS,
   HOSTED_LIMITS,
   hostedFetch,
   hostedUrlProblem,
@@ -45,6 +46,7 @@ import {
   compareDescription,
   compareFieldDataOption,
   competitorsOption,
+  describeError,
   detail,
   docsNote,
   fail,
@@ -62,6 +64,7 @@ import {
   shareDescription,
   toOptions,
 } from "./mcp-shared.js";
+import type { ErrorDescription } from "./mcp-shared.js";
 import {
   conversationIdOf,
   noteCall,
@@ -385,11 +388,8 @@ export type BackgroundCrawlOptions = Omit<
   "format" | "detail" | "conversation_id" | "context" | "llm_model"
 >;
 
-/** How a background crawl failed: the text `fail(error)` answers, and whether the site refused it. */
-export interface CrawlFailure {
-  message: string;
-  refused: boolean;
-}
+/** How a background crawl failed: the text `fail(error)` answers, and its kind of failure. */
+export type CrawlFailure = ErrorDescription;
 
 /** Where a background crawl stands, as seo_crawl_result reads it. */
 export type CrawlState =
@@ -417,9 +417,6 @@ export interface BackgroundCrawls {
   /** The crawl under `id`, or null for an unknown, malformed or expired id. */
   read: (id: string) => Promise<CrawlState | null>;
 }
-
-/** How many days a background crawl's result is kept (the bucket's rule on `crawls/`). */
-export const CRAWL_DAYS = 7;
 
 /** The arguments of seo_start_crawl: seo_crawl_site's, less the answer's shape, which comes later. */
 const {
@@ -856,16 +853,10 @@ export const runBackgroundCrawl = async (
   return { seo, aeo };
 };
 
-/** The failure a background crawl's error ends it with: `fail(error)`'s text, and whether it was a refusal. */
+/** The failure a background crawl's error ends it with: what `fail(error)` would answer. */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
-export const crawlFailure = (error: unknown): CrawlFailure => {
-  const [first] = fail(error).content;
-
-  return {
-    message: first?.text ?? "",
-    refused: error instanceof RequestRefusedError,
-  };
-};
+export const crawlFailure = (error: unknown): CrawlFailure =>
+  describeError(error);
 
 /** seo_audit_page: one page, by URL or as HTML. */
 const AUDIT_PAGE = {
@@ -1077,8 +1068,15 @@ const crawlsOff = () =>
     )
   );
 
-/** What seo_start_crawl and a running crawl's seo_crawl_result answer: the crawl's id and when to ask. */
-const respondRunning = (id: string, startedAt: string, next: string) => {
+/**
+ * What seo_start_crawl (`started`) and a running crawl's seo_crawl_result answer: the crawl's id,
+ * when it started, and when to ask for its result.
+ */
+const respondRunning = (id: string, startedAt: string, started: boolean) => {
+  const next = started
+    ? `Call seo_crawl_result with this id in a minute or two. The result is kept ${CRAWL_DAYS} days.`
+    : "The crawl is still running. Call seo_crawl_result with this id again in a minute.";
+
   const answer = { id, status: "running" as const, startedAt, next };
 
   return {
@@ -1130,11 +1128,7 @@ const registerStartCrawl = (
           const { id, startedAt } = await crawls.start(options);
 
           return {
-            result: respondRunning(
-              id,
-              startedAt,
-              `Call seo_crawl_result with this id in a minute or two. The result is kept ${CRAWL_DAYS} days.`
-            ),
+            result: respondRunning(id, startedAt, true),
             pages: 0,
           };
         }
@@ -1172,37 +1166,39 @@ const registerCrawlResult = (
 
           if (state.status === "running") {
             return {
-              result: respondRunning(
-                input.id,
-                state.startedAt,
-                "The crawl is still running. Call seo_crawl_result with this id again in a minute."
-              ),
+              result: respondRunning(input.id, state.startedAt, false),
               pages: 0,
             };
           }
 
           if (state.status === "failed") {
-            // The kind of failure `fail` gave the crawl's error: a site's refusal is no bad input.
-            // The attempt that failed reported an internal error already, so none goes again.
+            // The kind of failure `fail` would give the crawl's error: a site's refusal is no bad
+            // input. The attempt that failed reported an internal error already, so none goes again.
             return {
               result: withErrorType(
                 {
                   isError: true,
                   content: [{ type: "text", text: state.failure.message }],
                 },
-                state.failure.refused ? "permission" : "internal"
+                state.failure.type
               ),
               pages: 0,
             };
           }
 
-          const audit = input.audit === "aeo" ? state.aeo : state.seo;
+          const { audit, result } =
+            input.audit === "aeo"
+              ? {
+                  audit: state.aeo,
+                  result: respondAeo(state.aeo, input.format, input.detail),
+                }
+              : {
+                  audit: state.seo,
+                  result: respond(state.seo, input.format, input.detail),
+                };
 
           return {
-            result:
-              input.audit === "aeo"
-                ? respondAeo(state.aeo, input.format, input.detail)
-                : respond(state.seo, input.format, input.detail),
+            result,
             pages: pagesOf(audit),
             audit,
             // The crawl requested the site's URLs, though this call requests none.

@@ -2165,7 +2165,7 @@ describe("the hosted server", () => {
         status: "failed",
         startedAt: STARTED_AT,
         endedAt: "2026-11-24T10:00:01.000Z",
-        failure: { message, refused: true },
+        failure: { message, type: "permission" },
       });
 
       const result = await client.callTool({
@@ -2177,19 +2177,19 @@ describe("the hosted server", () => {
       expect(textOf(result)).toBe(message);
     });
 
-    it("names a failed crawl's kind of failure in its event: a refusal's, or internal", async () => {
+    it("names a failed crawl's kind of failure in its event, as fail named it", async () => {
       const { crawls, states } = fakeCrawls();
 
       const { client, calls } = await connectWatched(
         profileWith({ crawls }).profile
       );
 
-      for (const refused of [true, false]) {
+      for (const type of ["permission", "validation", "internal"] as const) {
         states.set(CRAWL_ID, {
           status: "failed",
           startedAt: STARTED_AT,
           endedAt: "2026-11-24T10:00:01.000Z",
-          failure: { message: "Agentic SEO Check error: it failed.", refused },
+          failure: { message: "Agentic SEO Check error: it failed.", type },
         });
         // oxlint-disable-next-line eslint/no-await-in-loop -- in order, as the expected list reads
         await client.callTool({
@@ -2201,6 +2201,7 @@ describe("the hosted server", () => {
       expect(calls.map((c) => [c.isError, c.errorType, c.error])).toStrictEqual(
         [
           [true, "permission", undefined],
+          [true, "validation", undefined],
           [true, "internal", undefined],
         ]
       );
