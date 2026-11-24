@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 
 import { WEBSITE_URL } from "../../src/brand.js";
+import { RequestRefusedError } from "../../src/core/fetch.js";
 import type { RequestGate } from "../../src/core/fetch.js";
 import { LOCAL_SERVER } from "../../src/core/hosted.js";
 /**
@@ -343,12 +344,8 @@ const admitSite = async (
   return allowed;
 };
 
-/** Throws the refusal of a tool call that the mode or a limit keeps out. */
-const admit = async (
-  env: LimitsEnv,
-  caller: Caller,
-  call: HostedCallInfo
-): Promise<void> => {
+/** Throws the refusal of a call, or a crawl, that MODE keeps out. */
+const checkMode = (env: LimitsEnv, crawl: boolean): void => {
   if (env.MODE === "closed") {
     throw new CallLimitError(
       `The hosted server is paused. ${NO_LIMITS}`,
@@ -356,12 +353,31 @@ const admit = async (
     );
   }
 
-  if (call.crawl && env.MODE === "no-crawls") {
+  if (crawl && env.MODE === "no-crawls") {
     throw new CallLimitError(
       `The hosted server does not crawl sites at the moment; audits of single pages still work. ${NO_LIMITS}`,
       "no_crawls"
     );
   }
+};
+
+/** Throws the refusal of a call that requests sites once the day's requests are sent. */
+const checkDay = async (env: LimitsEnv): Promise<void> => {
+  if ((await requestsToday(env)) >= env.DAILY_REQUESTS) {
+    throw new CallLimitError(
+      dailyRefusal(env.DAILY_REQUESTS),
+      "daily_requests"
+    );
+  }
+};
+
+/** Throws the refusal of a tool call that the mode or a limit keeps out. */
+const admit = async (
+  env: LimitsEnv,
+  caller: Caller,
+  call: HostedCallInfo
+): Promise<void> => {
+  checkMode(env, call.crawl);
 
   if (call.tool === "seo_list_rules") {
     return;
@@ -395,11 +411,8 @@ const admit = async (
     }
   }
 
-  if (call.fetches && (await requestsToday(env)) >= env.DAILY_REQUESTS) {
-    throw new CallLimitError(
-      dailyRefusal(env.DAILY_REQUESTS),
-      "daily_requests"
-    );
+  if (call.fetches) {
+    await checkDay(env);
   }
 
   // Last, so that a call another limit refuses uses up no site.
@@ -417,6 +430,16 @@ const admit = async (
  */
 export type Outcome = HostedCallEnd["outcome"] | "limited";
 
+/** The outcome of a call `error` ended: a limit's, a site's refusal, or any other error. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
+export const outcomeOf = (error: unknown): Outcome => {
+  if (error instanceof CallLimitError) {
+    return "limited";
+  }
+
+  return error instanceof RequestRefusedError ? "refused" : "error";
+};
+
 /** A call's record as the analytics hear it (analytics.ts): no hostname, which is for abuse reports only. */
 export interface CallRecord {
   tool: string;
@@ -433,10 +456,11 @@ export interface CallRecord {
 export const MAX_INDEX_BYTES = 96;
 
 /**
- * Why a call's record names a hostname other than the one it audits: a comparison's competitor's
- * site, or where a page redirected.
+ * Why a record names a hostname other than the one its call audits, a comparison's competitor's
+ * site or where a page redirected, or that it is no call's but a background crawl's end (issue
+ * #209), which the Workflow writes after the call that started it has ended.
  */
-type HostRole = "competitor" | "redirect";
+type HostRole = "competitor" | "redirect" | "background";
 
 /**
  * One record per tool call in Analytics Engine, which keeps it for three months: the tool, the
@@ -591,6 +615,55 @@ const siteGate = (
   },
 });
 
+/** What `backgroundCrawl` gives one attempt of a background crawl. */
+export interface BackgroundCrawlLimits {
+  /** Throws a CallLimitError under MODE closed or no-crawls, or past the day's requests. */
+  readmit: () => Promise<void>;
+  gate: RequestGate;
+  /**
+   * Writes the crawl's record (tool seo_start_crawl, role "background") and counts what it sent:
+   * "limited" for an attempt `readmit` refused, so the records show what MODE and the day's cap
+   * stopped.
+   */
+  end: (outcome: Outcome, pages: number, durationMs: number) => void;
+}
+
+/**
+ * The limits of one attempt of a background crawl (issue #209), which seo_start_crawl admitted: it
+ * took the caller's crawl and the site of the day then, so an attempt, the first or a rerun after
+ * a retry or a deploy, takes neither again. It does check MODE and the day's requests again before
+ * it requests anything (`readmit`), so MODE stays a kill switch for a crawl that has not run yet.
+ * Its gate holds it to the site's requests a minute and counts what it sends, as a crawl's does in
+ * a call, and its end writes the crawl's record, under the tool that started it.
+ */
+export const backgroundCrawl = (
+  env: LimitsEnv,
+  ctx: Pick<ExecutionContext, "waitUntil">,
+  host: string,
+  report?: ReportTask
+): BackgroundCrawlLimits => {
+  const sent: Sent = { requests: 0, counted: 0, byHost: new Map() };
+
+  return {
+    readmit: async () => {
+      checkMode(env, true);
+      await checkDay(env);
+    },
+    gate: siteGate(env, ctx, sent, report),
+    end: (outcome, pages, durationMs) => {
+      record(
+        env,
+        { tool: "seo_start_crawl", fetches: true, crawl: true, host },
+        outcome,
+        { durationMs, requests: sent.requests, pages },
+        report,
+        "background"
+      );
+      countSent(env, ctx, sent, report);
+    },
+  };
+};
+
 /** Who hears what a profile's calls do, beside Analytics Engine. */
 export interface ProfileListeners {
   /** Hears each call's record as it is written. */
@@ -640,7 +713,7 @@ export const hostedProfile = (
         await admit(env, caller, call);
       } catch (error) {
         // A limit, or the limits' own failure, which is no limit (issue #93).
-        keep(call, error instanceof CallLimitError ? "limited" : "error", {
+        keep(call, outcomeOf(error), {
           durationMs: Date.now() - started,
           requests: 0,
           pages: 0,

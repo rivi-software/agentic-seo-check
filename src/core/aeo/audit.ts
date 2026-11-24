@@ -769,7 +769,10 @@ export const auditAeoSite = async (
   return buildAudit(await collectSite(startUrl, options), options);
 };
 
-/** What `auditSiteBoth` takes: the crawl's options, which both audits share. */
+/**
+ * What `auditSiteBoth` takes: the crawl's options, which both audits share. The filters (`keyword`,
+ * `disableRules`, `onlyRules`, `baseline`) are the SEO audit's; the AEO audit runs without them.
+ */
 export type SiteAuditsOptions = Pick<
   CrawlOptions,
   | "maxPages"
@@ -782,9 +785,14 @@ export type SiteAuditsOptions = Pick<
   | "maxLinkChecks"
   | "includePatterns"
   | "excludePatterns"
+  | "urls"
   | "maxSitemaps"
   | "maxSitemapBytes"
   | "includeInfo"
+  | "keyword"
+  | "disableRules"
+  | "onlyRules"
+  | "baseline"
   | "pageDetail"
   | "fetch"
   | "fieldData"

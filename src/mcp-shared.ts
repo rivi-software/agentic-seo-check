@@ -314,6 +314,21 @@ const errorTypeOf = (error: unknown): McpErrorType => {
   return error instanceof ExpectedError ? "validation" : "internal";
 };
 
+/** What a tool error says of an error, and its kind of failure. */
+export interface ErrorDescription {
+  message: string;
+  type: McpErrorType;
+}
+
+/** What `fail(error)` answers and the kind of failure it names, with nothing noted. */
+export const describeError = (
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
+  error: unknown
+): ErrorDescription => ({
+  message: `${PRODUCT_NAME} error: ${error instanceof Error ? error.message : String(error)}`,
+  type: errorTypeOf(error),
+});
+
 /**
  * A tool error with `error`'s message. Its event (telemetry/mcp.ts) gets `type`, the kind of
  * failure, and the `reason` of an expected error (issue #123), never the message, which can name
@@ -325,8 +340,6 @@ export const fail = (
   error: unknown,
   type: McpErrorType = errorTypeOf(error)
 ) => {
-  const message = error instanceof Error ? error.message : String(error);
-
   if (error instanceof ExpectedError && error.reason !== undefined) {
     noteCall({ reason: error.reason });
   }
@@ -334,9 +347,7 @@ export const fail = (
   return withErrorType(
     {
       isError: true,
-      content: [
-        { type: "text" as const, text: `${PRODUCT_NAME} error: ${message}` },
-      ],
+      content: [{ type: "text" as const, text: describeError(error).message }],
     },
     type,
     type === "internal" ? error : undefined

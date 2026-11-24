@@ -6,6 +6,7 @@ import { accountCaller } from "../src/callers.ts";
 import type { Caller } from "../src/callers.ts";
 import {
   ADMITTED_ENTRIES,
+  backgroundCrawl,
   hostedProfile,
   MAX_INDEX_BYTES,
   USER_AGENT,
@@ -820,5 +821,86 @@ describe("the hosted server's limits", () => {
     expect(logged).toHaveBeenCalledWith(
       "Could not count 1 requests: Network connection lost."
     );
+  });
+
+  it("re-check MODE and the day's requests before a background crawl's attempt, and take no crawl or site again (issue #209)", async () => {
+    const crawls = vi.fn<RateLimit["limit"]>(() =>
+      Promise.resolve({ success: false })
+    );
+
+    const noCrawls = fakeEnv({
+      MODE: "no-crawls",
+      CALLER_CRAWLS: { limit: crawls },
+    });
+
+    const closed = fakeEnv({ MODE: "closed" });
+
+    const spent = fakeEnv({
+      DAILY_REQUESTS: 2,
+      CALLER_CRAWLS: { limit: crawls },
+    });
+
+    const state = spent.env.STATE.jurisdiction("eu").getByName("global");
+    const sites = vi.spyOn(state, "admitSite");
+
+    await state.addRequests(new Date().toISOString().slice(0, 10), 2);
+
+    const readmit = ({ env, ctx }: ReturnType<typeof fakeEnv>) =>
+      backgroundCrawl(env, ctx, "shop.example.com").readmit();
+
+    await expect(
+      Promise.all(
+        [noCrawls, closed, spent].map((env) => reasonOf(readmit(env)))
+      )
+    ).resolves.toStrictEqual(["no_crawls", "paused", "daily_requests"]);
+    await expect(refusalOf(readmit(closed))).resolves.toBe(
+      "The hosted server is paused. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp"
+    );
+    await expect(refusalOf(readmit(fakeEnv()))).resolves.toBe("admitted");
+    expect([crawls, sites].map((spy) => spy.mock.calls.length)).toStrictEqual([
+      0, 0,
+    ]);
+  });
+
+  it("record a background crawl's end by tool, outcome and hostname, as background", async () => {
+    const { env, ctx, points, settled, stored } = fakeEnv();
+    const crawl = backgroundCrawl(env, ctx, "shop.example.com");
+
+    await crawl.gate.beforeRequest(new URL("https://shop.example.com/"));
+    await crawl.gate.beforeRequest(new URL("https://shop.example.com/a"));
+    crawl.end("ok", 2, 81_000);
+    await settled();
+
+    expect(points).toStrictEqual([
+      {
+        indexes: ["shop.example.com"],
+        blobs: ["seo_start_crawl", "ok", "shop.example.com", "background"],
+        doubles: [81_000, 2, 2],
+      },
+    ]);
+    expect(stored().count).toBe(2);
+  });
+
+  it("record a background crawl's attempt that readmit refused as limited", () => {
+    const { env, ctx, points } = fakeEnv();
+
+    backgroundCrawl(env, ctx, "shop.example.com").end("limited", 0, 12);
+
+    expect(points).toStrictEqual([
+      {
+        indexes: ["shop.example.com"],
+        blobs: ["seo_start_crawl", "limited", "shop.example.com", "background"],
+        doubles: [12, 0, 0],
+      },
+    ]);
+  });
+
+  it("hold a background crawl to the site's requests a minute", async () => {
+    const { env, ctx } = fakeEnv({ SITE_REQUESTS: limiter(0) });
+    const crawl = backgroundCrawl(env, ctx, "shop.example.com");
+
+    await expect(
+      crawl.gate.beforeRequest(new URL("https://shop.example.com/"))
+    ).resolves.toMatchObject({ scope: "host", reason: "site_requests" });
   });
 });
