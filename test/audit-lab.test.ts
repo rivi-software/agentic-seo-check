@@ -75,7 +75,9 @@ describe("a supplied lab runner", () => {
         lab,
         fetch: {
           gate: {
-            beforeRequest: () => undefined,
+            beforeRequest: () => {
+              // The page's own gate lets everything through.
+            },
           },
           labGate,
         },
