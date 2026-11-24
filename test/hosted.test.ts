@@ -3177,6 +3177,25 @@ describe("the hosted server", () => {
       expect(calls).toStrictEqual([]);
     });
 
+    it("names both features to an account without a subscription that asks for both", async () => {
+      serveShop();
+
+      const lab = fixtureLab();
+      const { profile, calls } = labWith(lab);
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, render: true, lighthouse: true },
+      });
+
+      expect(textOf(result)).toBe(
+        "Agentic SEO Check error: Rendering and lab performance need a subscription. Subscribe at https://agentic-seo.org/account."
+      );
+      expect(lab).not.toHaveBeenCalled();
+      expect(calls).toStrictEqual([]);
+    });
+
     it("audits inline html for an account without a subscription, since html never runs the lab", async () => {
       const lab = fixtureLab();
       const { profile, calls } = labWith(lab);

@@ -896,24 +896,33 @@ const auditOptions = (
     }),
 });
 
+/** Which paid features a call asks for, or uses: `render`, and `lighthouse` (the lab). */
+interface PaidFeatures {
+  render: boolean;
+  lab: boolean;
+}
+
 /**
- * Whether a call uses a paid feature: `render` or `lighthouse` on the premium server, for a URL.
- * Without a subscription it throws, before the call counts and before any browser or lab starts.
+ * The paid features a call uses, `render` and `lighthouse` on the premium server, for a URL.
+ * Without a subscription it throws, naming each asked for, before the call counts and before any
+ * browser or lab starts.
  */
-const paidFeature = (
+const paidFeatures = (
   profile: HostedProfile,
-  asked: boolean | undefined,
-  feature: string
-): boolean => {
-  if (!(asked && profile.premium)) {
-    return false;
+  asked: PaidFeatures
+): PaidFeatures => {
+  if (!profile.premium) {
+    return { render: false, lab: false };
   }
 
-  if (!profile.paid) {
-    throw new SubscriptionNeededError(feature);
+  if (!profile.paid && (asked.render || asked.lab)) {
+    throw new SubscriptionNeededError(
+      ...(asked.render ? ["Rendering"] : []),
+      ...(asked.lab ? ["Lab performance"] : [])
+    );
   }
 
-  return true;
+  return asked;
 };
 
 /**
@@ -1124,22 +1133,14 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
           host = inline || !target ? null : allowedHost(target);
           // Inline HTML is no URL the Chrome UX Report could have.
           field = fieldDataOf(profile, input.fieldData && host !== null);
-          // Inline HTML has no page for a browser to load.
-          renders =
-            host !== null &&
-            paidFeature(
-              profile,
-              "render" in input && input.render === true,
-              "Rendering"
-            );
-          // Nor for PageSpeed Insights to visit.
-          labs =
-            host !== null &&
-            paidFeature(
-              profile,
-              "lighthouse" in input && input.lighthouse === true,
-              "Lab performance"
-            );
+          // Inline HTML has no page for a browser to load, nor for PageSpeed Insights to visit.
+          ({ render: renders, lab: labs } = paidFeatures(profile, {
+            render: host !== null && "render" in input && input.render === true,
+            lab:
+              host !== null &&
+              "lighthouse" in input &&
+              input.lighthouse === true,
+          }));
         } catch (error) {
           return fail(error);
         }
