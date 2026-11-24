@@ -1,0 +1,19 @@
+hosted/README.md
+  s_2b6692c891fdf5::t_78064fd150dd47 127,140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d8de3f90c40c9f1547703a9186aa61b074c410ce",
+  "prompts": {},
+  "sessions": {
+    "s_2b6692c891fdf5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "423ca648-a5c9-4f37-ac99-51a5c8e59dc8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
