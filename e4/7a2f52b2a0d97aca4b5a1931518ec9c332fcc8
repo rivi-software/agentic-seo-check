@@ -1,0 +1,25 @@
+src/mcp-hosted.ts
+  s_46ac76d26da34b::t_f531c7f174bba1 403
+src/core/audit.ts
+  s_46ac76d26da34b::t_f531c7f174bba1 592-594,599-605
+test/audit-lab.test.ts
+  s_46ac76d26da34b::t_80c5cc92fb1ed8 1-2,220,226-235,237
+  s_46ac76d26da34b::t_5cf0f1f8402f75 21-22,208-219,221-225,236
+  s_46ac76d26da34b::t_fbb090a3d25744 238-239
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e47a2f52b2a0d97aca4b5a1931518ec9c332fcc8",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
