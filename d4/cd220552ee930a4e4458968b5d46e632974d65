@@ -1,0 +1,64 @@
+hosted/test/analytics-script.test.ts
+  s_46ac76d26da34b::t_9793b87970a6f7 16,223-258,320,333
+hosted/src/site/routes.ts
+  s_46ac76d26da34b::t_774b4866bcce05 288-291
+  s_46ac76d26da34b::t_4a66b43237561d 18
+  s_46ac76d26da34b::t_e90d4abba52f31 292-293
+hosted/test/audit-form.test.ts
+  s_46ac76d26da34b::t_588acb45fdc1f8 143-149
+hosted/src/site/analytics-script.ts
+  s_46ac76d26da34b::t_4d635d6811390f 110
+  s_46ac76d26da34b::t_e27b33323df353 112
+  s_46ac76d26da34b::t_2db006d1504a97 109
+hosted/src/accounts/store.ts
+  s_46ac76d26da34b::t_3901c47732a010 149,151-161
+hosted/test/configs.test.ts
+  s_46ac76d26da34b::t_ee704fc4164386 50-55
+hosted/src/site/worker.ts
+  s_46ac76d26da34b::t_774b4866bcce05 26-33
+hosted/test/accounts-store.test.ts
+  s_46ac76d26da34b::t_34e3710a34c340 115-118,120-127,130,132
+  s_46ac76d26da34b::t_ab8731d7f89632 119,128-129,131
+hosted/src/site/audit.ts
+  s_46ac76d26da34b::t_774b4866bcce05 51-54
+  s_46ac76d26da34b::t_588acb45fdc1f8 62-63
+  s_46ac76d26da34b::t_4a66b43237561d 34
+hosted/src/site/account-page.ts
+  s_46ac76d26da34b::t_cda6bcd6682d54 18-29,180
+  s_46ac76d26da34b::t_76efbde2126dd2 1-17,30-142,144-179,181-237,239-254
+  s_46ac76d26da34b::t_e27b33323df353 143,238
+hosted/src/site/account-routes.ts
+  s_46ac76d26da34b::t_90f3f498b5926d 501,505-510
+  s_46ac76d26da34b::t_cda6bcd6682d54 27,347,353
+  s_46ac76d26da34b::t_01cf3e5724b162 1-26,28-340,342-346,348-352,354-490,492-500,502-504,511-616
+  s_46ac76d26da34b::t_149128a2a671d8 341,491
+hosted/test/accounts-site.test.ts
+  s_46ac76d26da34b::t_cda6bcd6682d54 383-395
+  s_46ac76d26da34b::t_4a66b43237561d 307-310
+  s_46ac76d26da34b::t_05b2b1830579ba 1-170,173,192-235,244-271,273-275,280,282-285,287,299-301,303-306,311-317,321-350,352,354-357,359-382,396-421,423-432,434-439,441-450,452-470,472-476,478-485,494-513,520-525,529-559,561-566,568-578,581-596,599-608,612-613
+  s_46ac76d26da34b::t_941a702503e314 182,487,489
+  s_46ac76d26da34b::t_cbbc8508357a3d 171-172,174-181,183-191,286,293,351,353,358,422,433,440,451,471,477,486,514-519,526-528,567,580,598
+  s_46ac76d26da34b::t_b19ad92a669091 236-243,272,276-279,281,288-292,294-298,302,318-320,488,490-493,560,579,597,609-611
+hosted/wrangler.site.jsonc
+  s_46ac76d26da34b::t_900a0c0d8b0d7c 57-59,87-97,102-103,108-119,143-149
+.github/workflows/deploy-hosted.yml
+  s_46ac76d26da34b::t_ee704fc4164386 101-107
+package.json
+  s_46ac76d26da34b::t_ee704fc4164386 67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d4cd220552ee930a4e4458968b5d46e632974d65",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
