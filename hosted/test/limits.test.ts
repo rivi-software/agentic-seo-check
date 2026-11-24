@@ -2,6 +2,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { CallLimitError } from "../../src/mcp-hosted.ts";
 import type { HostedCallInfo } from "../../src/mcp.ts";
+import { accountCaller } from "../src/callers.ts";
 import type { Caller } from "../src/callers.ts";
 import {
   ADMITTED_ENTRIES,
@@ -240,6 +241,31 @@ describe("the hosted server's limits", () => {
     expect(crawls.at(-1)).toContain(
       "The users of claude.ai, Cowork and the Claude apps have together started 30 crawls on the hosted server in the last minute, its limit for the platform."
     );
+  });
+
+  it("limit two accounts from one address separately", async () => {
+    const { env, ctx } = fakeEnv({ CALLER_CALLS: limiter(1) });
+    const ann = hostedProfile(env, ctx, accountCaller("acc_ann"));
+    const bob = hostedProfile(env, ctx, accountCaller("acc_bob"));
+
+    expect(accountCaller("acc_ann")).toStrictEqual({
+      key: "account:acc_ann",
+      platform: null,
+    });
+    await expect(refusalOf(ann.startCall(INLINE))).resolves.toBe("admitted");
+    await expect(refusalOf(bob.startCall(INLINE))).resolves.toBe("admitted");
+    await expect(refusalOf(ann.startCall(INLINE))).resolves.toContain(
+      "started 30 tool calls"
+    );
+  });
+
+  it("hand the profile the paid it was given", () => {
+    const { env, ctx } = fakeEnv();
+
+    expect(hostedProfile(env, ctx, PERSON, { paid: "subscription" }).paid).toBe(
+      "subscription"
+    );
+    expect(hostedProfile(env, ctx, PERSON)).not.toHaveProperty("paid");
   });
 
   it("leave seo_list_rules uncounted", async () => {

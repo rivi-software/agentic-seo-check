@@ -708,4 +708,53 @@ describe("the hosted server's conversations and feedback (issue #101)", () => {
     });
     expect(JSON.stringify(events)).not.toMatch(/example|café/u);
   });
+
+  it("sends paid on a paid call and its exceptions, and no account id", async () => {
+    const { events, ctx, settled } = capture();
+
+    const tracking = hostedAnalytics(
+      { POSTHOG_HOST: POSTHOG },
+      ctx,
+      { key: "account:acc_secret123", platform: null },
+      null,
+      "subscription"
+    );
+
+    tracking?.analytics.toolCall({
+      tool: "seo_audit_page",
+      startedAt: new Date(),
+      durationMs: 12,
+      isError: true,
+      errorType: "internal",
+      error: new RangeError("Invalid time value"),
+    });
+    await settled();
+
+    const call = events.find((event) => event.event === "$mcp_tool_call");
+    const error = events.find((event) => event.event === "$exception");
+
+    expect(call?.properties.paid).toBe("subscription");
+    expect(error?.properties.paid).toBe("subscription");
+    expect(JSON.stringify(events)).not.toContain("acc_");
+  });
+
+  it("leaves paid out of an unpaid call", async () => {
+    const { events, ctx, settled } = capture();
+
+    const tracking = hostedAnalytics(
+      { POSTHOG_HOST: POSTHOG },
+      ctx,
+      callerOf("203.0.113.5", [])
+    );
+
+    tracking?.analytics.toolCall({
+      tool: "seo_audit_page",
+      startedAt: new Date(),
+      durationMs: 12,
+      isError: false,
+    });
+    await settled();
+
+    expect(events[0]?.properties).not.toHaveProperty("paid");
+  });
 });

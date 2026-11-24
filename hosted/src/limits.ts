@@ -591,6 +591,8 @@ export interface ProfileListeners {
    * failed, and signing keys that do not parse.
    */
   report?: ReportTask;
+  /** How the call is paid for, on the premium host. */
+  paid?: HostedProfile["paid"];
 }
 
 /** The hosted profile of one request to /mcp: its caller's limits, and the Worker's bindings. */
@@ -598,7 +600,7 @@ export const hostedProfile = (
   env: LimitsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
   caller: Caller,
-  { observe, report }: ProfileListeners = {}
+  { observe, report, paid }: ProfileListeners = {}
 ): HostedProfile => {
   const keep = (
     call: HostedCallInfo,
@@ -614,7 +616,7 @@ export const hostedProfile = (
     });
   };
 
-  return {
+  const profile: HostedProfile = {
     userAgent: USER_AGENT,
     sign: requestSigner(
       env.WEB_BOT_AUTH_KEYS,
@@ -681,4 +683,10 @@ export const hostedProfile = (
       };
     },
   };
+
+  if (paid !== undefined) {
+    profile.paid = paid;
+  }
+
+  return profile;
 };
