@@ -1253,7 +1253,7 @@ const siteText = (audit: SiteAudit, w: Writer): string[] => {
     `  ${countsText(audit.counts, w)}`,
     `  ${dotted(
       [
-        `${plural(crawl.pagesCrawled, "page")} audited, ${crawl.pagesDiscovered} found${crawl.hitPageLimit ? ` (the limit of ${crawl.maxPages} was reached)` : ""}`,
+        `${plural(crawl.pagesCrawled, "page")} audited, ${crawl.pagesDiscovered} ${crawl.pagesListed === undefined ? "found" : "listed"}${crawl.hitPageLimit ? ` (the limit of ${crawl.maxPages} was reached)` : ""}`,
         duration(crawl.durationMs),
       ],
       w

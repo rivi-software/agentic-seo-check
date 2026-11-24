@@ -217,6 +217,26 @@ const namedArguments = (entries: [string, Iterable<string>][]) =>
 
 const rulesOf = (findings: { rule: string }[]) => findings.map((f) => f.rule);
 
+/** The pages of a list on one site (issue #231), and the site they are on. */
+const LISTED = ["https://shop.example.com/a", "https://shop.example.com/b"];
+const Pages = z.object({ pages: z.array(z.object({ url: z.string() })) });
+
+const serveListed = () =>
+  serve({
+    "https://shop.example.com/": {
+      body: page("Shop home page for the fixture", '<a href="/c">C</a>'),
+    },
+    "https://shop.example.com/a": {
+      body: page("Page A of the fixture", '<a href="/missing">Gone</a>'),
+    },
+    "https://shop.example.com/b": {
+      body: page("Page B of the fixture", '<a href="/">Home</a>'),
+    },
+    "https://shop.example.com/c": {
+      body: page("Page C of the fixture", '<a href="/">Home</a>'),
+    },
+  });
+
 /** A page, a competitor's with a table, and a site whose robots.txt keeps every crawler out. */
 const serveCompared = () =>
   serve({
@@ -1377,6 +1397,62 @@ describe("the hosted server", () => {
       // Pages and sitemap URLs the crawl never reached are not orphans.
       expect(rulesOf(siteFindings)).not.toContain("site.orphan-pages");
       expect(rulesOf(siteFindings)).not.toContain("site.broken-internal-links");
+    });
+
+    describe("a list of pages on one site (issue #231)", () => {
+      it("audits the listed pages with seo_crawl_site and checks their links without crawling them", async () => {
+        serveListed();
+        const client = await connect(profileWith().profile);
+
+        const result = await client.callTool({
+          name: "seo_crawl_site",
+          arguments: {
+            url: "https://shop.example.com/",
+            urls: LISTED,
+            detail: "full",
+          },
+        });
+
+        expect(result.isError).toBeFalsy();
+        expect(
+          Pages.parse(result.structuredContent)
+            .pages.map((p) => p.url)
+            .toSorted()
+        ).toStrictEqual(LISTED);
+        expect(
+          rulesOf(SiteFindings.parse(result.structuredContent).siteFindings)
+        ).toContain("site.broken-internal-links");
+        expect(sentRequests.map((r) => r.url)).not.toContain(
+          "https://shop.example.com/c"
+        );
+      });
+
+      it("audits the listed pages with seo_aeo_audit, and refuses a page on another site", async () => {
+        serveListed();
+        const client = await connect(profileWith().profile);
+
+        const aeo = await client.callTool({
+          name: "seo_aeo_audit",
+          arguments: { url: "https://shop.example.com/", urls: [LISTED[0]] },
+        });
+
+        expect(
+          Pages.parse(aeo.structuredContent).pages.map((p) => p.url)
+        ).toStrictEqual([LISTED[0]]);
+
+        const elsewhere = await client.callTool({
+          name: "seo_crawl_site",
+          arguments: {
+            url: "https://shop.example.com/",
+            urls: ["https://other.example.com/a"],
+          },
+        });
+
+        expect(elsewhere.isError).toBeTruthy();
+        expect(JSON.stringify(elsewhere.content)).toContain(
+          "must be on the origin of the start URL"
+        );
+      });
     });
 
     it("takes a site's own error page titled 'Access denied' for the site's answer", async () => {

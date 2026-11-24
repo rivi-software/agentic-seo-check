@@ -416,7 +416,7 @@ export const crawlFactRows = (seo: SiteAudit): Fact[] => {
   return [
     [
       "Pages audited",
-      `${crawl.pagesCrawled} of ${crawl.pagesDiscovered} found`,
+      `${crawl.pagesCrawled} of ${crawl.pagesDiscovered} ${crawl.pagesListed === undefined ? "found" : "listed"}`,
     ],
     [
       "Page limit",

@@ -4,7 +4,12 @@ import { promises as fs } from "node:fs";
 import { Argument, Command, InvalidArgumentError, Option } from "commander";
 
 import { auditAeoTarget, compactAeoAudit } from "./core/aeo/audit.js";
-import { auditTarget, compactAudit, resolveTarget } from "./core/audit.js";
+import {
+  auditTarget,
+  compactAudit,
+  readStdin,
+  resolveTarget,
+} from "./core/audit.js";
 import type { CrawlOptions, ProgressEvent } from "./core/audit.js";
 import {
   compactComparison,
@@ -288,6 +293,10 @@ const addAuditOptions = (cmd: Command, mode: Mode): Command => {
   cmd
     .option("--include <regex...>", "Only crawl URLs matching these patterns")
     .option("--exclude <regex...>", "Skip URLs matching these patterns")
+    .option(
+      "--urls <file>",
+      'Audit only the pages in this file, one URL or path per line ("-" for stdin), instead of crawling'
+    )
     .optionsGroup("Checks");
 
   if (mode === "aeo") {
@@ -388,6 +397,7 @@ interface CliOptions {
   checkExternal?: boolean;
   include?: string[];
   exclude?: string[];
+  urls?: string;
   format?: OutputFormat;
   out?: string;
   failOn: Severity | "none";
@@ -414,6 +424,17 @@ const ruleIds = (values: string[] | undefined): string[] | undefined =>
     .map((v) => v.trim())
     .filter(Boolean);
 
+/** A file a flag names; one that cannot be read is the user's to fix, not a bug. */
+const readTextFile = async (file: string, what: string): Promise<string> => {
+  try {
+    return await fs.readFile(file, "utf-8");
+  } catch (error) {
+    throw new ExpectedError(
+      `Cannot read ${what} ${file}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+};
+
 /** The findings of the audit `--baseline` names. */
 const readBaseline = async (
   file: string | undefined
@@ -422,13 +443,29 @@ const readBaseline = async (
     return;
   }
 
-  const json = await fs.readFile(file, "utf-8").catch((error: Error) => {
-    throw new ExpectedError(
-      `Cannot read the baseline ${file}: ${error.message}`
-    );
-  });
+  return baselineFromAudit(await readTextFile(file, "the baseline"));
+};
 
-  return baselineFromAudit(json);
+/**
+ * The pages `--urls` names (issue #231): one URL or path per line of the file, or of stdin for
+ * "-". Blank lines and lines that start with # are left out.
+ */
+const readUrlList = async (
+  file: string | undefined
+): Promise<string[] | undefined> => {
+  if (file === undefined) {
+    return;
+  }
+
+  const text =
+    file === "-"
+      ? await readStdin()
+      : await readTextFile(file, "the list of URLs");
+
+  return text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("#"));
 };
 
 /** `-H "Name: value"` flags as request headers. */
@@ -480,6 +517,8 @@ const auditFor = async (
 ): Promise<{ report: Audit | AeoAudit; output: string }> => {
   const headers = parseHeaders(opts.header);
 
+  const urls = await readUrlList(opts.urls);
+
   const options: CrawlOptions & { crawl?: boolean } = {
     crawl: mode === "crawl" || Boolean(opts.crawl),
     maxPages: opts.maxPages,
@@ -497,6 +536,7 @@ const auditFor = async (
     checkExternalLinks: opts.checkExternal,
     includePatterns: opts.include,
     excludePatterns: opts.exclude,
+    urls,
     includeInfo: opts.info,
     disableRules: opts.disable,
     onlyRules: ruleIds(opts.rule),

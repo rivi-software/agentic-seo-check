@@ -355,7 +355,7 @@ const siteMarkdown = (audit: SiteAudit): string => {
   const lines: string[] = [
     `# SEO site audit: ${audit.target}`,
     "",
-    `Score **${audit.score}/100** · ${countsLine(audit.counts)} · ${audit.crawl.pagesCrawled} pages audited, ${audit.crawl.pagesDiscovered} discovered${audit.crawl.hitPageLimit ? ` (page limit ${audit.crawl.maxPages} reached)` : ""} · ${(audit.crawl.durationMs / 1000).toFixed(1)} s`,
+    `Score **${audit.score}/100** · ${countsLine(audit.counts)} · ${audit.crawl.pagesCrawled} pages audited, ${audit.crawl.pagesDiscovered} ${audit.crawl.pagesListed === undefined ? "discovered" : "listed"}${audit.crawl.hitPageLimit ? ` (page limit ${audit.crawl.maxPages} reached)` : ""} · ${(audit.crawl.durationMs / 1000).toFixed(1)} s`,
     "",
     "| Check | Result |",
     "| --- | --- |",

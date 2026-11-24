@@ -33,6 +33,7 @@ import type {
   RobotsTxtInfo,
   SitemapInfo,
 } from "./types.js";
+import { inListOrder, listedPages, withListed } from "./url-list.js";
 import {
   hostOf,
   isSameSite,
@@ -80,6 +81,11 @@ export interface CrawlOptions {
   maxSitemaps?: number;
   /** The most of one sitemap to read, uncompressed (default 15 MB). */
   maxSitemapBytes?: number;
+  /**
+   * Audit exactly these pages, on the start URL's origin, instead of crawling from it: links are
+   * checked but none is followed to a new page (issue #231). At most `maxPages`.
+   */
+  urls?: readonly string[];
 }
 
 export interface CrawlResult {
@@ -213,6 +219,30 @@ const inCrawlOrder = (
 
   return [...ordered, ...rest];
 };
+
+/** The refusal of the first of `urls` the gate refused, if any was. */
+const firstRefusal = (
+  refusals: Refusals,
+  urls: readonly string[]
+): RequestRefusedError | undefined => {
+  for (const url of urls) {
+    const refusal = refusals.of(url);
+
+    if (refusal) {
+      return refusal;
+    }
+  }
+
+  return undefined;
+};
+
+/** The pages in the order the site rules read them: a list's order, or the crawl's. */
+const crawlOrder = (
+  records: PageRecord[],
+  startUrl: string,
+  listed: readonly string[] | null
+): PageRecord[] =>
+  listed ? inListOrder(records, listed) : inCrawlOrder(records, startUrl);
 
 /**
  * Works through a queue that grows while it runs: each crawled page can add the links it found.
@@ -485,16 +515,28 @@ const checkExternalTargets = async (
  */
 const crawlPolicy = (
   robots: RobotsResult,
-  startUrl: string,
+  targets: readonly string[],
   options: { respectRobots: boolean; userAgent: string; gated: boolean }
 ): ((url: string) => boolean) => {
   if (!options.respectRobots) {
     return () => true;
   }
 
-  if (!robots.crawlerAllows(startUrl) && robots.allows(startUrl)) {
+  const [first] = targets;
+
+  // A list is refused only when robots.txt keeps the crawl from every page on it.
+  if (
+    first &&
+    targets.every((t) => !robots.crawlerAllows(t) && robots.allows(t))
+  ) {
     const token = robotsUserAgentToken(options.userAgent);
-    const reason = `${robots.info.url} asks ${token} not to crawl ${startUrl} (in a User-agent: ${token} group), so there is nothing to crawl.`;
+
+    const what =
+      targets.length === 1
+        ? first
+        : `any of the ${targets.length} listed pages`;
+
+    const reason = `${robots.info.url} asks ${token} not to crawl ${what} (in a User-agent: ${token} group), so there is nothing to crawl.`;
 
     // A gate (the hosted server's) obeys robots.txt for every request, with no way to turn that
     // off: it gives the site's reason and nothing more.
@@ -560,11 +602,15 @@ export const crawlSite = async (
   const startHost = hostOf(startUrl) ?? "";
   const userAgent = options.fetch.userAgent ?? DEFAULT_USER_AGENT;
 
+  const listed = listedPages(startUrl, input.urls, options.maxPages);
+
+  const starts = listed ?? [startUrl];
+
   progress({ phase: "robots", message: `Fetching ${origin}/robots.txt` });
   // Without robots.txt the crawl cannot tell what it may request, so a refusal here ends it.
   const robots = await loadRobotsTxt(origin, userAgent, options.fetch);
 
-  const fetchable = crawlPolicy(robots, startUrl, {
+  const fetchable = crawlPolicy(robots, starts, {
     respectRobots: options.respectRobots,
     userAgent,
     gated: options.fetch.gate !== undefined,
@@ -579,8 +625,8 @@ export const crawlSite = async (
 
   const sitemaps = await crawlSitemaps(robots, startUrl, options, refusals);
 
-  const visited = new Set<string>([startUrl]);
-  const discovered = new Set<string>([startUrl]);
+  const visited = new Set<string>(starts);
+  const discovered = new Set<string>(starts);
   const linkChecks = new Map<string, LinkCheck>();
   const linkSources = new Map<string, Set<string>>();
   const externalSources = new Map<string, Set<string>>();
@@ -605,7 +651,7 @@ export const crawlSite = async (
     return true;
   };
 
-  const queue: QueueItem[] = [{ url: startUrl, depth: 0 }];
+  const queue: QueueItem[] = starts.map((url) => ({ url, depth: 0 }));
   const shareLinkStrings = linkStringSharer();
 
   /** The page as the crawl keeps it, its links sharing their strings with earlier pages'. */
@@ -641,7 +687,9 @@ export const crawlSite = async (
 
       addSource(linkSources, target, from);
 
+      // A list's links are checked after the pages, never crawled.
       if (
+        listed ||
         !looksLikeHtml(target) ||
         !accepts(target) ||
         discovered.has(target)
@@ -814,17 +862,19 @@ export const crawlSite = async (
     }
   );
 
-  // With the start page refused there is no site to audit: the refusal says why.
-  const startRefusal = refusals.of(startUrl);
+  // With the start page (or every listed page) refused there is no site to audit: the refusal
+  // says why.
+  const startRefusal =
+    records.length === 0 ? firstRefusal(refusals, starts) : undefined;
 
-  if (records.length === 0 && startRefusal) {
+  if (startRefusal) {
     throw startRefusal;
   }
 
   // Site rules that keep the first of a group (the page a spelling variant duplicates, the page
   // a duplicate's canonical should name) then pick the same page on every run.
   // One at a time: spreading 100,000 records into splice() overflows the stack.
-  for (const [i, record] of inCrawlOrder(records, startUrl).entries()) {
+  for (const [i, record] of crawlOrder(records, startUrl, listed).entries()) {
     records[i] = record;
   }
 
@@ -927,16 +977,19 @@ export const crawlSite = async (
     refusals
   );
 
-  const stats: CrawlStats = {
-    pagesCrawled: records.length,
-    pagesDiscovered: discovered.size,
-    linksChecked: linkChecks.size + (externalChecks?.size ?? 0),
-    maxPages: options.maxPages,
-    maxDepth: options.maxDepth,
-    hitPageLimit: limitSkips > 0,
-    durationMs: Math.round(performance.now() - started),
-    respectedRobots: options.respectRobots,
-  };
+  const stats = withListed(
+    {
+      pagesCrawled: records.length,
+      pagesDiscovered: discovered.size,
+      linksChecked: linkChecks.size + (externalChecks?.size ?? 0),
+      maxPages: options.maxPages,
+      maxDepth: options.maxDepth,
+      hitPageLimit: limitSkips > 0,
+      durationMs: Math.round(performance.now() - started),
+      respectedRobots: options.respectRobots,
+    },
+    listed
+  );
 
   return {
     startUrl,
