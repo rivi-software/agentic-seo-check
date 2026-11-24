@@ -123,6 +123,9 @@ agentic-seo-check audit https://www.example.com/pricing
 # whole site
 agentic-seo-check crawl https://www.example.com --max-pages 100 --max-depth 4
 
+# only the pages you changed, with the site-wide checks over them (one URL or path a line)
+agentic-seo-check crawl https://www.example.com --urls changed.txt
+
 # local dev server, ignore the dev robots.txt, include JS rendering comparison
 agentic-seo-check audit http://localhost:3000 --crawl --ignore-robots --render
 
@@ -255,10 +258,10 @@ Or `claude mcp add agentic-seo-check -- npx -y @rivi-software/agentic-seo-check 
 | Tool | Purpose |
 | --- | --- |
 | `seo_audit_page` | Audit one URL or an HTML string. Options: `keyword`, `render`, `lighthouse`, `formFactor`, `fieldData`, `includeInfo`, `disableRules`, `rules`, `baseline`, `headers`, `format` (json/markdown), `detail` (compact/full). |
-| `seo_crawl_site` | Crawl and audit a site. Options: `maxPages`, `maxDepth`, `concurrency`, `delayMs`, `respectRobots`, `includeSubdomains`, `checkExternalLinks`, `includePatterns`, `excludePatterns`, `pageDetail`, `fieldData`. |
+| `seo_crawl_site` | Crawl and audit a site. Options: `maxPages`, `maxDepth`, `concurrency`, `delayMs`, `respectRobots`, `includeSubdomains`, `checkExternalLinks`, `includePatterns`, `excludePatterns`, `urls`, `pageDetail`, `fieldData`. |
 | `seo_audit_directory` | Audit built HTML files in a directory. Options: `dir`, `baseUrl`, `maxPages`, `pageDetail`. |
 | `seo_lighthouse` | Lighthouse performance + SEO + agentic-browsing for one URL. |
-| `seo_aeo_audit` | AEO audit of one of `url` (with `crawl` for a site), `html` or `dir`. Options: `aiBots`, `baseUrl`, `maxPages`, `maxDepth`, `concurrency`, `respectRobots`, `includeSubdomains`, `pageDetail`, `includeInfo`, `disableRules`, `rules`, `baseline`, `headers`, `format`, `detail`. |
+| `seo_aeo_audit` | AEO audit of one of `url` (with `crawl` for a site), `html` or `dir`. Options: `urls`, `aiBots`, `baseUrl`, `maxPages`, `maxDepth`, `concurrency`, `respectRobots`, `includeSubdomains`, `pageDetail`, `includeInfo`, `disableRules`, `rules`, `baseline`, `headers`, `format`, `detail`. |
 | `seo_compare_pages` | Compare `url` with 1 to 5 `competitors`' pages: scores, signals, `gaps` with their fix and `leads`. Options: `keyword`, `fieldData`, `timeoutMs`, `userAgent`, `headers` (the page's origin only), `format`, `detail`. |
 | `seo_share_report` | Run both audits of one of `url` (with `crawl` for a site) or `dir`, upload the report and answer with its secret link, as `share` does. Options: `baseUrl`, `maxPages`, `maxDepth`, `respectRobots`, `includeInfo`, `timeoutMs`, `userAgent`, `headers`. |
 | `seo_list_rules` | Rule reference, filter by `category` or `rule`. |
@@ -266,6 +269,8 @@ Or `claude mcp add agentic-seo-check -- npx -y @rivi-software/agentic-seo-check 
 Every audit tool also takes `rules` (run only these rule ids) and `baseline` (the `id` of each finding of the earlier audit) for a re-check, like `--rule` and `--baseline`. `rules` and `disableRules` take a category, or what a rule id has before its dot, as well as a rule id: `["structured-data"]` for a structured-data pass, `["robots", "canonical"]` for every `robots.*` and `canonical.*` rule. For a crawl or directory, run both audits with `pageDetail: "full"` so page findings have ids.
 
 `fieldData` reads `CRUX_API_KEY` from the server's environment: add `"env": { "CRUX_API_KEY": "…" }` beside `args` in `.mcp.json`.
+
+`urls` on `seo_crawl_site` and `seo_aeo_audit` (`--urls <file>` in the CLI) audits exactly those pages instead of crawling from `url`, such as the pages an agent just changed: every one on the origin of `url`, at most `maxPages`. Their links are checked and robots.txt is obeyed as in a crawl, and the site-wide checks run over the set, except the orphan check, which needs every page's links. No link is followed to a new page. The audit's `crawl.pagesListed` counts the pages listed.
 
 `seo_compare_pages` searches for no competitors: the agent brings their URLs, from its own web search for the query, from the user, or from the pages an AI answer cited.
 

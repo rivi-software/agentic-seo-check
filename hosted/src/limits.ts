@@ -1,3 +1,5 @@
+import { createHmac, randomBytes } from "node:crypto";
+
 import { WEBSITE_URL } from "../../src/brand.js";
 import { RequestRefusedError } from "../../src/core/fetch.js";
 import type { RequestGate } from "../../src/core/fetch.js";
@@ -255,18 +257,83 @@ const countRequests = async (
 const sitesLimit = (env: LimitsEnv, caller: Caller): number =>
   caller.platform ? env.PLATFORM_SITES : env.CALLER_SITES;
 
+/** The admissions an isolate keeps at most; the oldest goes first. */
+export const ADMITTED_ENTRIES = 4096;
+
+/**
+ * The sites the object admitted for a caller today, as this isolate saw it answer (issue #204). An
+ * admission holds until 00:00 UTC, so the isolate asks the object, in the EU, only about a site it
+ * has not seen admitted; a refusal is never kept, since another site may still fit. Like the
+ * object, it keeps no caller or site: each pair is hashed with a random key made for the day, which
+ * goes with the day's entries.
+ */
+interface AdmittedSites {
+  day: string;
+  key: Buffer;
+  /** The hashed pairs, oldest first: a Set keeps insertion order. */
+  entries: Set<string>;
+}
+
+const admittedSites = new WeakMap<LimitsEnv["STATE"], AdmittedSites>();
+
+const admittedToday = (env: LimitsEnv, day: string): AdmittedSites => {
+  const cached = admittedSites.get(env.STATE);
+
+  if (cached?.day === day) {
+    return cached;
+  }
+
+  const fresh = { day, key: randomBytes(32), entries: new Set<string>() };
+  admittedSites.set(env.STATE, fresh);
+
+  return fresh;
+};
+
+const admissionId = (
+  admitted: AdmittedSites,
+  caller: string,
+  site: string
+): string =>
+  createHmac("sha256", admitted.key)
+    .update(`${caller}\n${site}`)
+    .digest("base64url");
+
 /** Whether `caller` may audit the site of `host` today; a new site counts. */
-const admitSite = (
+const admitSite = async (
   env: LimitsEnv,
   caller: Caller,
   host: string
-): Promise<boolean> =>
-  globalState(env).admitSite(
-    today(),
+): Promise<boolean> => {
+  const day = today();
+  const site = siteOf(host);
+  const admitted = admittedToday(env, day);
+  const id = admissionId(admitted, caller.key, site);
+
+  if (admitted.entries.delete(id)) {
+    admitted.entries.add(id);
+
+    return true;
+  }
+
+  const allowed = await globalState(env).admitSite(
+    day,
     caller.key,
-    siteOf(host),
+    site,
     sitesLimit(env, caller)
   );
+
+  // The day may have turned while the object answered: keep it only for the day it was asked for.
+  if (allowed && admittedSites.get(env.STATE) === admitted) {
+    admitted.entries.add(id);
+
+    if (admitted.entries.size > ADMITTED_ENTRIES) {
+      const [oldest = ""] = admitted.entries;
+      admitted.entries.delete(oldest);
+    }
+  }
+
+  return allowed;
+};
 
 /** Throws the refusal of a call, or a crawl, that MODE keeps out. */
 const checkMode = (env: LimitsEnv, crawl: boolean): void => {

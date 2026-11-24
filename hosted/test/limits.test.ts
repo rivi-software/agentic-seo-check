@@ -4,6 +4,7 @@ import { CallLimitError } from "../../src/mcp-hosted.ts";
 import type { HostedCallInfo } from "../../src/mcp.ts";
 import type { Caller } from "../src/callers.ts";
 import {
+  ADMITTED_ENTRIES,
   backgroundCrawl,
   hostedProfile,
   MAX_INDEX_BYTES,
@@ -35,6 +36,8 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
   const sites = new Map<string, Set<string>>();
   /** The objects the limits asked for, as "jurisdiction/name", "/name" without one. */
   const objects: string[] = [];
+  /** Each question to admitSite, as "day caller site". */
+  const asked: string[] = [];
 
   const counter = {
     // oxlint-disable-next-line eslint/require-await -- the Durable Object answers with a promise
@@ -55,6 +58,7 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
       site: string,
       limit: number
     ) => {
+      asked.push(`${day} ${caller} ${site}`);
       const known = sites.get(`${day} ${caller}`) ?? new Set<string>();
       sites.set(`${day} ${caller}`, known);
 
@@ -124,6 +128,7 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
     stored: () => stored,
     sites,
     objects,
+    asked,
   };
 };
 
@@ -166,6 +171,9 @@ const INLINE: HostedCallInfo = {
   crawl: false,
   host: null,
 };
+
+/** A site of its own for each number. */
+const site = (i: number): string => `site${i}.example.com`;
 
 /** The message of the refusal `start` ends in, or "admitted". */
 const refusalOf = async (start: Promise<unknown>): Promise<string> => {
@@ -335,6 +343,71 @@ describe("the hosted server's limits", () => {
     await expect(refusalOf(profile.startCall(INLINE))).resolves.toBe(
       "admitted"
     );
+  });
+
+  it("ask the object about a site once a day per caller, since an admission holds until 00:00 UTC (issue #204)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    vi.setSystemTime(new Date("2026-11-24T23:59:00Z"));
+
+    const { env, ctx, asked } = fakeEnv();
+    const person = hostedProfile(env, ctx, PERSON);
+
+    await person.startCall(PAGE);
+    // Another call, another tool, with www. dropped: the isolate already knows the answer.
+    await hostedProfile(env, ctx, PERSON).startCall({
+      ...COMPARE,
+      host: "example.com",
+      competitors: [],
+    });
+    expect(asked).toStrictEqual(["2026-11-24 ip:203.0.113.9 example.com"]);
+
+    // Another caller on the same site is no admission of this one's.
+    await hostedProfile(env, ctx, CLAUDE).startCall(PAGE);
+    // A new day asks again.
+    vi.setSystemTime(new Date("2026-11-25T00:00:01Z"));
+    await person.startCall(PAGE);
+
+    expect(asked).toStrictEqual([
+      "2026-11-24 ip:203.0.113.9 example.com",
+      "2026-11-24 platform:anthropic example.com",
+      "2026-11-25 ip:203.0.113.9 example.com",
+    ]);
+  });
+
+  it("ask the object again about a site it refused", async () => {
+    const { env, ctx, asked } = fakeEnv({ CALLER_SITES: 1 });
+    const profile = hostedProfile(env, ctx, PERSON);
+
+    const on = (host: string) =>
+      refusalOf(profile.startCall({ ...PAGE, host }));
+
+    await expect(on("one.example.com")).resolves.toBe("admitted");
+    await expect(on("two.example.com")).resolves.toContain("daily limit");
+    await expect(on("two.example.com")).resolves.toContain("daily limit");
+    expect(asked).toHaveLength(3);
+  });
+
+  it("keep a bounded number of admissions in the isolate, and ask again about the oldest beyond it", async () => {
+    const many = fakeEnv({
+      PLATFORM_SITES: ADMITTED_ENTRIES + 1,
+      PLATFORM_CALLS: limiter(Number.POSITIVE_INFINITY),
+    });
+
+    const platform = hostedProfile(many.env, many.ctx, CLAUDE);
+
+    for (let i = 0; i <= ADMITTED_ENTRIES; i += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- in order, so the oldest is the first
+      await platform.startCall({ ...PAGE, host: site(i) });
+    }
+
+    await platform.startCall({ ...PAGE, host: site(ADMITTED_ENTRIES) });
+    await platform.startCall({ ...PAGE, host: site(0) });
+
+    expect(many.asked).toHaveLength(ADMITTED_ENTRIES + 2);
+    expect(many.asked.at(-1)).toMatch(/ site0\.example\.com$/u);
   });
 
   it("keep the day's requests and sites in the one object in the EU", async () => {

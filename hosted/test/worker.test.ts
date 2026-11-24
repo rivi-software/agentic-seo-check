@@ -735,6 +735,8 @@ describe("the hosted Worker in workerd", () => {
     });
 
     it("refuses a request body over the cap before parsing it", async () => {
+      const before = events.length;
+
       const res = await fetch(new URL("/mcp", base), {
         method: "POST",
         headers: {
@@ -753,6 +755,68 @@ describe("the hosted Worker in workerd", () => {
       });
 
       expect(res.status).toBe(413);
+      await expect(
+        eventsAfter(before, "$mcp_request_refused")
+      ).resolves.toMatchObject([
+        {
+          properties: {
+            $mcp_http_status: 413,
+            $mcp_refusal_reason: "body_size",
+          },
+        },
+      ]);
+    });
+
+    it("answers a request the transport refuses as the SDK does, and tells PostHog why (issue #210)", async () => {
+      const before = events.length;
+
+      const res = await fetch(new URL("/mcp", base), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "mcp-protocol-version": "2099-01-01",
+          "user-agent":
+            "Claude-User (claude-code/2.0; +https://support.anthropic.com/)",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "seo_audit_page",
+            arguments: { url: "https://shop.example.com/private" },
+          },
+        }),
+      });
+
+      // The client gets the transport's own answer, read once for the event and sent on whole.
+      expect({
+        status: res.status,
+        cors: res.headers.get("access-control-allow-origin"),
+      }).toStrictEqual({ status: 400, cors: "*" });
+      await expect(res.json()).resolves.toMatchObject({
+        jsonrpc: "2.0",
+        error: {
+          code: -32_000,
+          message: expect.stringMatching(
+            /^Bad Request: Unsupported protocol version: 2099-01-01 /u
+          ),
+        },
+      });
+
+      const [event] = await eventsAfter(before, "$mcp_request_refused");
+      assert(event, "the refusal's event");
+
+      expect(event.properties).toMatchObject({
+        $mcp_http_status: 400,
+        $mcp_refusal_reason: "protocol_version",
+        $mcp_protocol_version: "2099-01-01",
+        $mcp_client_user_agent: "Claude-User",
+        $mcp_interface: "mcp",
+      });
+      expect(event.properties).not.toHaveProperty("$session_id");
+      expect(JSON.stringify(event)).not.toMatch(/shop\.example|private/u);
     });
 
     it("requests a page with the hosted User-Agent and reads 2 MB of it", async () => {

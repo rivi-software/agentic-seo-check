@@ -36,6 +36,8 @@ import {
   landingPage,
   notFoundPage,
 } from "./pages.js";
+import { mayCallTool, protocolServers } from "./protocol-server.js";
+import { refusalOf } from "./refused-requests.js";
 import { keepReport } from "./shared-reports.js";
 import { DIRECTORY_PATH, directoryResponse, signingKeys } from "./signing.js";
 import { SITE_JS } from "./site/files.js";
@@ -75,12 +77,16 @@ const reportKeeper = (env: Env): HostedProfile["share"] => {
   return bucket && ((report) => keepReport(bucket, report, "hosted"));
 };
 
+/** The servers for requests without a tool call, from a listing this isolate reads once. */
+const protocolServer = protocolServers();
+
 /** OpenAI's ranges as this isolate reads them: from the Durable Object at most once an hour. */
 const openAiRanges = openAiRangesReader();
 
 /**
  * One MCP request: stateless, so every POST gets its own server and transport, and the answer is
- * JSON. The `Mcp-Session-Id` an `initialize` is answered with is a token for the analytics alone
+ * JSON. A tool call gets the hosted server, built for its caller; anything else the light server
+ * of protocol-server.ts, which answers alike. The `Mcp-Session-Id` an `initialize` is answered with is a token for the analytics alone
  * (analytics.ts), which any request can read without the server keeping anything. There is no
  * session to resume or end, so GET and DELETE answer 405, as the protocol allows.
  */
@@ -110,17 +116,20 @@ const handleMcp = async (
     request.headers.get("mcp-session-id")
   );
 
-  const server = createMcpServer({
-    hosted: {
-      ...hostedProfile(env, ctx, caller, {
-        observe: tracking?.observe,
-        report,
-      }),
-      connection: tracking?.connection,
-      share: reportKeeper(env),
-      crawls: backgroundCrawls(env, report),
-    },
-  });
+  // A request that calls no tool, as nearly all are, needs nothing of the caller's (issue #211).
+  const server = (await mayCallTool(request))
+    ? createMcpServer({
+        hosted: {
+          ...hostedProfile(env, ctx, caller, {
+            observe: tracking?.observe,
+            report,
+          }),
+          connection: tracking?.connection,
+          share: reportKeeper(env),
+          crawls: backgroundCrawls(env, report),
+        },
+      })
+    : await protocolServer();
 
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
@@ -138,6 +147,18 @@ const handleMcp = async (
 
   try {
     const response = await transport.handleRequest(request);
+
+    // A 4xx here is the transport refusing the request before any tool ran, which nothing else
+    // hears (issue #210). Its answer is a small JSON error, read once here and sent on as it is.
+    let body: BodyInit | null = response.body;
+
+    if (tracking && response.status >= 400 && response.status < 500) {
+      const text = await response.text();
+
+      tracking.refused(refusalOf(request, response.status, text));
+      body = text;
+    }
+
     const headers = new Headers(response.headers);
 
     for (const [name, value] of Object.entries(CORS)) {
@@ -151,7 +172,7 @@ const handleMcp = async (
       headers.set("mcp-session-id", session);
     }
 
-    return new Response(response.body, { status: response.status, headers });
+    return new Response(body, { status: response.status, headers });
   } finally {
     ctx.waitUntil(server.close());
   }

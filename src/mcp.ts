@@ -58,6 +58,7 @@ import {
   SHARE_ANNOTATIONS,
   shareDescription,
   toOptions,
+  urlListOption,
 } from "./mcp-shared.js";
 import { instrumentTransport } from "./telemetry/mcp.js";
 import type { McpAnalytics } from "./telemetry/mcp.js";
@@ -246,6 +247,7 @@ export const createMcpServer = (
         )}`,
       inputSchema: {
         url: z.string().url().describe("Start URL (usually the homepage)."),
+        urls: urlListOption(z.string().url(), 500),
         maxPages: z
           .number()
           .int()
@@ -320,6 +322,7 @@ export const createMcpServer = (
           checkExternalLinks: input.checkExternalLinks,
           includePatterns: input.includePatterns,
           excludePatterns: input.excludePatterns,
+          urls: input.urls,
           pageDetail: input.pageDetail,
         });
 
@@ -481,6 +484,11 @@ export const createMcpServer = (
           .boolean()
           .default(false)
           .describe("With `url`: crawl internal links and audit every page."),
+        urls: urlListOption(
+          z.string().url(),
+          5000,
+          " (a crawl without `crawl`)"
+        ),
         aiBots: z
           .boolean()
           .default(false)
@@ -546,6 +554,7 @@ export const createMcpServer = (
           concurrency: input.concurrency,
           respectRobots: input.respectRobots,
           includeSubdomains: input.includeSubdomains,
+          urls: input.urls,
           pageDetail: input.pageDetail,
         };
 
@@ -570,7 +579,8 @@ export const createMcpServer = (
           );
         } else if (input.dir !== undefined) {
           audit = await auditAeoDirectory(input.dir, options);
-        } else if (input.url && input.crawl) {
+        } else if (input.url && (input.crawl || input.urls !== undefined)) {
+          // A list of pages is a crawl of them.
           audit = await auditAeoSite(input.url, options);
         } else if (input.url) {
           audit = await auditAeoUrl(input.url, options);

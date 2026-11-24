@@ -49,6 +49,20 @@ export const fieldDataOption = (key: string) =>
       `With \`url\`: also read real-user Core Web Vitals from the Chrome UX Report (LCP, INP, CLS, FCP and TTFB at the 75th percentile, Chrome on phones, the last 28 days), for the URL or, when it has too few visits, its origin; a crawl asks for its first ${FIELD_DATA_PAGES} pages. Adds \`fieldData\` to each page audit and perf.field-* findings with Google's thresholds. A page without a record gets \`fieldData.reason: "no-data"\` and no finding: few visits say nothing against it. ${key}`
     );
 
+/**
+ * `urls` on a crawl (issue #231): the pages to audit instead of crawling from `url`. `crawl` is
+ * the words for seo_aeo_audit, whose list makes the call a crawl of it.
+ */
+export const urlListOption = (url: z.ZodString, max: number, crawl = "") =>
+  z
+    .array(url)
+    .min(1)
+    .max(max)
+    .optional()
+    .describe(
+      `Audit exactly these pages instead of crawling from \`url\`, such as the pages you just changed${crawl}: every one on the origin of \`url\`, at most \`maxPages\` (${max} at most). Their links are checked, robots.txt is obeyed and the site-wide checks run over the set, but no link is followed to a new page, so the orphan check is left out.`
+    );
+
 export const commonOptions = {
   keyword: z
     .string()

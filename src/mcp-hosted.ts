@@ -63,6 +63,7 @@ import {
   SHARE_ANNOTATIONS,
   shareDescription,
   toOptions,
+  urlListOption,
 } from "./mcp-shared.js";
 import type { ErrorDescription } from "./mcp-shared.js";
 import {
@@ -337,6 +338,7 @@ const AUDIT_PAGE_INPUT = {
 /** The arguments of seo_crawl_site. */
 const CRAWL_SITE_INPUT = {
   url: url.describe("Start URL (usually the homepage)."),
+  urls: urlListOption(url, LIMITS.maxPages),
   maxPages: z
     .number()
     .int()
@@ -465,6 +467,7 @@ const AEO_AUDIT_INPUT = {
     .boolean()
     .default(false)
     .describe("With `url`: crawl internal links and audit every page."),
+  urls: urlListOption(url, LIMITS.maxPages, " (a crawl without `crawl`)"),
   maxPages: z
     .number()
     .int()
@@ -830,6 +833,7 @@ const crawlOptions = (
   maxLinkChecks: LIMITS.maxLinkChecks,
   includePatterns: input.includePatterns,
   excludePatterns: input.excludePatterns,
+  urls: input.urls,
   pageDetail: input.pageDetail,
   maxSitemaps: LIMITS.maxSitemaps,
   maxSitemapBytes: LIMITS.maxSitemapBytes,
@@ -1213,10 +1217,11 @@ const registerCrawlResult = (
 const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
   server.registerTool("seo_aeo_audit", AEO_AUDIT, (input) =>
     inConversation(profile, input.conversation_id, () => {
-      noteOptions(
-        input,
-        input.url !== undefined && input.crawl ? input.pageDetail : undefined
-      );
+      // A list of pages is a crawl of them.
+      const crawl =
+        input.url !== undefined && (input.crawl || input.urls !== undefined);
+
+      noteOptions(input, crawl ? input.pageDetail : undefined);
 
       if ((input.url === undefined) === (input.html === undefined)) {
         return fail(
@@ -1234,8 +1239,6 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
         return fail(error);
       }
 
-      const crawl = input.url !== undefined && input.crawl;
-
       return runCall(
         profile,
         { tool: "seo_aeo_audit", fetches: host !== null, crawl, host },
@@ -1248,6 +1251,7 @@ const registerAeoAudit = (server: McpServer, profile: HostedProfile): void => {
             concurrency: input.concurrency,
             respectRobots: true,
             includeSubdomains: input.includeSubdomains,
+            urls: input.urls,
             pageDetail: input.pageDetail,
           };
 

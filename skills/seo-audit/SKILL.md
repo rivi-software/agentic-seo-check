@@ -15,6 +15,7 @@ The MCP tools may come from the hosted server (`https://agentic-seo.org/mcp`; it
 | --- | --- |
 | One page, live or on `http://localhost:3000` | `seo_audit_page { url }` / `agentic-seo-check audit <url>` |
 | Whole site, find site-wide problems | `seo_crawl_site { url, maxPages }` / `agentic-seo-check crawl <url> --max-pages 50` |
+| The few pages you changed, with the site-wide checks over them (duplicates, broken links, sitemap) | `seo_crawl_site { url, urls: [...] }` / `agentic-seo-check crawl <url> --urls changed.txt` (one URL or path a line): audits exactly those pages on `url`'s origin and follows no link. `urls` works the same on `seo_aeo_audit` |
 | Static export already built (Next `out/`, Astro `dist/`, Vite `dist/`) | `seo_audit_directory { dir, baseUrl }` / `agentic-seo-check audit ./dist --base-url https://www.example.com` |
 | You rendered HTML yourself (template, test, snapshot) | `seo_audit_page { html, baseUrl }` / `cat page.html \| agentic-seo-check audit -` |
 | Suspect client-side rendering hides content from crawlers | add `render: true` / `--render` |

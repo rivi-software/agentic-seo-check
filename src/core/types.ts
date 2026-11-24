@@ -738,6 +738,8 @@ export interface SitemapInfo {
 export interface CrawlStats {
   pagesCrawled: number;
   pagesDiscovered: number;
+  /** A crawl of a list of URLs (issue #231): the pages listed, which it audited and followed no link from. */
+  pagesListed?: number;
   linksChecked: number;
   maxPages: number;
   maxDepth: number;
