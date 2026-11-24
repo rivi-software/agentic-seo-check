@@ -16,18 +16,20 @@ export interface CruxEnv {
   CRUX_API_KEY?: string;
 }
 
-/**
- * CrUX updates once a day, around 04:00 UTC: a day's answer is the day's report. A PageSpeed
- * Insights run (psi.ts) is kept as long, so one run serves a day's audits of a page.
- */
-const KEEP_SECONDS = 86_400;
+/** CrUX updates once a day, around 04:00 UTC: a day's answer is the day's report. */
+const DAY_SECONDS = 86_400;
 
 /**
- * A cache of one Worker that keeps each answer for a day, in the Cache API's cache `name`. Its
- * keys are addresses on the Worker's own `origin` that are never requested, since the Cache API
- * keeps entries by URL for the zone the Worker runs on, and each ends in a hash of the key given.
+ * A cache of one Worker that keeps each answer for `keepSeconds`, a day unless told otherwise, in
+ * the Cache API's cache `name`. Its keys are addresses on the Worker's own `origin` that are never
+ * requested, since the Cache API keeps entries by URL for the zone the Worker runs on, and each
+ * ends in a hash of the key given.
  */
-export const dayCache = (name: string, origin: string): FieldDataCache => {
+export const dayCache = (
+  name: string,
+  origin: string,
+  keepSeconds = DAY_SECONDS
+): FieldDataCache => {
   const keyOf = async (key: string): Promise<string> =>
     `${origin}/.${name}-cache/${await sha256Hex(key)}`;
 
@@ -46,7 +48,7 @@ export const dayCache = (name: string, origin: string): FieldDataCache => {
         new Response(value, {
           headers: {
             "content-type": "application/json",
-            "cache-control": `public, max-age=${KEEP_SECONDS}`,
+            "cache-control": `public, max-age=${keepSeconds}`,
           },
         })
       );

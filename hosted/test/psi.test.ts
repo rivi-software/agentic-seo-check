@@ -11,6 +11,7 @@ const PAGE = "https://shop.example.com/";
 const fakeCaches = () => {
   const opened: string[] = [];
   const kept = new Map<string, Map<string, string>>();
+  const cacheControl: (string | null)[] = [];
 
   vi.stubGlobal("caches", {
     // oxlint-disable-next-line eslint/require-await -- the Cache API answers with a promise
@@ -29,13 +30,14 @@ const fakeCaches = () => {
           );
         },
         put: async (key: string, res: Response) => {
+          cacheControl.push(res.headers.get("cache-control"));
           entries.set(key, await res.text());
         },
       };
     },
   });
 
-  return { opened, kept };
+  return { opened, kept, cacheControl };
 };
 
 /** A PageSpeed Insights that answers with the fixture's result, and the runner that asks it. */
@@ -69,6 +71,15 @@ describe("the hosted server's lab (issue #222)", () => {
     await lab(PAGE, "desktop");
 
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps each answer for ten minutes, not the day a CrUX answer is kept", async () => {
+    const { cacheControl } = fakeCaches();
+    const { lab } = stubbed();
+
+    await lab(PAGE, "mobile");
+
+    expect(cacheControl).toStrictEqual(["public, max-age=600"]);
   });
 
   it("keeps each answer at an address of its own origin that names neither the page nor the key", async () => {
