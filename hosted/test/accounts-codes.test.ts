@@ -11,6 +11,7 @@ import {
   checkCode,
   CODE_ATTEMPTS,
   CODE_MINUTES,
+  FAILURES_A_DAY,
   RESEND_MS,
   sendCode,
 } from "../src/accounts/codes.ts";
@@ -44,6 +45,25 @@ const env = (): CodeEnv => ({
 });
 
 const lastCode = (): string => /\b\d{6}\b/u.exec(texts.at(-1) ?? "")?.[0] ?? "";
+
+const DAY_MS = 86_400_000;
+
+/** Sends a code at `at` and guesses wrong `times`, returning the code that went out. */
+const failWith = async (at: number, times: number): Promise<string> => {
+  await expect(sendCode(env(), "me@example.com", null, at)).resolves.toBe(
+    "sent"
+  );
+
+  const code = lastCode();
+  const wrong = code === "000000" ? "000001" : "000000";
+
+  for (let guess = 0; guess < times; guess += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- one guess after another, as a person types
+    await checkCode(env(), "me@example.com", wrong, at + 1);
+  }
+
+  return code;
+};
 
 describe("sign-in codes", () => {
   beforeEach(() => {
@@ -167,6 +187,85 @@ describe("sign-in codes", () => {
       await expect(
         checkCode(env(), "me@example.com", code, NOW + 2)
       ).resolves.toStrictEqual({ error: "locked" });
+    });
+
+    describe("across new codes", () => {
+      it("locks the address for the day after FAILURES_A_DAY wrong guesses, however many codes went out", async () => {
+        // Wrong guesses per code, adding up to the day's cap; the last code keeps attempts of its
+        // own, so only the day's cap can lock it.
+        const pattern = [5, 5, 5, 3, 2];
+
+        expect(pattern.reduce((sum, each) => sum + each)).toBe(FAILURES_A_DAY);
+
+        let last = "";
+
+        for (const [index, times] of pattern.entries()) {
+          // oxlint-disable-next-line no-await-in-loop -- each code after the last one's minute
+          last = await failWith(NOW + index * RESEND_MS, times);
+        }
+
+        await expect(
+          checkCode(
+            env(),
+            "me@example.com",
+            last,
+            NOW + pattern.length * RESEND_MS
+          )
+        ).resolves.toStrictEqual({ error: "locked" });
+        await expect(
+          sendCode(env(), "me@example.com", null, NOW + DAY_MS / 24)
+        ).resolves.toBe("limited");
+      });
+
+      it("opens again on the next UTC day", async () => {
+        for (
+          let index = 0;
+          index < FAILURES_A_DAY / CODE_ATTEMPTS;
+          index += 1
+        ) {
+          // oxlint-disable-next-line no-await-in-loop -- each code after the last one's minute
+          await failWith(NOW + index * RESEND_MS, CODE_ATTEMPTS);
+        }
+
+        const tomorrow = NOW + DAY_MS;
+        const code = await failWith(tomorrow, 0);
+
+        await expect(
+          checkCode(env(), "me@example.com", code, tomorrow + 1)
+        ).resolves.toMatchObject({ account: { email: "me@example.com" } });
+      });
+
+      it("keeps the day's count when a mail fails", async () => {
+        const codes = FAILURES_A_DAY / CODE_ATTEMPTS;
+
+        for (let index = 0; index < codes - 1; index += 1) {
+          // oxlint-disable-next-line no-await-in-loop -- each code after the last one's minute
+          await failWith(NOW + index * RESEND_MS, CODE_ATTEMPTS);
+        }
+
+        await failWith(NOW + (codes - 1) * RESEND_MS, CODE_ATTEMPTS - 1);
+
+        const later = NOW + (codes + 1) * RESEND_MS;
+
+        await expect(
+          sendCode(
+            {
+              ...env(),
+              EMAIL: { send: () => Promise.reject(new Error("mail down")) },
+            },
+            "me@example.com",
+            null,
+            later
+          )
+        ).resolves.toBe("unavailable");
+
+        // One more wrong guess makes the day's cap, so even the right code is refused.
+        const code = await failWith(later + 1, 1);
+
+        await expect(
+          checkCode(env(), "me@example.com", code, later + 2)
+        ).resolves.toStrictEqual({ error: "locked" });
+      });
     });
 
     it("answers expired after the minutes", async () => {

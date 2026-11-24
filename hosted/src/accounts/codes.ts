@@ -1,7 +1,8 @@
 /**
  * Sign-in codes (issue #229): a six digit code mailed to an address proves it is theirs, with no
  * password. Only the code's SHA-256 is kept, it works for ten minutes, five wrong guesses kill it,
- * and a new one may go out once a minute.
+ * a new one may go out once a minute, and twenty wrong guesses lock the address until the next
+ * UTC day.
  */
 import { PRODUCT_NAME } from "../../../src/brand.js";
 import { callerOf } from "../callers.js";
@@ -14,6 +15,12 @@ import type { Account } from "./store.js";
 export const CODE_MINUTES = 10;
 
 export const CODE_ATTEMPTS = 5;
+
+/**
+ * Wrong guesses an address may have in a UTC day, whatever the number of codes: a new code resets
+ * its own five attempts, so without this a guesser asking for one a minute would guess forever.
+ */
+export const FAILURES_A_DAY = 20;
 
 /** The time before another code may go to the same address, so the form cannot flood it. */
 export const RESEND_MS = 60_000;
@@ -37,6 +44,11 @@ export type SendResult =
 export type CheckResult =
   | { account: Account }
   | { error: "wrong" | "expired" | "locked" };
+
+const DAY_MS = 86_400_000;
+
+/** The UTC day of `now`, in days since the epoch, which the day's wrong guesses are counted for. */
+const dayOf = (now: number): number => Math.floor(now / DAY_MS);
 
 /** A code from 000000 to 999999, each as likely as another: values past the last whole multiple are redrawn. */
 const newCode = (): string => {
@@ -76,10 +88,18 @@ export const sendCode = async (
   }
 
   const kept = await env.ACCOUNTS.prepare(
-    "SELECT sent_at FROM sign_in_codes WHERE email = ?"
+    "SELECT sent_at, failed_day, failed_today FROM sign_in_codes WHERE email = ?"
   )
     .bind(email)
-    .first<{ sent_at: number }>();
+    .first<{ sent_at: number; failed_day: number; failed_today: number }>();
+
+  if (
+    kept !== null &&
+    kept.failed_day === dayOf(now) &&
+    kept.failed_today >= FAILURES_A_DAY
+  ) {
+    return "limited";
+  }
 
   if (kept !== null && now - kept.sent_at < RESEND_MS) {
     return "too_soon";
@@ -104,8 +124,11 @@ export const sendCode = async (
       text: `Your sign-in code is ${code}.\n\nIt works for ${CODE_MINUTES} minutes. If you did not ask for it, ignore this email.`,
     });
   } catch {
-    // A code no mail carried is no use, and would hold the next try back for a minute.
-    await env.ACCOUNTS.prepare("DELETE FROM sign_in_codes WHERE email = ?")
+    // A code no mail carried is no use, and would hold the next try back for a minute, so it
+    // stops working and the minute is lifted. The row stays, with the day's wrong guesses.
+    await env.ACCOUNTS.prepare(
+      "UPDATE sign_in_codes SET code_hash = '', expires_at = 0, sent_at = 0 WHERE email = ?"
+    )
       .bind(email)
       .run();
 
@@ -127,22 +150,43 @@ export const checkCode = async (
     return { error: "wrong" };
   }
 
+  const today = dayOf(now);
+
   // Claimed in one statement before comparing, so parallel guesses cannot each read "attempts < 5"
-  // and all get a try: only CODE_ATTEMPTS of them get the hash back.
+  // and all get a try: only CODE_ATTEMPTS of them get the hash back, and no more than the day's
+  // FAILURES_A_DAY across codes. Each claim counts as a wrong guess of the day; a right one
+  // deletes the row below, and its count with it.
   const claimed = await env.ACCOUNTS.prepare(
-    `UPDATE sign_in_codes SET attempts = attempts + 1
+    `UPDATE sign_in_codes
+     SET attempts = attempts + 1,
+       failed_today = CASE WHEN failed_day = ? THEN failed_today + 1 ELSE 1 END,
+       failed_day = ?
      WHERE email = ? AND attempts < ? AND expires_at >= ?
+       AND (failed_day <> ? OR failed_today < ?)
      RETURNING code_hash`
   )
-    .bind(email, CODE_ATTEMPTS, now)
+    .bind(today, today, email, CODE_ATTEMPTS, now, today, FAILURES_A_DAY)
     .first<{ code_hash: string }>();
 
   if (claimed === null) {
     const row = await env.ACCOUNTS.prepare(
-      "SELECT attempts, expires_at FROM sign_in_codes WHERE email = ?"
+      "SELECT attempts, expires_at, failed_day, failed_today FROM sign_in_codes WHERE email = ?"
     )
       .bind(email)
-      .first<{ attempts: number; expires_at: number }>();
+      .first<{
+        attempts: number;
+        expires_at: number;
+        failed_day: number;
+        failed_today: number;
+      }>();
+
+    if (
+      row !== null &&
+      row.failed_day === today &&
+      row.failed_today >= FAILURES_A_DAY
+    ) {
+      return { error: "locked" };
+    }
 
     return {
       error: row === null || now > row.expires_at ? "expired" : "locked",

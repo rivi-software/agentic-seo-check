@@ -24,7 +24,8 @@ CREATE TABLE accounts (
   updated_at INTEGER NOT NULL
 );
 
--- The sign-in codes: one live code per address, replaced when a new one goes out.
+-- The sign-in codes: one live code per address, replaced when a new one goes out, and the
+-- address's wrong guesses of the day, which a new code keeps.
 CREATE TABLE sign_in_codes (
   -- The address the code went to, as in accounts.email.
   -- NOT NULL by hand: SQLite lets a TEXT PRIMARY KEY hold NULL, and more than one.
@@ -36,5 +37,10 @@ CREATE TABLE sign_in_codes (
   -- Milliseconds since the epoch: when the code stops working, and when it was sent (so a new
   -- one cannot follow within a minute and the form cannot flood the address).
   expires_at INTEGER NOT NULL,
-  sent_at INTEGER NOT NULL
+  sent_at INTEGER NOT NULL,
+  -- The UTC day (days since the epoch) of the last wrong guess, and the wrong guesses that day,
+  -- across every code the address got: a new code does not reset them, so asking for one a
+  -- minute gives a guesser no more than twenty tries a day (FAILURES_A_DAY in codes.ts).
+  failed_day INTEGER NOT NULL DEFAULT 0,
+  failed_today INTEGER NOT NULL DEFAULT 0
 );

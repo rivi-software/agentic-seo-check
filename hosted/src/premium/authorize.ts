@@ -182,7 +182,7 @@ const askCode = async (
           view: "email",
           email,
           error:
-            "That is a lot of codes from one address. Wait a minute and try again.",
+            "That is a lot of codes, or of wrong tries for this email address. Try again later.",
         },
         429
       );
