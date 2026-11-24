@@ -1,0 +1,24 @@
+.changeset/premium-accounts.md
+  s_46ac76d26da34b::t_4a327800689664 5
+hosted/README.md
+  s_46ac76d26da34b::t_9b7963ea7c129a 111
+  s_46ac76d26da34b::t_4a327800689664 86,88,115
+AGENTS.md
+  s_46ac76d26da34b::t_4a327800689664 50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fdbcba3feb5ce2ad1f5ebb4589fa9ff99f2a269a",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
