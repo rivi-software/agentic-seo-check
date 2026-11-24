@@ -1,0 +1,76 @@
+src/core/report/markdown.ts
+  s_3eb11dbd20a5f8::t_c6f99d98f80e4d 358
+README.md
+  s_3eb11dbd20a5f8::t_d373154947023a 126-128,261,264,273
+  s_3eb11dbd20a5f8::t_d7da11cf0efd57 274
+src/core/report/text.ts
+  s_3eb11dbd20a5f8::t_c6f99d98f80e4d 1256
+test/hosted.test.ts
+  s_3eb11dbd20a5f8::t_e4d730f48b6e89 1402-1408,1414-1420,1422-1427,1430-1435,1437-1440,1442-1455
+  s_3eb11dbd20a5f8::t_5a3eee2fb1f894 1428-1429,1456-1457
+  s_3eb11dbd20a5f8::t_86d0be7d57beb2 220-239,1409-1413,1421,1436,1441
+src/core/types.ts
+  s_3eb11dbd20a5f8::t_ec148fa5f3f6a9 741-742
+hosted/src/shared-schema.ts
+  s_3eb11dbd20a5f8::t_cb0f0baf655ab0 166
+src/mcp-shared.ts
+  s_3eb11dbd20a5f8::t_98c0698c044365 52-65
+.changeset/crawl-url-list.md
+  s_3eb11dbd20a5f8::t_d373154947023a 1-7
+src/core/site-rules.ts
+  s_3eb11dbd20a5f8::t_ec148fa5f3f6a9 1602-1607
+hosted/src/site/report-data.ts
+  s_3eb11dbd20a5f8::t_c6f99d98f80e4d 419
+src/mcp-hosted.ts
+  s_3eb11dbd20a5f8::t_98c0698c044365 326,392,903,957
+  s_3eb11dbd20a5f8::t_c9faa1858732e4 58
+  s_3eb11dbd20a5f8::t_c6f99d98f80e4d 923-927
+skills/seo-audit/SKILL.md
+  s_3eb11dbd20a5f8::t_d373154947023a 18
+src/cli.ts
+  s_3eb11dbd20a5f8::t_0cee444ebbaef7 296-299,400,447-458,460-462,464-468,520-521,539
+  s_3eb11dbd20a5f8::t_c139b4c30e0f94 428-436
+  s_3eb11dbd20a5f8::t_c6f99d98f80e4d 427,437,446,463
+  s_3eb11dbd20a5f8::t_7975d98f08dc9c 7-12
+src/core/audit.ts
+  s_3eb11dbd20a5f8::t_5afd12199aef6a 1106-1107
+  s_3eb11dbd20a5f8::t_e2dc7412407109 114-118,936,962-964,966-969
+  s_3eb11dbd20a5f8::t_bb2cf30e3c0e88 965
+src/core/url-list.ts
+  s_3eb11dbd20a5f8::t_babaf08dee29a1 28,34,41,43-44
+  s_3eb11dbd20a5f8::t_3bee69f5694598 1-3,5-27,29-30,36-40,42,45-92
+  s_3eb11dbd20a5f8::t_c6f99d98f80e4d 4,31-33,35
+test/url-list.test.ts
+  s_3eb11dbd20a5f8::t_9423f2f4bd6e1f 1-6,135-158,162-166
+  s_3eb11dbd20a5f8::t_86d0be7d57beb2 8,80-88,91-106,109-120,159-161
+  s_3eb11dbd20a5f8::t_a140da9480d75d 7,9-79,89-90,107-108,121-134,167-180
+src/core/aeo/audit.ts
+  s_3eb11dbd20a5f8::t_5afd12199aef6a 888-889
+  s_3eb11dbd20a5f8::t_e2dc7412407109 80-84,273
+src/mcp.ts
+  s_3eb11dbd20a5f8::t_c9faa1858732e4 61,250,325,487-491,557,582-583
+src/core/crawl.ts
+  s_3eb11dbd20a5f8::t_29a54b7baee513 223-238,867-868
+  s_3eb11dbd20a5f8::t_e791ced6c32c31 84-88,241,518,525-531,534,539,607-608,613,628-629,654,690,692,865-866
+  s_3eb11dbd20a5f8::t_b9d88733a7881f 239-240,242-245,605,877
+  s_3eb11dbd20a5f8::t_babaf08dee29a1 870
+  s_3eb11dbd20a5f8::t_3bee69f5694598 36,980-992
+  s_3eb11dbd20a5f8::t_bb2cf30e3c0e88 533,535-538,606
+  s_3eb11dbd20a5f8::t_44f3a88e162f9b 246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c214c64bccf1dc82fc332e25cf2555dadd408fbf",
+  "prompts": {},
+  "sessions": {
+    "s_3eb11dbd20a5f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2607ebd7-4a6e-483a-9d46-5285eb7fea98",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
