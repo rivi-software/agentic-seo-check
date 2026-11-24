@@ -1,0 +1,46 @@
+hosted/test/crawls.test.ts
+  s_e92caf351f3c51::t_97bbe057ebc3d0 19,37,128-131,137,148-151,217,311-327
+  s_e92caf351f3c51::t_17f2d5b25a2477 147,190-192,229-234
+  s_e92caf351f3c51::t_b909db9602aaf2 235,328-329
+hosted/src/shared-reports.ts
+  s_e92caf351f3c51::t_4b4d72df868441 8-9,59-63,85,100-106,108-111,113,116-127,132,138-140,143-144,153-155,159-184,186-187
+hosted/src/crawls.ts
+  s_e92caf351f3c51::t_d941f1c56639cf 30-35,364,367,371-372,381-409,459-464,487-493
+  s_e92caf351f3c51::t_992b9f797a5a5e 18,20,37,66-68,70-71,77,94-95,101-107,109,113,115-118,155,167-171,174-177,180-195,200-201,208-209,211-215,248
+  s_e92caf351f3c51::t_cec9cbb2172938 69
+src/core/hosted.ts
+  s_e92caf351f3c51::t_9e8ab4c7b421d7 84-86
+test/hosted.test.ts
+  s_e92caf351f3c51::t_cca832d9ffa4cc 2168,2180,2187,2192,2204
+hosted/src/limits.ts
+  s_e92caf351f3c51::t_84c1a7ad8d5723 2,357-366,638
+src/mcp-hosted.ts
+  s_e92caf351f3c51::t_28dbb68b6cc6c6 392
+  s_e92caf351f3c51::t_67c99cea31c209 1071-1078,1131,1169,1175-1176,1183,1189-1198,1201
+  s_e92caf351f3c51::t_17f2d5b25a2477 1079
+  s_e92caf351f3c51::t_875a142a3e6143 67
+  s_e92caf351f3c51::t_f2ea426fba23a4 391,856
+  s_e92caf351f3c51::t_53236fb1db40dc 34,49,858-859
+hosted/src/pages.ts
+  s_e92caf351f3c51::t_7828c5845fe64f 10-14
+src/mcp-shared.ts
+  s_e92caf351f3c51::t_28dbb68b6cc6c6 303-309,313
+  s_e92caf351f3c51::t_d941f1c56639cf 336
+  s_e92caf351f3c51::t_37682520520177 310-312,314-317
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "561cd273665f2fc21e89014250d0dd4964846483",
+  "prompts": {},
+  "sessions": {
+    "s_e92caf351f3c51": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48178603-ca61-4e8c-85b4-313a5de7ff44",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
