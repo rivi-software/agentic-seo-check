@@ -1,0 +1,25 @@
+src/core/render-fetch.ts
+  s_46ac76d26da34b::t_cc40fdfeee3478 14-15,208-209,211-213,232-234,236-239,241
+  s_46ac76d26da34b::t_94879fc4ae5a32 242
+test/render-fetch.test.ts
+  s_46ac76d26da34b::t_9e1d1d0396acc1 4,102-108,250-282,290-319
+  s_46ac76d26da34b::t_2fb8490082024f 283,287-289
+  s_46ac76d26da34b::t_cc40fdfeee3478 284-286
+  s_46ac76d26da34b::t_7360595f6f18ad 320
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a438a21f98265ba882775d33ca7efb4961438e2b",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
