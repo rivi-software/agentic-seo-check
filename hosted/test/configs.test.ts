@@ -23,7 +23,6 @@ const settings = (config: typeof server) => ({
   limits: config.limits,
   alias: config.alias,
   observability: config.observability,
-  ratelimits: config.ratelimits,
   analytics_engine_datasets: config.analytics_engine_datasets,
   r2_buckets: config.r2_buckets,
   DAILY_REQUESTS: config.vars["DAILY_REQUESTS"],
@@ -36,6 +35,23 @@ const settings = (config: typeof server) => ({
 describe("the two Workers' configurations", () => {
   it("give the website the MCP server's runtime, limits, namespaces and dataset", () => {
     expect(settings(site)).toStrictEqual(settings(server));
+  });
+
+  it("give the website each of the MCP server's rate limits as the server has it, and the website's own beside them", () => {
+    expect(site.ratelimits).toStrictEqual(
+      expect.arrayContaining([
+        ...server.ratelimits,
+        // The premium waitlist's, the website's alone (issue #232).
+        {
+          name: "WAITLIST_SIGNUPS",
+          namespace_id: "35007",
+          simple: { limit: 5, period: 60 },
+        },
+      ])
+    );
+    expect(server.ratelimits).not.toContainEqual(
+      expect.objectContaining({ name: "WAITLIST_SIGNUPS" })
+    );
   });
 
   it("build the website as the MCP server, and then copy pdfmake for a report's PDF", () => {

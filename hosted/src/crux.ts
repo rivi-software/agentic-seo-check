@@ -9,6 +9,7 @@ import type {
   FieldDataCache,
   FieldDataOptions,
 } from "../../src/core/field-data.js";
+import { sha256Hex } from "./secrets.js";
 
 export interface CruxEnv {
   /** RIVI Software's Chrome UX Report API key, a Worker secret. Without it there is no field data. */
@@ -18,18 +19,13 @@ export interface CruxEnv {
 /** CrUX updates once a day, around 04:00 UTC: a day's answer is the day's report. */
 const KEEP_SECONDS = 86_400;
 
-const hex = (bytes: ArrayBuffer): string =>
-  [...new Uint8Array(bytes)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-
 /**
  * The cache of one Worker, whose keys are addresses on its own `origin` that are never requested:
  * the Cache API keeps entries by URL, for the zone the Worker runs on.
  */
 export const cruxCache = (origin: string): FieldDataCache => {
   const keyOf = async (key: string): Promise<string> =>
-    `${origin}/.crux-cache/${hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key)))}`;
+    `${origin}/.crux-cache/${await sha256Hex(key)}`;
 
   return {
     get: async (key) => {

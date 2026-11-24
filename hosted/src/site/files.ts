@@ -32,6 +32,7 @@ export const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 <url><loc>${SITE_ORIGIN}/</loc></url>
 <url><loc>${SITE_ORIGIN}/rules</loc></url>
+<url><loc>${SITE_ORIGIN}/premium</loc></url>
 <url><loc>${MCP_URL}</loc></url>
 <url><loc>${SITE_ORIGIN}/crawler</loc></url>
 ${ALL_RULES.map((rule) => `<url><loc>${SITE_ORIGIN}${rulePath(rule.id)}</loc></url>`).join("\n")}
@@ -928,6 +929,21 @@ export const SITE_JS = `(() => {
     if (data.summary) {
       track("audit_shown", data.summary);
     }
+  }
+
+  // What became of a waitlist signup or link (issue #232): its answers, never the address.
+  const waitlist = document.querySelector("[data-waitlist-event]");
+
+  if (waitlist) {
+    let properties = {};
+
+    try {
+      properties = JSON.parse(waitlist.dataset.waitlistProps || "{}");
+    } catch {
+      // The page wrote it; an event without its answers still counts.
+    }
+
+    track(waitlist.dataset.waitlistEvent, properties);
   }
 
   const failed = document.querySelector("[data-failure]");

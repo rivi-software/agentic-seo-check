@@ -14,6 +14,7 @@ import {
   MESSAGE_PATTERNS,
   SINGLE_QUOTED,
 } from "../../../src/telemetry/exceptions.js";
+import { SECRET_PATHS } from "./secret-paths.js";
 
 /** The patterns as the browser builds them again: source, flags, replacement, and whether it is the quote. */
 const PATTERNS = MESSAGE_PATTERNS.map(([pattern, replacement]) => [
@@ -29,10 +30,12 @@ const PATTERNS = MESSAGE_PATTERNS.map(([pattern, replacement]) => [
  */
 export const ANALYTICS_HELPERS_JS = String.raw`
   // An address of this site as an event records it, less what belongs to the audited site: a
-  // share link's result (its address and scores), a shared report's id, and the address a link
-  // put in the form. The
+  // share link's result (its address and scores), a shared report's id, a waitlist link's secret,
+  // and the address a link put in the form. The
   // hostnames before issue #168 too, which a referrer may still name.
   const OWN = /^(agentic-seo\.org|(mcp\.)?agentic-seo(-check)?\.rivi\.software)$/;
+
+  const SECRET_PATHS = ${JSON.stringify(SECRET_PATHS)};
 
   const clean = (value) => {
     if (typeof value !== "string" || !/^(\/|https?:\/\/)/.test(value)) {
@@ -51,13 +54,11 @@ export const ANALYTICS_HELPERS_JS = String.raw`
       return value;
     }
 
-    if (url.pathname.startsWith("/share/")) {
-      url.pathname = "/share/:result";
-    }
+    // A path that holds a secret or a result keeps only its name (secret-paths.ts).
+    const secret = SECRET_PATHS.find(([prefix]) => url.pathname.startsWith(prefix));
 
-    // A shared report's id is the secret that opens it.
-    if (url.pathname.startsWith("/report/")) {
-      url.pathname = "/report/:id";
+    if (secret) {
+      url.pathname = secret[1];
     }
 
     url.searchParams.delete("url");
