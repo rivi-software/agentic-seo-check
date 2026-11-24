@@ -1,8 +1,8 @@
 /**
  * What src/state.ts and src/crawls.ts take from `cloudflare:workers`, a module only workerd has,
- * for the tests that import the Worker's modules in Node (vitest.config.ts). They import state.ts
- * for `globalState` and crawls.ts for its store, and never run the Durable Object or the Workflow;
- * the workerd tests run both.
+ * for the tests that import the Worker's modules in Node (vitest.config.ts), and for the bundle of
+ * them scripts/assets.ts imports. They import state.ts for `globalState` and crawls.ts for its
+ * store, and never run the Durable Object or the Workflow; the workerd tests run both.
  */
 export class DurableObject<Env = unknown> {
   protected ctx: DurableObjectState;

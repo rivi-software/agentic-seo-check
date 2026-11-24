@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config";
 
-import { defines } from "./scripts/defines.ts";
+import { defines, WORKERD_STUBS } from "./scripts/defines.ts";
 
 export default defineConfig({
   // `pnpm run hosted:test` runs from the repository's root.
@@ -10,18 +10,7 @@ export default defineConfig({
   define: { HOSTED_RATE_LIMITS: defines().HOSTED_RATE_LIMITS },
   // limits.ts and callers.ts ask for the Durable Object through state.ts, which imports
   // `cloudflare:workers`, a module only workerd has, and crawls.ts `cloudflare:workflows` too.
-  resolve: {
-    alias: {
-      "cloudflare:workers": new URL(
-        "test/stubs/cloudflare-workers.ts",
-        import.meta.url
-      ).pathname,
-      "cloudflare:workflows": new URL(
-        "test/stubs/cloudflare-workflows.ts",
-        import.meta.url
-      ).pathname,
-    },
-  },
+  resolve: { alias: WORKERD_STUBS },
   test: {
     include: ["test/**/*.test.ts"],
     testTimeout: 60_000,

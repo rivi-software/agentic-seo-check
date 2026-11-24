@@ -30,12 +30,13 @@
     { "pattern": "mcp.agentic-seo.rivi.software", "custom_domain": true },
     { "pattern": "mcp.agentic-seo-check.rivi.software", "custom_domain": true }
   ],
-  // The pages' fonts and share images (src/ui/assets.ts), bundled as their bytes.
-  "rules": [{ "type": "Data", "globs": ["**/*.woff2", "**/*.png"], "fallthrough": true }],
-  // Copies posthog-js's browser build to .generated/posthog-js.txt, which the Worker bundles as text
-  // and serves at /ph.js (issue #57), and its session recorder to .generated/posthog-recorder.txt,
-  // served at /ph-recorder.js (issue #181).
-  "build": { "command": "node scripts/posthog-js.ts" },
+  // Writes the website's fixed files into .generated/assets/ (scripts/assets.ts, issue #202), as the
+  // website's build does.
+  "build": { "command": "node scripts/assets.ts" },
+  // The same files, which the website serves on the one hostname. The server's pages load them
+  // from there; its Worker serves them itself only under `hosted:dev`, where it answers every path
+  // (src/index.ts). It runs first, so a former hostname still redirects them.
+  "assets": { "directory": ".generated/assets", "binding": "ASSETS", "run_worker_first": true },
   "workers_dev": false,
   "preview_urls": false,
   // A crawl at the caps (100 pages, both audits) took 6 s of CPU on a laptop with 113 KB pages

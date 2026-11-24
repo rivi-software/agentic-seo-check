@@ -38,8 +38,6 @@ import { icon } from "./ui/icons.js";
 import type { IconName } from "./ui/icons.js";
 import { SERVER_CARD } from "./ui/og.js";
 
-export { MARK_SVG as FAVICON_SVG } from "../../src/brand.js";
-
 /**
  * The zones whose Worker routes run the server, which Cloudflare names in CF-Worker and
  * `cf.worker.upstream_zone`: the current hostname's, and rivi.software's for the former ones.
