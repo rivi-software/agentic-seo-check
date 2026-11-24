@@ -16,6 +16,7 @@ import {
 import { z } from "zod";
 
 import { REPOSITORY_URL, WEBSITE_URL } from "../src/brand.js";
+import { auditSiteBoth } from "../src/core/aeo/audit.js";
 import { onCaughtError } from "../src/core/errors.js";
 import type { RequestGate } from "../src/core/fetch.js";
 import {
@@ -26,6 +27,12 @@ import {
 } from "../src/core/hosted.js";
 import type { SharedReport } from "../src/core/share.js";
 import { CallLimitError, guarded, HOSTED_TOOLS } from "../src/mcp-hosted.js";
+import type {
+  BackgroundCrawlOptions,
+  BackgroundCrawls,
+  CrawlState,
+} from "../src/mcp-hosted.js";
+import { respond, respondAeo } from "../src/mcp-shared.js";
 import { createMcpServer } from "../src/mcp.js";
 import type {
   HostedCallEnd,
@@ -38,6 +45,7 @@ import type {
   McpToolCall,
   McpUnknownToolCall,
 } from "../src/telemetry/mcp.js";
+import { siteRoutes, startFixtureServer } from "./helpers/fixture-server.js";
 
 const USER_AGENT =
   "Mozilla/5.0 (compatible; agentic-seo-check/0.0.0-test; +https://mcp.agentic-seo.rivi.software/crawler)";
@@ -97,6 +105,7 @@ const profileWith = (
     gate?: RequestGate;
     refuse?: string;
     sign?: HostedProfile["sign"];
+    crawls?: BackgroundCrawls;
   } = {}
 ): Profile => {
   const calls: HostedCallInfo[] = [];
@@ -108,6 +117,7 @@ const profileWith = (
     profile: {
       userAgent: USER_AGENT,
       sign: options.sign,
+      crawls: options.crawls,
       // oxlint-disable-next-line eslint/require-await -- the Worker's startCall awaits its limits
       startCall: async (call) => {
         calls.push(call);
@@ -360,9 +370,11 @@ describe("the hosted server", () => {
         "seo_aeo_audit",
         "seo_audit_page",
         "seo_compare_pages",
+        "seo_crawl_result",
         "seo_crawl_site",
         "seo_list_rules",
         "seo_share_report",
+        "seo_start_crawl",
       ]);
 
       const inputs = tools.flatMap((t) =>
@@ -858,17 +870,22 @@ describe("the hosted server", () => {
 
       for (const tool of tools) {
         // Every tool reads, but send_feedback, which records what the agent sent (issue #101),
-        // and seo_share_report, which keeps a report on the website. Each sets all four hints, as
-        // OpenAI's plugin guidelines ask.
-        const shares = tool.name === "seo_share_report";
-        const reads = tool.name !== "send_feedback" && !shares;
+        // seo_share_report, which keeps a report on the website, and seo_start_crawl, which keeps
+        // a crawl's result (issue #209). Each sets all four hints, as OpenAI's plugin guidelines ask.
+        const keeps = ["seo_share_report", "seo_start_crawl"].includes(
+          tool.name
+        );
+
+        const reads = tool.name !== "send_feedback" && !keeps;
+        // The rule list and a crawl's result read the server's own, not the web.
+        const own = ["seo_list_rules", "seo_crawl_result"].includes(tool.name);
         expect({ tool: tool.name, ...tool.annotations }).toStrictEqual({
           tool: tool.name,
           title: tool.title,
           readOnlyHint: reads,
           destructiveHint: false,
           idempotentHint: reads,
-          openWorldHint: shares || (reads && tool.name !== "seo_list_rules"),
+          openWorldHint: keeps || (reads && !own),
         });
       }
 
@@ -1933,6 +1950,287 @@ describe("the hosted server", () => {
 
       expect(rulesOf(findings)).toContain("aeo.crawl-stopped");
       expect(rulesOf(findings)).not.toContain("aeo.llms-txt-missing");
+    });
+  });
+
+  describe("its background crawls (issue #209)", () => {
+    const CRAWL_ID = "Q3Jhd2xJZEZvclRoZVRlc3Q";
+    const STARTED_AT = "2026-11-24T10:00:00.000Z";
+
+    /** A store of crawls that keeps their states in a Map and runs nothing. */
+    const fakeCrawls = (states = new Map<string, CrawlState>()) => {
+      const started: BackgroundCrawlOptions[] = [];
+
+      const crawls: BackgroundCrawls = {
+        // oxlint-disable-next-line eslint/require-await -- the Worker's keeps the crawl in R2
+        start: async (options) => {
+          started.push(options);
+          states.set(CRAWL_ID, { status: "running", startedAt: STARTED_AT });
+
+          return { id: CRAWL_ID, startedAt: STARTED_AT };
+        },
+        // oxlint-disable-next-line eslint/require-await -- the Worker's reads the crawl from R2
+        read: async (id) => states.get(id) ?? null,
+      };
+
+      return { crawls, started, states };
+    };
+
+    const START = {
+      url: "https://shop.example.com/",
+      maxPages: 20,
+      format: "markdown",
+      detail: "full",
+      conversation_id: "01a1ccb2-c50e-77f6-9996-449b3851a46d",
+      context: "first crawl before a redesign",
+    };
+
+    const Started = z.object({
+      id: z.string(),
+      status: z.literal("running"),
+      startedAt: z.string(),
+      next: z.string(),
+    });
+
+    it("lists seo_start_crawl and seo_crawl_result, and seo_crawl_site points to them", async () => {
+      const client = await connect(profileWith().profile);
+      const { tools } = await client.listTools();
+      const start = tools.find((t) => t.name === "seo_start_crawl");
+      const result = tools.find((t) => t.name === "seo_crawl_result");
+
+      expect([
+        start?.annotations?.readOnlyHint,
+        result?.annotations?.readOnlyHint,
+      ]).toStrictEqual([false, true]);
+      expect(Object.keys(start?.inputSchema.properties ?? {})).not.toContain(
+        "format"
+      );
+      expect(
+        tools.find((t) => t.name === "seo_crawl_site")?.description
+      ).toContain("seo_start_crawl");
+
+      const local = new Client({ name: "test-client", version: "0.0.0" });
+
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+
+      await Promise.all([
+        createMcpServer().connect(serverTransport),
+        local.connect(clientTransport),
+      ]);
+      const { tools: localTools } = await local.listTools();
+
+      expect(
+        localTools.filter((t) =>
+          ["seo_start_crawl", "seo_crawl_result"].includes(t.name)
+        )
+      ).toStrictEqual([]);
+    });
+
+    it("starts a crawl: admitted as a crawl, answered with its id at once", async () => {
+      const { crawls, started } = fakeCrawls();
+      const { profile, calls } = profileWith({ crawls });
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_start_crawl",
+        arguments: START,
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(calls).toStrictEqual([
+        {
+          tool: "seo_start_crawl",
+          fetches: true,
+          crawl: true,
+          host: "shop.example.com",
+        },
+      ]);
+      // What the crawl keeps: its options, never the answer's shape or the conversation.
+      expect(
+        started.map((options) => [
+          options.url,
+          options.maxPages,
+          options.maxDepth,
+          ["format", "detail", "conversation_id"].filter((key) =>
+            Object.hasOwn(options, key)
+          ),
+        ])
+      ).toStrictEqual([[START.url, 20, HOSTED_LIMITS.maxDepth, []]]);
+
+      const answer = Started.parse(JSON.parse(textOf(result)));
+
+      expect(Object.entries(answer)).toStrictEqual([
+        ["id", CRAWL_ID],
+        ["status", "running"],
+        ["startedAt", STARTED_AT],
+        ["next", expect.stringContaining("seo_crawl_result")],
+      ]);
+    });
+
+    it("refuses to start when the limits refuse, and starts nothing", async () => {
+      const { crawls, started } = fakeCrawls();
+
+      const client = await connect(
+        profileWith({
+          crawls,
+          refuse: "This address has started 2 crawls in the last minute.",
+        }).profile
+      );
+
+      const result = await client.callTool({
+        name: "seo_start_crawl",
+        arguments: START,
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toContain("2 crawls in the last minute");
+      expect(started).toStrictEqual([]);
+    });
+
+    it("answers running, then the SEO or the AEO audit as the crawl tools would", async () => {
+      const server = await startFixtureServer(siteRoutes());
+      onTestFinished(() => server.close());
+      const { seo, aeo } = await auditSiteBoth(server.origin, { maxPages: 5 });
+
+      const { crawls, states } = fakeCrawls();
+      const { profile, calls, ends } = profileWith({ crawls });
+      const client = await connect(profile);
+      states.set(CRAWL_ID, { status: "running", startedAt: STARTED_AT });
+
+      const running = await client.callTool({
+        name: "seo_crawl_result",
+        arguments: { id: CRAWL_ID },
+      });
+
+      expect(JSON.parse(textOf(running))).toMatchObject({
+        id: CRAWL_ID,
+        status: "running",
+        startedAt: STARTED_AT,
+        next: expect.stringContaining("seo_crawl_result"),
+      });
+
+      states.set(CRAWL_ID, {
+        status: "done",
+        startedAt: STARTED_AT,
+        endedAt: "2026-11-24T10:02:00.000Z",
+        seo,
+        aeo,
+      });
+
+      const seoAnswer = await client.callTool({
+        name: "seo_crawl_result",
+        arguments: { id: CRAWL_ID, audit: "seo" },
+      });
+
+      const aeoAnswer = await client.callTool({
+        name: "seo_crawl_result",
+        arguments: { id: CRAWL_ID, audit: "aeo", format: "markdown" },
+      });
+
+      expect(textOf(seoAnswer)).toBe(
+        respond(seo, "json", "compact").content[0]?.text
+      );
+      expect(textOf(aeoAnswer)).toBe(
+        respondAeo(aeo, "markdown", "compact").content[0]?.text
+      );
+      expect(calls).toStrictEqual(
+        Array.from({ length: 3 }, () => ({
+          tool: "seo_crawl_result",
+          fetches: false,
+          crawl: false,
+          host: null,
+        }))
+      );
+      expect(ends).toStrictEqual([
+        { outcome: "ok", pages: 0 },
+        { outcome: "ok", pages: seo.pages.length },
+        { outcome: "ok", pages: aeo.pages?.length ?? 1 },
+      ]);
+    });
+
+    it("answers a failed crawl with its failure as a tool error", async () => {
+      const { crawls, states } = fakeCrawls();
+      const client = await connect(profileWith({ crawls }).profile);
+
+      const message =
+        "Agentic SEO Check error: https://shop.example.com/robots.txt keeps agentic-seo-check out.";
+
+      states.set(CRAWL_ID, {
+        status: "failed",
+        startedAt: STARTED_AT,
+        endedAt: "2026-11-24T10:00:01.000Z",
+        failure: { message, refused: true },
+      });
+
+      const result = await client.callTool({
+        name: "seo_crawl_result",
+        arguments: { id: CRAWL_ID },
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toBe(message);
+    });
+
+    it("answers an unknown id as a tool error, crawl_not_found", async () => {
+      const { crawls } = fakeCrawls();
+
+      const { client, calls } = await connectWatched(
+        profileWith({ crawls }).profile
+      );
+
+      const result = await client.callTool({
+        name: "seo_crawl_result",
+        arguments: { id: "nothing-under-this-id" },
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toContain("7 days");
+      expect(calls.map((c) => c.properties?.reason)).toStrictEqual([
+        "crawl_not_found",
+      ]);
+    });
+
+    it("says background crawls are off on a server without them", async () => {
+      const { profile, calls: started } = profileWith();
+      const { client, calls } = await connectWatched(profile);
+
+      const start = await client.callTool({
+        name: "seo_start_crawl",
+        arguments: START,
+      });
+
+      const result = await client.callTool({
+        name: "seo_crawl_result",
+        arguments: { id: CRAWL_ID },
+      });
+
+      expect([start.isError, result.isError]).toStrictEqual([true, true]);
+      expect(calls.map((c) => c.properties?.reason)).toStrictEqual([
+        "crawls_off",
+        "crawls_off",
+      ]);
+      expect(started).toStrictEqual([]);
+    });
+
+    it("never puts the crawl id in the analytics", async () => {
+      const { crawls } = fakeCrawls();
+
+      const { client, calls } = await connectWatched(
+        profileWith({ crawls }).profile
+      );
+
+      await client.callTool({ name: "seo_start_crawl", arguments: START });
+      await client.callTool({
+        name: "seo_crawl_result",
+        arguments: { id: CRAWL_ID, context: "poll the crawl" },
+      });
+
+      expect(calls.map((c) => c.tool)).toStrictEqual([
+        "seo_start_crawl",
+        "seo_crawl_result",
+      ]);
+      expect(JSON.stringify(calls)).not.toContain(CRAWL_ID);
     });
   });
 

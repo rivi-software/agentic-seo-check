@@ -5,15 +5,21 @@
  * hosted gate, which obeys robots.txt (issue #41). Once published, these schemas are a contract of their own.
  * Each call tells its analytics event what it found and why it stopped, in counts and fixed lists
  * (issue #84). Each answer names the conversation it belongs to, and `send_feedback` lets an agent
- * tell the developers what it missed (issue #101).
+ * tell the developers what it missed (issue #101). A crawl too large or slow for a client's wait
+ * runs in the background: seo_start_crawl starts it and seo_crawl_result answers it (issue #209).
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import { PRODUCT_NAME } from "./brand.js";
-import { auditAeoHtml, auditAeoSite, auditAeoUrl } from "./core/aeo/audit.js";
-import type { AeoOptions } from "./core/aeo/audit.js";
+import {
+  auditAeoHtml,
+  auditAeoSite,
+  auditAeoUrl,
+  auditSiteBoth,
+} from "./core/aeo/audit.js";
+import type { AeoOptions, SiteAuditsOptions } from "./core/aeo/audit.js";
 import { auditHtml, auditSite, auditUrl } from "./core/audit.js";
 import {
   comparePages,
@@ -32,7 +38,7 @@ import {
 } from "./core/hosted.js";
 import { auditForShare } from "./core/share.js";
 import type { ShareLink, SharedReport } from "./core/share.js";
-import type { AeoAudit, Audit, Comparison } from "./core/types.js";
+import type { AeoAudit, Audit, Comparison, SiteAudit } from "./core/types.js";
 import {
   commonOptions,
   COMPARE_KEYWORD,
@@ -132,6 +138,11 @@ export interface HostedProfile {
    * as an ExpectedError is the caller's answer, such as a limit on shared reports.
    */
   share?: (report: SharedReport) => Promise<ShareLink>;
+  /**
+   * The crawls seo_start_crawl starts and seo_crawl_result reads (issue #209). Without them, both
+   * tools say that background crawls are off.
+   */
+  crawls?: BackgroundCrawls;
 }
 
 /**
@@ -361,6 +372,72 @@ const CRAWL_SITE_INPUT = {
     ),
   fieldData,
   ...hostedOptions,
+  ...agentArguments,
+};
+
+/** What seo_start_crawl keeps for the Workflow: the tool's input less format, detail and conversation_id. */
+export type BackgroundCrawlOptions = Omit<
+  z.output<z.ZodObject<typeof CRAWL_SITE_INPUT>>,
+  "format" | "detail" | "conversation_id"
+>;
+
+/** How a background crawl failed: the text `fail(error)` answers, and whether the site refused it. */
+export interface CrawlFailure {
+  message: string;
+  refused: boolean;
+}
+
+/** Where a background crawl stands, as seo_crawl_result reads it. */
+export type CrawlState =
+  | { status: "running"; startedAt: string }
+  | {
+      status: "done";
+      startedAt: string;
+      endedAt: string;
+      seo: SiteAudit;
+      aeo: AeoAudit;
+    }
+  | {
+      status: "failed";
+      startedAt: string;
+      endedAt: string;
+      failure: CrawlFailure;
+    };
+
+/** The hosted server's background crawls (issue #209). */
+export interface BackgroundCrawls {
+  /** Keeps the options and starts the Workflow; answers the new crawl's id. */
+  start: (
+    options: BackgroundCrawlOptions
+  ) => Promise<{ id: string; startedAt: string }>;
+  /** The crawl under `id`, or null for an unknown, malformed or expired id. */
+  read: (id: string) => Promise<CrawlState | null>;
+}
+
+/** How many days a background crawl's result is kept (the bucket's rule on `crawls/`). */
+const CRAWL_DAYS = 7;
+
+/** The arguments of seo_start_crawl: seo_crawl_site's, less the answer's shape, which comes later. */
+const {
+  format: _format,
+  detail: _detail,
+  ...START_CRAWL_INPUT
+} = CRAWL_SITE_INPUT;
+
+/** The arguments of seo_crawl_result. */
+const CRAWL_RESULT_INPUT = {
+  id: z
+    .string()
+    .max(64)
+    .describe("The id seo_start_crawl answered with, unchanged."),
+  audit: z
+    .enum(["seo", "aeo"])
+    .default("seo")
+    .describe(
+      "seo (default): the SEO audit, as seo_crawl_site answers it; aeo: the AEO audit of the same crawl, as seo_aeo_audit with `crawl` answers it."
+    ),
+  format,
+  detail,
   ...agentArguments,
 };
 
@@ -731,6 +808,61 @@ const fieldDataOf = (
   return profile.fieldData;
 };
 
+/**
+ * The options of a crawl on the hosted server, whether seo_crawl_site runs it or a background
+ * crawl does: one place, so the two cannot drift. `field` is the server's key, once the caller asked.
+ */
+const crawlOptions = (
+  input: BackgroundCrawlOptions,
+  fetch: FetchOptions,
+  field: FieldDataOptions | undefined
+): SiteAuditsOptions => ({
+  ...auditOptions(input, fetch),
+  fieldData: field,
+  maxPages: input.maxPages,
+  maxDepth: input.maxDepth,
+  concurrency: input.concurrency,
+  delayMs: input.delayMs,
+  respectRobots: true,
+  includeSubdomains: input.includeSubdomains,
+  checkExternalLinks: input.checkExternalLinks,
+  maxLinkChecks: LIMITS.maxLinkChecks,
+  includePatterns: input.includePatterns,
+  excludePatterns: input.excludePatterns,
+  pageDetail: input.pageDetail,
+  maxSitemaps: LIMITS.maxSitemaps,
+  maxSitemapBytes: LIMITS.maxSitemapBytes,
+});
+
+/**
+ * The crawl seo_start_crawl asked for, run as seo_crawl_site runs it, both audits from one crawl.
+ * `key` is the server's Chrome UX Report key and cache; it is used only when the crawl asked for
+ * field data.
+ */
+export const runBackgroundCrawl = async (
+  options: BackgroundCrawlOptions,
+  fetch: FetchOptions,
+  key: FieldDataOptions | undefined
+): Promise<{ seo: SiteAudit; aeo: AeoAudit }> => {
+  const { seo, aeo } = await auditSiteBoth(
+    options.url,
+    crawlOptions(options, fetch, options.fieldData ? key : undefined)
+  );
+
+  return { seo, aeo };
+};
+
+/** The failure a background crawl's error ends it with: `fail(error)`'s text, and whether it was a refusal. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until this reads it
+export const crawlFailure = (error: unknown): CrawlFailure => {
+  const [first] = fail(error).content;
+
+  return {
+    message: first?.text ?? "",
+    refused: error instanceof RequestRefusedError,
+  };
+};
+
 /** seo_audit_page: one page, by URL or as HTML. */
 const AUDIT_PAGE = {
   ...readOnlyTool("Audit one page for SEO", { openWorld: true }),
@@ -752,10 +884,42 @@ const CRAWL_SITE = {
   description:
     `Crawl internal links from a start URL (at most ${LIMITS.maxPages} pages, depth ${LIMITS.maxDepth}), audit every HTML page, and run site-wide checks: robots.txt, XML sitemap coverage (missing/noindex/non-canonical/broken URLs), broken internal links with their sources, redirect chains, duplicate titles/descriptions/H1s/content, orphan and deep pages, soft-404 behaviour, http→https and www redirects, hreflang return links. ` +
     `Returns site findings plus \`issues\` (page findings rolled up by rule with example URLs) and per-page scores. Use seo_audit_page on a specific URL for full per-page detail. ` +
-    `The crawl checks at most ${LIMITS.maxLinkChecks} link targets and reads at most ${LIMITS.maxSitemaps} sitemaps. ${
+    `The crawl checks at most ${LIMITS.maxLinkChecks} link targets and reads at most ${LIMITS.maxSitemaps} sitemaps. ` +
+    `For a large or slow site, whose crawl can outlast your client's wait for an answer, use seo_start_crawl and then seo_crawl_result instead. ${
       HOSTED_NOTE
     }${docsNote("hosted")}`,
   inputSchema: CRAWL_SITE_INPUT,
+};
+
+/** seo_start_crawl: seo_crawl_site's crawl, in the background (issue #209). */
+const START_CRAWL = {
+  title: "Start a crawl in the background",
+  annotations: {
+    title: "Start a crawl in the background",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+  description:
+    `Start the crawl seo_crawl_site runs (the same options and limits: at most ${LIMITS.maxPages} pages, depth ${LIMITS.maxDepth}) in the background, and answer at once with its \`id\`. ` +
+    `Use it for a large or slow site, whose crawl can outlast your client's wait for an answer. The crawl builds both audits from one crawl: the SEO audit, with \`rules\`, \`disableRules\`, \`baseline\`, \`keyword\` and \`includeInfo\` as in seo_crawl_site, and the AEO audit with its defaults. ` +
+    `Call seo_crawl_result with the id after a minute or two, and again while it answers \`running\`. The server keeps the result for ${CRAWL_DAYS} days; anyone with the id can read it, so treat the id as a secret. ${
+      HOSTED_NOTE
+    }${docsNote("hosted")}`,
+  inputSchema: START_CRAWL_INPUT,
+};
+
+/** seo_crawl_result: a background crawl's state, or its audit once it is done (issue #209). */
+const CRAWL_RESULT = {
+  ...readOnlyTool("Fetch a background crawl's result", { openWorld: false }),
+  description:
+    `Answer a crawl seo_start_crawl started, by its \`id\`: \`running\` with the time it started while it runs (call again after a minute), its audit once it is done, or its failure as a tool error, such as the site's refusal. ` +
+    `\`audit: "seo"\` (default) answers the SEO audit as seo_crawl_site would; \`audit: "aeo"\` the AEO audit of the same crawl, as seo_aeo_audit with \`crawl\` would; \`format\` and \`detail\` mean what they mean there. ` +
+    `It sends no request to any site. A result is kept ${CRAWL_DAYS} days; an id past that, or unknown, answers an error. ${docsNote(
+      "hosted"
+    )}`,
+  inputSchema: CRAWL_RESULT_INPUT,
 };
 
 /** seo_aeo_audit: a page or a site, for answer engines. */
@@ -884,28 +1048,151 @@ const registerCrawlSite = (server: McpServer, profile: HostedProfile): void => {
         profile,
         { tool: "seo_crawl_site", fetches: true, crawl: true, host },
         async (fetch) => {
-          const audit = await auditSite(input.url, {
-            ...auditOptions(input, fetch),
-            fieldData: field,
-            maxPages: input.maxPages,
-            maxDepth: input.maxDepth,
-            concurrency: input.concurrency,
-            delayMs: input.delayMs,
-            respectRobots: true,
-            includeSubdomains: input.includeSubdomains,
-            checkExternalLinks: input.checkExternalLinks,
-            maxLinkChecks: LIMITS.maxLinkChecks,
-            includePatterns: input.includePatterns,
-            excludePatterns: input.excludePatterns,
-            pageDetail: input.pageDetail,
-            maxSitemaps: LIMITS.maxSitemaps,
-            maxSitemapBytes: LIMITS.maxSitemapBytes,
-          });
+          const audit = await auditSite(
+            input.url,
+            crawlOptions(input, fetch, field)
+          );
 
           return {
             result: respond(audit, input.format, input.detail),
             pages: pagesOf(audit),
             audit,
+          };
+        }
+      );
+    })
+  );
+};
+
+/** What both background crawl tools answer on a server without them. */
+const crawlsOff = () =>
+  fail(
+    new ExpectedError(
+      "Background crawls are switched off on this server. Use seo_crawl_site instead.",
+      { reason: "crawls_off" }
+    )
+  );
+
+/** What seo_start_crawl and a running crawl's seo_crawl_result answer: the crawl's id and when to ask. */
+const respondRunning = (id: string, startedAt: string, next: string) => {
+  const answer = { id, status: "running" as const, startedAt, next };
+
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(answer, null, 2) }],
+    structuredContent: answer,
+  };
+};
+
+const registerStartCrawl = (
+  server: McpServer,
+  profile: HostedProfile
+): void => {
+  server.registerTool("seo_start_crawl", START_CRAWL, (input) =>
+    inConversation(profile, input.conversation_id, () => {
+      noteCall({
+        page_detail: input.pageDetail,
+        recheck: input.baseline !== undefined,
+      });
+
+      const { crawls } = profile;
+
+      if (!crawls) {
+        return crawlsOff();
+      }
+
+      let host: string;
+
+      try {
+        host = allowedHost(input.url);
+        // The crawl asks with the server's key later; a server without one says so now.
+        fieldDataOf(profile, input.fieldData);
+      } catch (error) {
+        return fail(error);
+      }
+
+      // The analytics' arguments stay out of what the crawl keeps: they are no option of the crawl.
+      const { conversation_id: _conversation, ...options } = input;
+
+      return runCall(
+        profile,
+        { tool: "seo_start_crawl", fetches: true, crawl: true, host },
+        // The crawl sends its requests later, through a gate of its own; this call sends none.
+        async () => {
+          const { id, startedAt } = await crawls.start(options);
+
+          return {
+            result: respondRunning(
+              id,
+              startedAt,
+              `Call seo_crawl_result with this id in a minute or two. The result is kept ${CRAWL_DAYS} days.`
+            ),
+            pages: 0,
+          };
+        }
+      );
+    })
+  );
+};
+
+const registerCrawlResult = (
+  server: McpServer,
+  profile: HostedProfile
+): void => {
+  server.registerTool("seo_crawl_result", CRAWL_RESULT, (input) =>
+    inConversation(profile, input.conversation_id, () => {
+      noteOptions(input);
+
+      const { crawls } = profile;
+
+      if (!crawls) {
+        return crawlsOff();
+      }
+
+      return runCall(
+        profile,
+        { tool: "seo_crawl_result", fetches: false, crawl: false, host: null },
+        async () => {
+          const state = await crawls.read(input.id);
+
+          if (!state) {
+            throw new ExpectedError(
+              `No crawl has this id, or its result is past its ${CRAWL_DAYS} days. Start a new one with seo_start_crawl.`,
+              { reason: "crawl_not_found" }
+            );
+          }
+
+          if (state.status === "running") {
+            return {
+              result: respondRunning(
+                input.id,
+                state.startedAt,
+                "The crawl is still running. Call seo_crawl_result with this id again in a minute."
+              ),
+              pages: 0,
+            };
+          }
+
+          if (state.status === "failed") {
+            return {
+              result: {
+                isError: true,
+                content: [{ type: "text", text: state.failure.message }],
+              },
+              pages: 0,
+            };
+          }
+
+          const audit = input.audit === "aeo" ? state.aeo : state.seo;
+
+          return {
+            result:
+              input.audit === "aeo"
+                ? respondAeo(state.aeo, input.format, input.detail)
+                : respond(state.seo, input.format, input.detail),
+            pages: pagesOf(audit),
+            audit,
+            // The crawl requested the site's URLs, though this call requests none.
+            properties: { target: "url" },
           };
         }
       );
@@ -1130,6 +1417,8 @@ export const HOSTED_TOOLS: ReadonlyMap<string, CountedTool> = new Map(
   Object.entries({
     seo_audit_page: AUDIT_PAGE,
     seo_crawl_site: CRAWL_SITE,
+    seo_start_crawl: START_CRAWL,
+    seo_crawl_result: CRAWL_RESULT,
     seo_aeo_audit: AEO_AUDIT,
     seo_compare_pages: COMPARE_PAGES,
     seo_share_report: SHARE_REPORT,
@@ -1158,6 +1447,8 @@ export const registerHostedTools = (
 ): void => {
   registerAuditPage(server, profile);
   registerCrawlSite(server, profile);
+  registerStartCrawl(server, profile);
+  registerCrawlResult(server, profile);
   registerAeoAudit(server, profile);
   registerComparePages(server, profile);
   registerShareReport(server, profile);

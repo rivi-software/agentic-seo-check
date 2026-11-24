@@ -504,9 +504,11 @@ describe("the hosted Worker in workerd", () => {
         "seo_aeo_audit",
         "seo_audit_page",
         "seo_compare_pages",
+        "seo_crawl_result",
         "seo_crawl_site",
         "seo_list_rules",
         "seo_share_report",
+        "seo_start_crawl",
       ]);
     });
 
