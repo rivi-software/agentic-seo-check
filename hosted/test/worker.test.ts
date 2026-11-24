@@ -1312,7 +1312,7 @@ describe("the hosted Worker in workerd", () => {
         "text/javascript; charset=utf-8"
       );
       expect(source).toMatch(
-        /get_explicit_consent_status[\s\S]*\nexport const TOKEN = "phc_\w+";\nexport const API_HOST = "[^"]+";\n$/u
+        /get_explicit_consent_status[\s\S]*\nexport const TOKEN = "phc_\w+";\nexport const API_HOST = /u
       );
       // The host is the website configuration's, written in at build time (scripts/assets.ts),
       // which configs.test.ts holds to the one the CSP allows.

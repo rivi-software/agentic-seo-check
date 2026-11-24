@@ -223,10 +223,6 @@ const sharedRoute = (
     : methodNotAllowed("GET, HEAD");
 };
 
-/** The 404 page, for a path that is no page and no static asset. */
-const notFound = (request: Request): Promise<Response> =>
-  file(request, notFoundPage(), HTML, 404);
-
 export const siteRoute = (
   request: Request,
   env: SiteEnv,
@@ -307,7 +303,11 @@ export const siteRoute = (
     }
 
     default: {
-      return ruleResponse(request, url.pathname) ?? notFound(request);
+      // No page and no static asset.
+      return (
+        ruleResponse(request, url.pathname) ??
+        file(request, notFoundPage(), HTML, 404)
+      );
     }
   }
 };

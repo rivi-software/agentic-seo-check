@@ -39,7 +39,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
 import type * as Sources from "./asset-sources.ts";
-import { defines, readConfig, SITE_CONFIG } from "./defines.ts";
+import { defines, readConfig, SITE_CONFIG, WORKERD_STUBS } from "./defines.ts";
 
 const hosted = new URL("../", import.meta.url);
 const target = new URL(".generated/assets/", hosted);
@@ -58,16 +58,7 @@ const loadSources = async () => {
     logLevel: "warning",
     outfile: bundled,
     define: defines(SITE_CONFIG),
-    // The modules only workerd has, which src/state.ts and src/crawls.ts import, as the tests
-    // stand in for them (vitest.config.ts).
-    alias: {
-      "cloudflare:workers": fileURLToPath(
-        new URL("stubs/cloudflare-workers.ts", hosted)
-      ),
-      "cloudflare:workflows": fileURLToPath(
-        new URL("stubs/cloudflare-workflows.ts", hosted)
-      ),
-    },
+    alias: WORKERD_STUBS,
   });
 
   try {
@@ -77,20 +68,6 @@ const loadSources = async () => {
     rmSync(bundled);
   }
 };
-
-const {
-  DRAW_PDF,
-  FONT_PATHS,
-  MARK_SVG,
-  PDF_FONT_DIR,
-  PDF_FONTS,
-  PDFMAKE_PATH,
-  POSTHOG_TOKEN,
-  SECURITY,
-  SERVER_CARD,
-  SITE_CARD,
-  SITE_JS,
-} = await loadSources();
 
 /**
  * Writes `contents` at `at` under the directory: to a file beside it first, then renamed, so the
@@ -103,10 +80,6 @@ const write = (at: string, contents: string | Uint8Array): void => {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(draft, contents);
   renameSync(draft, file);
-};
-
-const copy = (at: string, from: string): void => {
-  write(at, readFileSync(new URL(from, hosted)));
 };
 
 const POSTHOG_ENTRY = `
@@ -149,51 +122,6 @@ const bundle = async (
   return outputFiles.map((output) => output.text).join("");
 };
 
-/** The ingestion host the pages start posthog-js with; the analytics are off while it is empty. */
-const posthogHost = (): string => {
-  // Wrangler's types for its config come from a package it bundles, so they arrive untyped here;
-  // configs.test.ts holds the var to a string.
-  const host: string | undefined = readConfig(SITE_CONFIG).vars["POSTHOG_HOST"];
-
-  return host ?? "";
-};
-
-const writePosthog = async (host: string): Promise<void> => {
-  const [source, recorder] = await Promise.all([
-    bundle(POSTHOG_ENTRY, "esm"),
-    bundle(RECORDER_ENTRY, "iife"),
-  ]);
-
-  write(
-    "/ph.js",
-    `${source}\nexport const TOKEN = ${JSON.stringify(POSTHOG_TOKEN)};\nexport const API_HOST = ${JSON.stringify(host)};\n`
-  );
-  write("/ph-recorder.js", recorder);
-};
-
-const writePdf = (): void => {
-  const pdfmake = readFileSync(
-    fileURLToPath(import.meta.resolve("pdfmake/build/pdfmake.min.js")),
-    "utf-8"
-  ).replace(/\/\/# sourceMappingURL=\S*\s*$/u, "");
-
-  write(
-    PDFMAKE_PATH,
-    `${pdfmake}
-;globalThis.drawReportPdf = (report) =>
-  (${DRAW_PDF})(globalThis.pdfMake, report, location.origin + ${JSON.stringify(PDF_FONT_DIR)});
-`
-  );
-
-  const files = new Set(
-    Object.values(PDF_FONTS).flatMap(({ normal, bold }) => [normal, bold])
-  );
-
-  for (const name of files) {
-    copy(`${PDF_FONT_DIR}${name}`, `assets/pdf/${name}`);
-  }
-};
-
 /** The rules of _headers: a path, then each header on its own line, indented. */
 const headerRules = (rules: [string, Record<string, string>][]): string =>
   rules
@@ -205,43 +133,123 @@ const headerRules = (rules: [string, Record<string, string>][]): string =>
     )
     .join("");
 
-const FRESH = { "cache-control": "no-cache" };
+// The ingestion host the pages start posthog-js with; the analytics are off while it is empty.
+// Wrangler's types for its config come from a package it bundles, so they arrive untyped here;
+// configs.test.ts holds the var to a string.
+const host: string = readConfig(SITE_CONFIG).vars["POSTHOG_HOST"] ?? "";
 
-const host = posthogHost();
+// posthog-js and its recorder bundle while the Worker's modules do.
+const [sources, posthog] = await Promise.all([
+  loadSources(),
+  host
+    ? Promise.all([
+        bundle(POSTHOG_ENTRY, "esm"),
+        bundle(RECORDER_ENTRY, "iife"),
+      ])
+    : null,
+]);
 
-write("/site.js", SITE_JS);
+const {
+  DRAW_PDF,
+  FONT_PATHS,
+  MARK_SVG,
+  PDF_FONT_DIR,
+  PDF_FONTS,
+  PDFMAKE_PATH,
+  POSTHOG_TOKEN,
+  SECURITY,
+  SERVER_CARD,
+  SITE_CARD,
+  SITE_JS,
+} = sources;
 
-write("/favicon.svg", MARK_SVG);
+/** How long a browser keeps a file: each file below names one. */
+const CACHE = {
+  // Keeps its address when a deploy changes it, so browsers ask on every visit (issue #160).
+  fresh: "no-cache",
+  // Takes a new path when it changes.
+  immutable: "public, max-age=31536000, immutable",
+  // A share image keeps its address when the card is drawn again.
+  day: "public, max-age=86400",
+} as const;
 
-for (const font of Object.values(FONT_PATHS)) {
-  copy(font, `assets/${path.basename(font)}`);
-}
+/** A file at `path`: its bytes, or the file under hosted/ to copy them from. */
+type AssetFile = { path: string; cache: keyof typeof CACHE } & (
+  | { contents: string | Uint8Array }
+  | { from: string }
+);
 
-for (const card of [SITE_CARD, SERVER_CARD]) {
-  copy(card.path, `assets/${card.file}`);
-}
+const pdfmake = readFileSync(
+  fileURLToPath(import.meta.resolve("pdfmake/build/pdfmake.min.js")),
+  "utf-8"
+).replace(/\/\/# sourceMappingURL=\S*\s*$/u, "");
 
-writePdf();
+const pdfFonts = new Set(
+  Object.values(PDF_FONTS).flatMap(({ normal, bold }) => [normal, bold])
+);
 
-if (host) {
-  await writePosthog(host);
+const FILES: AssetFile[] = [
+  { path: "/site.js", contents: SITE_JS, cache: "fresh" },
+  { path: "/favicon.svg", contents: MARK_SVG, cache: "fresh" },
+  {
+    path: PDFMAKE_PATH,
+    contents: `${pdfmake}
+;globalThis.drawReportPdf = (report) =>
+  (${DRAW_PDF})(globalThis.pdfMake, report, location.origin + ${JSON.stringify(PDF_FONT_DIR)});
+`,
+    cache: "fresh",
+  },
+  ...Object.values(FONT_PATHS).map((font) => ({
+    path: font,
+    from: `assets/${path.basename(font)}`,
+    cache: "immutable" as const,
+  })),
+  ...[...pdfFonts].map((name) => ({
+    path: `${PDF_FONT_DIR}${name}`,
+    from: `assets/pdf/${name}`,
+    cache: "immutable" as const,
+  })),
+  ...[SITE_CARD, SERVER_CARD].map((card) => ({
+    path: card.path,
+    from: `assets/${card.file}`,
+    cache: "day" as const,
+  })),
+];
+
+const POSTHOG_PATHS = ["/ph.js", "/ph-recorder.js"];
+
+if (posthog) {
+  const [source, recorder] = posthog;
+
+  FILES.push(
+    {
+      path: "/ph.js",
+      contents: `${source}\nexport const TOKEN = ${JSON.stringify(POSTHOG_TOKEN)};\nexport const API_HOST = ${JSON.stringify(host)};\n`,
+      cache: "fresh",
+    },
+    { path: "/ph-recorder.js", contents: recorder, cache: "fresh" }
+  );
 } else {
   // A build before this one may have written them with a host.
-  rmSync(new URL("ph.js", target), { force: true });
-  rmSync(new URL("ph-recorder.js", target), { force: true });
+  for (const at of POSTHOG_PATHS) {
+    rmSync(new URL(`.${at}`, target), { force: true });
+  }
+}
+
+for (const file of FILES) {
+  write(
+    file.path,
+    "from" in file ? readFileSync(new URL(file.from, hosted)) : file.contents
+  );
 }
 
 write(
   "/_headers",
   headerRules([
     ["/*", SECURITY],
-    ["/site.js", FRESH],
-    ["/favicon.svg", FRESH],
-    [PDFMAKE_PATH, FRESH],
-    ["/ph.js", FRESH],
-    ["/ph-recorder.js", FRESH],
-    ["/fonts/*", { "cache-control": "public, max-age=31536000, immutable" }],
-    [SITE_CARD.path, { "cache-control": "public, max-age=86400" }],
-    [SERVER_CARD.path, { "cache-control": "public, max-age=86400" }],
+    ...FILES.map((file): [string, Record<string, string>] => [
+      file.path,
+      { "cache-control": CACHE[file.cache] },
+    ]),
   ])
 );
