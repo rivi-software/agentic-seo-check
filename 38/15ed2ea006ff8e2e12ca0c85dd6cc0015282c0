@@ -1,0 +1,20 @@
+docs/superpowers/specs/2026-11-24-premium-features-stack-design.md
+  s_46ac76d26da34b::t_2926768becc670 1-115
+  s_46ac76d26da34b::t_ede2075b5b7e06 116-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3815ed2ea006ff8e2e12ca0c85dd6cc0015282c0",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "unknown"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
