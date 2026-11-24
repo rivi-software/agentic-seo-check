@@ -438,6 +438,25 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
     return disallowed(url, robots, token) ?? pace(url, robots);
   };
 
+  /**
+   * The lab's gate (issue #222): the address rules and robots.txt alone. Google's servers request
+   * the page, so the Worker's limits count nothing for it; robots.txt, which this server requests
+   * when the audit has not read it yet, still goes through them.
+   */
+  const labGate = (): RequestGate => {
+    const through = siteGate(limits);
+
+    return {
+      beforeRequest: async (url) => {
+        const problem = hostedUrlProblem(url);
+
+        return problem
+          ? addressRefusal(problem)
+          : await obeyRobots(url, through);
+      },
+    };
+  };
+
   /** The gate whose requests the Worker's `own` limits hold, after the address rules and robots.txt. */
   const gateFor = (own?: RequestGate): RequestGate => {
     const through = siteGate(own);
@@ -467,6 +486,7 @@ export const hostedFetch = (requests: HostedRequests): FetchOptions => {
     sign,
     maxBodyBytes: HOSTED_LIMITS.maxBodyBytes,
     gate: gateFor(limits),
+    labGate: labGate(),
     ...(subresourceLimits && { subresourceGate: gateFor(subresourceLimits) }),
   };
 };

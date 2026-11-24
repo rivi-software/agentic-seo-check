@@ -25,6 +25,8 @@ import {
   hostedUrlProblem,
   siteRefusal,
 } from "../src/core/hosted.js";
+import type { LhrLike } from "../src/core/lighthouse.js";
+import type { LabRunner } from "../src/core/psi.js";
 import type { RequestLike, RouteLike } from "../src/core/render-fetch.js";
 import { RenderUnavailableError } from "../src/core/render.js";
 import type { RenderBrowser } from "../src/core/render.js";
@@ -54,7 +56,11 @@ import type {
   McpToolCall,
   McpUnknownToolCall,
 } from "../src/telemetry/mcp.js";
+import psiJson from "./fixtures/psi-lhr.json" with { type: "json" };
 import { siteRoutes, startFixtureServer } from "./helpers/fixture-server.js";
+
+/** A PageSpeed Insights lab result, as the hosted lab runner answers (issue #222). */
+const psiLhr: LhrLike = psiJson;
 
 const USER_AGENT =
   "Mozilla/5.0 (compatible; agentic-seo-check/0.0.0-test; +https://mcp.agentic-seo.rivi.software/crawler)";
@@ -215,6 +221,30 @@ const premiumWith = (
     },
   };
 };
+
+/** A lab that answers with the fixture's PageSpeed Insights result (issue #222). */
+const fixtureLab = () =>
+  vi.fn<LabRunner>(() => Promise.resolve(structuredClone(psiLhr)));
+
+/** The premium server's profile with `lab` as its lab runner. */
+const labWith = (
+  lab: LabRunner,
+  paid?: HostedProfile["paid"],
+  options: Parameters<typeof profileWith>[0] = {}
+) => {
+  const made = premiumWith(unavailableBrowser(), paid, options);
+
+  return { ...made, profile: { ...made.profile, lab } };
+};
+
+/** The listed tools that have `name` among their arguments. */
+const toolsWith = (
+  tools: { name: string; inputSchema: { properties?: object } }[],
+  name: string
+) =>
+  tools.flatMap((t) =>
+    name in (t.inputSchema.properties ?? {}) ? [t.name] : []
+  );
 
 /** A hosted profile that lets every call through, with `gate` as the server's own limits. */
 const profileWith = (
@@ -535,6 +565,42 @@ describe("the hosted server", () => {
       expect(
         hostedFetch({ userAgent: USER_AGENT, crawl: false }).subresourceGate
       ).toBeUndefined();
+    });
+
+    it("gives the lab a gate that obeys robots.txt and the URL rules, and asks no limits, since Google's servers visit the page (issue #222)", async () => {
+      serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nDisallow: /private\n",
+        },
+      });
+
+      const asked: string[] = [];
+
+      const { labGate } = hostedFetch({
+        userAgent: USER_AGENT,
+        crawl: false,
+        limits: {
+          beforeRequest: (url) => {
+            asked.push(url.href);
+          },
+        },
+      });
+
+      assert(labGate, "a hosted fetch has a lab gate");
+
+      await expect(
+        labGate.beforeRequest(new URL("https://shop.example.com/"))
+      ).resolves.toBeUndefined();
+      await expect(
+        labGate.beforeRequest(new URL("https://shop.example.com/private/a"))
+      ).resolves.toMatchObject({ reason: "robots_txt" });
+      await expect(
+        labGate.beforeRequest(new URL("http://127.0.0.1/"))
+      ).resolves.toMatchObject({ reason: "address" });
+
+      // robots.txt is a request this server sends, so the limits count it; the page is Google's.
+      expect(asked).toStrictEqual(["https://shop.example.com/robots.txt"]);
     });
 
     it("tells a site's refusal from its page", () => {
@@ -2991,6 +3057,211 @@ describe("the hosted server", () => {
       expect(result.isError).toBeTruthy();
       expect(textOf(result)).toContain(refusal);
       expect(ends.map((e) => e.outcome)).toStrictEqual(["refused"]);
+    });
+  });
+
+  describe("its lab performance for subscribers (issue #222)", () => {
+    const SHOP = "https://shop.example.com/";
+
+    const serveShop = () =>
+      serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nAllow: /\n",
+        },
+        [SHOP]: {
+          body: page("Shop home page for the fixture", "<p>Widgets.</p>"),
+        },
+      });
+
+    /** The requests the call's limits were asked for, of a subscriber's audit with the lab or without. */
+    const counted = async (lighthouse: boolean): Promise<string[]> => {
+      serveShop();
+
+      const asked: string[] = [];
+
+      const { profile } = labWith(fixtureLab(), "subscription", {
+        gate: {
+          beforeRequest: (url) => {
+            asked.push(url.href);
+          },
+        },
+      });
+
+      const client = await connect(profile);
+
+      await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, lighthouse },
+      });
+
+      return asked;
+    };
+
+    it("lists `lighthouse` and `formFactor` on the premium server's seo_audit_page only, and says so", async () => {
+      const premium = await connect(labWith(fixtureLab()).profile);
+
+      const free = await connect({
+        ...labWith(fixtureLab(), "subscription").profile,
+        premium: false,
+      });
+
+      const { tools } = await premium.listTools();
+      const listed = await free.listTools();
+
+      expect(
+        ["lighthouse", "formFactor"].map((name) => [
+          toolsWith(tools, name),
+          toolsWith(listed.tools, name),
+        ])
+      ).toStrictEqual([
+        [["seo_audit_page"], []],
+        [["seo_audit_page"], []],
+      ]);
+
+      for (const tool of tools.filter((t) =>
+        t.description?.includes("from Cloudflare's network")
+      )) {
+        expect(tool.description).toContain("`lighthouse: true`");
+        expect(tool.description).not.toContain("does not run Lighthouse");
+      }
+    });
+
+    it("counts `lighthouse` and `formFactor` among the premium server's arguments in its analytics, and not the free server's", () => {
+      expect(
+        [...(PREMIUM_TOOLS.get("seo_audit_page")?.arguments ?? [])].filter(
+          (name) => name === "lighthouse" || name === "formFactor"
+        )
+      ).toStrictEqual(["lighthouse", "formFactor"]);
+      expect(HOSTED_TOOLS.get("seo_audit_page")?.arguments).not.toContain(
+        "lighthouse"
+      );
+    });
+
+    it("runs no lab on the free server, even for a profile with a lab and a subscription", async () => {
+      serveShop();
+
+      const lab = fixtureLab();
+
+      const client = await connect({
+        ...labWith(lab, "subscription").profile,
+        premium: false,
+      });
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, lighthouse: true },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(lab).not.toHaveBeenCalled();
+    });
+
+    it("asks an account without a subscription to subscribe, before the call counts and with no lab run", async () => {
+      serveShop();
+
+      const lab = fixtureLab();
+      const { profile, calls } = labWith(lab);
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, lighthouse: true },
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toBe(
+        "Agentic SEO Check error: Lab performance needs a subscription. Subscribe at https://agentic-seo.org/account."
+      );
+      expect(lab).not.toHaveBeenCalled();
+      expect(calls).toStrictEqual([]);
+    });
+
+    it("audits inline html for an account without a subscription, since html never runs the lab", async () => {
+      const lab = fixtureLab();
+      const { profile, calls } = labWith(lab);
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: {
+          html: "<html><title>Shop</title></html>",
+          lighthouse: true,
+        },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(lab).not.toHaveBeenCalled();
+      expect(calls.map((c) => c.lab ?? false)).toStrictEqual([false]);
+    });
+
+    it("runs the lab once for a subscriber, with the form factor asked for, and tells the limits", async () => {
+      serveShop();
+
+      const lab = fixtureLab();
+      const { profile, calls } = labWith(lab, "subscription");
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, lighthouse: true, formFactor: "desktop" },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(lab.mock.calls).toStrictEqual([[SHOP, "desktop"]]);
+      expect(calls.map((c) => c.lab)).toStrictEqual([true]);
+      expect(result.structuredContent).toMatchObject({
+        performance: { formFactor: "desktop" },
+      });
+      expect(
+        rulesOf(Findings.parse(result.structuredContent).findings)
+      ).not.toContain("tool.lighthouse-unavailable");
+    });
+
+    it("runs no lab for a subscriber's call without `lighthouse`", async () => {
+      serveShop();
+
+      const lab = fixtureLab();
+      const { profile, calls } = labWith(lab, "subscription");
+      const client = await connect(profile);
+
+      await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP },
+      });
+
+      expect(lab).not.toHaveBeenCalled();
+      expect(calls.map((c) => c.lab ?? false)).toStrictEqual([false]);
+    });
+
+    it("charges the page's site no request for the lab's check, which Google's servers send", async () => {
+      const without = await counted(false);
+      const withLab = await counted(true);
+
+      expect(withLab).toStrictEqual(without);
+      expect(withLab.filter((url) => url === SHOP)).toHaveLength(1);
+    });
+
+    it("answers with the site's refusal and runs no lab when robots.txt keeps the server from the page", async () => {
+      serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nDisallow: /\n",
+        },
+        [SHOP]: { body: page("Shop home page for the fixture", "") },
+      });
+
+      const lab = fixtureLab();
+      const client = await connect(labWith(lab, "subscription").profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, lighthouse: true },
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toContain("robots.txt");
+      expect(lab).not.toHaveBeenCalled();
     });
   });
 });

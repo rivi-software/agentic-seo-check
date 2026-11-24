@@ -119,6 +119,7 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
     PLATFORM_CRAWLS: limiter(30),
     SHARE_UPLOADS: limiter(5),
     RENDER_CALLS: limiter(10),
+    LAB_CALLS: limiter(5),
     CALLS: {
       // As Analytics Engine does, throw for an index longer than it holds.
       writeDataPoint: (point) => {
@@ -195,6 +196,9 @@ const COMPARE: HostedCallInfo = {
 
 /** A subscriber's page audit with `render` (issue #230). */
 const RENDER: HostedCallInfo = { ...PAGE, render: true };
+
+/** A subscriber's page audit with `lighthouse`, from PageSpeed Insights (issue #222). */
+const LAB: HostedCallInfo = { ...PAGE, lab: true };
 
 const INLINE: HostedCallInfo = {
   tool: "seo_audit_page",
@@ -1075,6 +1079,47 @@ describe("the hosted server's limits", () => {
       await expect(
         call.subresourceGate?.beforeRequest(font)
       ).resolves.toMatchObject({ scope: "host", reason: "site_requests" });
+    });
+
+    it("let an account run the lab 5 times a minute (issue #222)", async () => {
+      const { env, ctx } = fakeEnv();
+      const profile = hostedProfile(env, ctx, ANN, { paid: "subscription" });
+
+      const answers = await Promise.all(
+        Array.from({ length: 6 }, () => refusalOf(profile.startCall(LAB)))
+      );
+
+      expect(answers.filter((a) => a === "admitted")).toHaveLength(5);
+      expect(answers.at(-1)).toBe(
+        "This account has asked for 5 lab runs on the premium server in the last minute, its limit per account. Try again in a minute. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp"
+      );
+      await expect(reasonOf(profile.startCall(LAB))).resolves.toBe("lab_calls");
+      // A call without `lighthouse` runs no lab, and another account has its own.
+      await expect(refusalOf(profile.startCall(PAGE))).resolves.toBe(
+        "admitted"
+      );
+      await expect(
+        refusalOf(
+          hostedProfile(env, ctx, accountCaller("acc_bob"), {
+            paid: "subscription",
+          }).startCall(LAB)
+        )
+      ).resolves.toBe("admitted");
+    });
+
+    it("count a lab call's requests against the subscribers' day (issue #222)", async () => {
+      const { env, ctx, settled, stored, paid } = fakeEnv();
+
+      const call = await hostedProfile(env, ctx, ANN, {
+        paid: "subscription",
+      }).startCall(LAB);
+
+      await call.gate?.beforeRequest(new URL("https://www.example.com/"));
+      call.end?.({ outcome: "ok", pages: 1 });
+      await settled();
+
+      expect(paid().count).toBe(1);
+      expect(stored().count).toBe(0);
     });
 
     it("give a call without render no subresource gate", async () => {

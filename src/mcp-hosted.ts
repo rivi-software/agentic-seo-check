@@ -40,6 +40,7 @@ import {
   hostedUrlProblem,
   LOCAL_SERVER,
 } from "./core/hosted.js";
+import type { LabRunner } from "./core/psi.js";
 import { auditForShare } from "./core/share.js";
 import type { ShareLink, SharedReport } from "./core/share.js";
 import type { AeoAudit, Audit, Comparison, SiteAudit } from "./core/types.js";
@@ -99,6 +100,8 @@ export interface HostedCallInfo {
   shares?: boolean;
   /** A subscriber's call renders its page in the server's browser (issue #230): limits of its own hold it. */
   render?: boolean;
+  /** A subscriber's call measures its page in the lab, with PageSpeed Insights (issue #222): a limit of its own holds it. */
+  lab?: boolean;
 }
 
 /** How a hosted tool call ended. */
@@ -142,6 +145,11 @@ export interface HostedProfile {
    * call. The browser fetches nothing itself: the audit sends each of its requests through the gate.
    */
   browser?: AuditOptions["browser"];
+  /**
+   * The server's lab (PageSpeed Insights, issue #222), which a subscriber's `lighthouse` runs once
+   * per call, after the gate lets the page through: Google's servers visit the page, not this one.
+   */
+  lab?: LabRunner;
   /** The User-Agent of every request the tools send; it keeps the agentic-seo-check product token. */
   userAgent: string;
   /** Signs each request the tools send (Web Bot Auth, issue #41); without it they go unsigned. */
@@ -185,6 +193,7 @@ export type LimitReason =
   | "paused"
   | "render_calls"
   | "daily_renders"
+  | "lab_calls"
   | "paid_daily_requests"
   | "no_crawls"
   | "caller_calls"
@@ -218,8 +227,11 @@ const ROBOTS_NOTE =
 /** What every hosted tool says it cannot do, and where to go instead. */
 const HOSTED_NOTE = `This is the hosted server: it requests pages from Cloudflare's network, so it cannot reach localhost, private networks or sites behind a login, cannot read build directories, does not render JavaScript or run Lighthouse, and limits requests per site and per caller. The local server does all of that: \`${LOCAL_SERVER}\`. ${ROBOTS_NOTE}`;
 
-/** HOSTED_NOTE on the premium server, which renders for subscribers (issue #230). */
-const PREMIUM_NOTE = `This is the premium hosted server: it requests pages from Cloudflare's network, so it cannot reach localhost, private networks or sites behind a login, cannot read build directories, does not run Lighthouse, and limits requests per site and per account. With a subscription, seo_audit_page renders JavaScript with \`render: true\`, in a browser that fetches nothing itself: this server sends each of its requests, under the same rules. The local server does all of that without limits: \`${LOCAL_SERVER}\`. ${ROBOTS_NOTE}`;
+/**
+ * HOSTED_NOTE on the premium server, which renders (issue #230) and measures lab performance
+ * (issue #222) for subscribers.
+ */
+const PREMIUM_NOTE = `This is the premium hosted server: it requests pages from Cloudflare's network, so it cannot reach localhost, private networks or sites behind a login, cannot read build directories, and limits requests per site and per account. With a subscription, seo_audit_page renders JavaScript with \`render: true\`, in a browser that fetches nothing itself: this server sends each of its requests, under the same rules. With \`lighthouse: true\` it measures lab performance with Google's PageSpeed Insights, whose servers load the page once robots.txt lets this server request it. The local server does all of that without limits: \`${LOCAL_SERVER}\`. ${ROBOTS_NOTE}`;
 
 /** The note of the server's own host. */
 const noteFor = (premium: boolean): string =>
@@ -383,8 +395,27 @@ const render = z
     "With `url`: also render the page with JavaScript in this server's browser and compare it with the server HTML (SPA/CSR problems). Needs a subscription. One render a call; the browser's requests count as the audit's."
   );
 
-/** seo_audit_page's arguments on the premium server: `render` beside the rest. */
-const PREMIUM_AUDIT_PAGE_INPUT = { ...AUDIT_PAGE_INPUT, render };
+/** `lighthouse` on the premium server's seo_audit_page (issue #222), from PageSpeed Insights. */
+const lighthouse = z
+  .boolean()
+  .optional()
+  .describe(
+    "With `url`: also run Lighthouse (performance and SEO categories) on Google's PageSpeed Insights, which loads the page from Google's servers. Needs a subscription. Slow: 20-60 seconds."
+  );
+
+/** `formFactor` beside `lighthouse`, as the local tool has it. */
+const formFactor = z
+  .enum(["mobile", "desktop"])
+  .default("mobile")
+  .describe("Lighthouse device emulation.");
+
+/** seo_audit_page's arguments on the premium server: `render`, `lighthouse` and `formFactor` beside the rest. */
+const PREMIUM_AUDIT_PAGE_INPUT = {
+  ...AUDIT_PAGE_INPUT,
+  render,
+  lighthouse,
+  formFactor,
+};
 
 /** The arguments of seo_crawl_site. */
 const CRAWL_SITE_INPUT = {
@@ -835,34 +866,51 @@ const inConversation = async (
 
 /**
  * The options of an audit on the hosted server: the caller's, with the hosted fetch. With
- * `profile`, a call that asks to `render` gets the server's browser, on a paid call only.
+ * `profile`, a call that asks to `render` gets the server's browser, and one that asks for
+ * `lighthouse` the server's lab (issue #222), on a paid call only.
  */
 const auditOptions = (
-  input: Parameters<typeof toOptions>[0] & { render?: boolean },
+  input: Parameters<typeof toOptions>[0] & {
+    render?: boolean;
+    lighthouse?: boolean;
+    formFactor?: "mobile" | "desktop";
+  },
   fetch: FetchOptions,
   profile?: HostedProfile
-): ReturnType<typeof toOptions> & Pick<AuditOptions, "render" | "browser"> => ({
+): ReturnType<typeof toOptions> &
+  Pick<
+    AuditOptions,
+    "render" | "browser" | "lighthouse" | "formFactor" | "lab"
+  > => ({
   ...toOptions(input),
   fetch: { ...fetch, timeoutMs: input.timeoutMs },
   ...(input.render &&
     profile?.paid &&
     profile.browser && { render: true, browser: profile.browser }),
+  ...(input.lighthouse &&
+    profile?.paid &&
+    profile.lab && {
+      lighthouse: true,
+      formFactor: input.formFactor,
+      lab: profile.lab,
+    }),
 });
 
 /**
- * Whether a call renders: `render` on the premium server, for a URL. Without a subscription it
- * throws, before the call counts and before any browser starts.
+ * Whether a call uses a paid feature: `render` or `lighthouse` on the premium server, for a URL.
+ * Without a subscription it throws, before the call counts and before any browser or lab starts.
  */
-const rendersFor = (
+const paidFeature = (
   profile: HostedProfile,
-  asked: boolean | undefined
+  asked: boolean | undefined,
+  feature: string
 ): boolean => {
   if (!(asked && profile.premium)) {
     return false;
   }
 
   if (!profile.paid) {
-    throw new SubscriptionNeededError();
+    throw new SubscriptionNeededError(feature);
   }
 
   return true;
@@ -1070,6 +1118,7 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
         let host: string | null = null;
         let field: FieldDataOptions | undefined;
         let renders = false;
+        let labs = false;
 
         try {
           host = inline || !target ? null : allowedHost(target);
@@ -1078,7 +1127,19 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
           // Inline HTML has no page for a browser to load.
           renders =
             host !== null &&
-            rendersFor(profile, "render" in input && input.render === true);
+            paidFeature(
+              profile,
+              "render" in input && input.render === true,
+              "Rendering"
+            );
+          // Nor for PageSpeed Insights to visit.
+          labs =
+            host !== null &&
+            paidFeature(
+              profile,
+              "lighthouse" in input && input.lighthouse === true,
+              "Lab performance"
+            );
         } catch (error) {
           return fail(error);
         }
@@ -1091,10 +1152,23 @@ const registerAuditPage = (server: McpServer, profile: HostedProfile): void => {
             crawl: false,
             host,
             ...(renders && { render: true }),
+            ...(labs && { lab: true }),
           },
           async (fetch) => {
             const options = {
-              ...auditOptions({ ...input, render: renders }, fetch, profile),
+              ...auditOptions(
+                {
+                  ...input,
+                  render: renders,
+                  lighthouse: labs,
+                  formFactor:
+                    "formFactor" in input && input.formFactor === "desktop"
+                      ? "desktop"
+                      : "mobile",
+                },
+                fetch,
+                profile
+              ),
               baseUrl: input.baseUrl,
               // Inline HTML asks for no key: the audit answers that it has no URL to ask for.
               fieldData: inline ? input.fieldData : field,
@@ -1571,7 +1645,7 @@ const countedTools = (premium: boolean): ReadonlyMap<string, CountedTool> =>
  */
 export const HOSTED_TOOLS = countedTools(false);
 
-/** HOSTED_TOOLS on the premium server (issue #230): its notes, and `render`. */
+/** HOSTED_TOOLS on the premium server (issue #230): its notes, `render`, and `lighthouse` and `formFactor` (issue #222). */
 export const PREMIUM_TOOLS = countedTools(true);
 
 /**

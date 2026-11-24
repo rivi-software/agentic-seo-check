@@ -530,7 +530,7 @@ const lighthouseFindings = async (
   // Asked outside the try: a refused page is the site's answer, not a finding about the lab, as
   // in renderFindings.
   if (options.lab) {
-    await askGate(options.fetch?.gate, url);
+    await askGate(options.fetch?.labGate ?? options.fetch?.gate, url);
   }
 
   try {

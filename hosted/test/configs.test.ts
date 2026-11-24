@@ -165,6 +165,18 @@ describe("the two Workers' configurations", () => {
     expect(server.vars["PAID_DAILY_REQUESTS"]).toBe(100_000);
   });
 
+  it("give both the premium server's lab runs a minute (issue #222)", () => {
+    const lab = (config: typeof server) =>
+      config.ratelimits.find((r: { name: string }) => r.name === "LAB_CALLS");
+
+    expect(lab(server)).toStrictEqual({
+      name: "LAB_CALLS",
+      namespace_id: "35010",
+      simple: { limit: 5, period: 60 },
+    });
+    expect(lab(site)).toStrictEqual(lab(server));
+  });
+
   it("bind Browser Run and cap the day's renders on the MCP server only (issue #230)", () => {
     expect(server.vars["DAILY_RENDERS"]).toBe(2000);
     expect(server.browser).toStrictEqual({ binding: "BROWSER" });

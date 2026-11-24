@@ -35,9 +35,11 @@ import {
   FORMER_SERVER_HOSTS,
   hostedProfile,
   movedToOrigin,
+  ORIGIN,
   PREMIUM_HOST,
   PREMIUM_ORIGIN,
 } from "./limits.js";
+import type { LimitsEnv } from "./limits.js";
 import {
   crawlerPage,
   FAVICON_SVG,
@@ -47,6 +49,7 @@ import {
 import { premiumProvider } from "./premium/provider.js";
 import type { PremiumCall } from "./premium/provider.js";
 import { mayCallTool, protocolServers } from "./protocol-server.js";
+import { labRunner } from "./psi.js";
 import { refusalOf } from "./refused-requests.js";
 import { keepReport } from "./shared-reports.js";
 import { DIRECTORY_PATH, directoryResponse, signingKeys } from "./signing.js";
@@ -105,7 +108,8 @@ const openAiRanges = openAiRangesReader();
  * (analytics.ts), which any request can read without the server keeping anything. There is no
  * session to resume or end, so GET and DELETE answer 405, as the protocol allows. On the premium
  * server, `as` names the token's account as the caller, and what it paid, and its tools are the
- * premium server's, with the server's browser for a subscriber's `render` (issue #230).
+ * premium server's, with the server's browser for a subscriber's `render` (issue #230) and its
+ * lab for `lighthouse` (issue #222).
  */
 const handleMcp = async (
   request: Request,
@@ -139,6 +143,8 @@ const handleMcp = async (
   );
 
   const premium = as !== undefined;
+  // The limits' view of the bindings, which names the optional secrets Wrangler's Env leaves out.
+  const limitsEnv: LimitsEnv = env;
 
   // A request that calls no tool, as nearly all are, needs nothing of the caller's (issue #211).
   const server = (await mayCallTool(request))
@@ -149,7 +155,11 @@ const handleMcp = async (
             report,
             paid,
           }),
-          ...(premium && { premium, browser: serverBrowser(env.BROWSER) }),
+          ...(premium && {
+            premium,
+            browser: serverBrowser(env.BROWSER),
+            lab: labRunner(limitsEnv, ORIGIN),
+          }),
           connection: tracking?.connection,
           share: reportKeeper(env),
           // A subscriber's crawl counts against the subscribers' day when it runs (issue #230).
