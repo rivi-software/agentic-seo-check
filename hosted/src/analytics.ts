@@ -180,9 +180,10 @@ export type ErrorRoute = `${"server" | "website"}:${string}`;
 /**
  * What the Worker was doing after an answer, or apart from one, when an error came (issue #93):
  * counting the day's requests, keeping a call's record, reading OpenAI's ranges, reading the
- * signing keys, or signing a request.
+ * signing keys, signing a request, or writing a background crawl's end (issue #209).
  */
 export type ErrorTask =
+  | "crawl_end"
   | "request_count"
   | "call_record"
   | "openai_ranges"

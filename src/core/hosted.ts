@@ -81,6 +81,9 @@ export const HOSTED_LIMITS = {
   crawlDelayBudgetMs: 30_000,
 } as const;
 
+/** How many days a background crawl's result is kept (issue #209; the bucket's rule on `crawls/`). */
+export const CRAWL_DAYS = 7;
+
 /** Names that only resolve on a local machine or network, never on the public internet. */
 const LOCAL_SUFFIXES = [".localhost", ".local", ".internal"];
 

@@ -101,4 +101,10 @@ describe("the hosted server's pages", () => {
     );
     expect(landingPage(DAILY)).toContain("https://help.rivi.software/contact");
   });
+
+  it("say what the server keeps, for how long and where", () => {
+    expect(landingPage(DAILY)).toContain(
+      "The server keeps no HTML you send and no headers, and no report but one <code>seo_share_report</code> shares, for 30 days, and no audit but one <code>seo_start_crawl</code> made, for 7 days, in the EU."
+    );
+  });
 });

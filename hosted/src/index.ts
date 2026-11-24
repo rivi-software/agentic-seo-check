@@ -27,6 +27,7 @@ import {
   openAiRangesReader,
   refreshOpenAiRanges,
 } from "./callers.js";
+import { backgroundCrawls } from "./crawls.js";
 import { freshResponse } from "./fresh.js";
 import { FORMER_SERVER_HOSTS, hostedProfile, movedToOrigin } from "./limits.js";
 import {
@@ -44,6 +45,8 @@ import { fontResponse, shareImageResponse } from "./ui/assets.js";
 import { SERVER_CARD } from "./ui/og.js";
 import { posthogFileResponse } from "./ui/posthog-script.js";
 import { productHuntUpvotes } from "./ui/product-hunt.js";
+
+export { CrawlWorkflow } from "./crawls.js";
 
 export { HostedState } from "./state.js";
 
@@ -123,6 +126,7 @@ const handleMcp = async (
           }),
           connection: tracking?.connection,
           share: reportKeeper(env),
+          crawls: backgroundCrawls(env, report),
         },
       })
     : await protocolServer();

@@ -5,6 +5,7 @@
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { setTimeout as sleep } from "node:timers/promises";
 import { gzipSync } from "node:zlib";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -266,7 +267,54 @@ const Audit = z.object({
     )
     .optional(),
   sitemaps: z.object({ sources: z.array(z.string()) }).optional(),
+  pages: z.array(z.object({ url: z.string() })).optional(),
 });
+
+/** The pages seo_crawl_site read on the fixture shop, which a background crawl must read too. */
+let crawledPages: string[] = [];
+
+/** What seo_start_crawl and a running crawl's seo_crawl_result answer. */
+const RunningCrawl = z.object({ id: z.string(), status: z.literal("running") });
+
+/**
+ * Asks seo_crawl_result for crawl `id` every `everyMs` until it is no longer running, for at most
+ * 30 s: its answer then.
+ */
+const crawlResult = async (
+  id: string,
+  args: Record<string, string> = {},
+  everyMs = 200
+) => {
+  const until = Date.now() + 30_000;
+
+  for (;;) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- each poll waits for the one before it
+    const result = await client.callTool({
+      name: "seo_crawl_result",
+      arguments: { id, ...args },
+    });
+
+    if (!RunningCrawl.safeParse(result.structuredContent).success) {
+      return result;
+    }
+
+    assert(Date.now() < until, "the crawl ended within 30 s");
+    // oxlint-disable-next-line eslint/no-await-in-loop -- as above
+    await sleep(everyMs);
+  }
+};
+
+/** Starts a background crawl of `url`: its id. */
+const startCrawl = async (url: string) => {
+  const started = await client.callTool({
+    name: "seo_start_crawl",
+    arguments: { url },
+  });
+
+  expect(started.isError).toBeFalsy();
+
+  return RunningCrawl.parse(started.structuredContent).id;
+};
 
 const audit = async (
   name: string,
@@ -504,9 +552,11 @@ describe("the hosted Worker in workerd", () => {
         "seo_aeo_audit",
         "seo_audit_page",
         "seo_compare_pages",
+        "seo_crawl_result",
         "seo_crawl_site",
         "seo_list_rules",
         "seo_share_report",
+        "seo_start_crawl",
       ]);
     });
 
@@ -852,6 +902,53 @@ describe("the hosted Worker in workerd", () => {
 
       expect(broken).toContain("https://shop.example.com/missing");
       expect(requests.map((r) => r.url)).not.toContain("http://10.0.0.1/admin");
+
+      crawledPages = (crawl?.pages ?? []).map((p) => p.url);
+    });
+
+    it("crawls a site in the background and answers its result by id (issue #209)", async () => {
+      expect(crawledPages.length).toBeGreaterThan(0);
+
+      const id = await startCrawl("https://shop.example.com/");
+      const seo = await crawlResult(id);
+
+      expect(seo.isError).toBeFalsy();
+      expect(
+        Audit.parse(seo.structuredContent).pages?.map((p) => p.url)
+      ).toStrictEqual(crawledPages);
+
+      const aeo = await crawlResult(id, { audit: "aeo" });
+
+      expect(aeo.isError).toBeFalsy();
+      expect(aeo.structuredContent).toMatchObject({ kind: "aeo" });
+    });
+
+    it("ends a crawl the site refuses as failed, without asking again", async () => {
+      const robots = "https://kept-away.example.com/robots.txt";
+      const home = "https://kept-away.example.com/";
+
+      site.set(robots, {
+        headers: { "content-type": "text/plain" },
+        body: "User-agent: agentic-seo-check\nDisallow: /\n\nUser-agent: *\nAllow: /\n",
+      });
+      site.set(home, { body: html("Kept away") });
+      onTestFinished(() => {
+        site.delete(robots);
+        site.delete(home);
+      });
+
+      const result = await crawlResult(await startCrawl(home));
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toContain(
+        "robots.txt asks agentic-seo-check not to crawl https://kept-away.example.com/"
+      );
+
+      const sent = requests.flatMap((r) =>
+        r.url.startsWith("https://kept-away.example.com/") ? [r.url] : []
+      );
+
+      expect(sent).toStrictEqual([robots]);
     });
 
     it("says a site turned it away, and tells PostHog why", async () => {

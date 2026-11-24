@@ -843,6 +843,28 @@ describe("AEO audits of a site served over HTTP", () => {
       );
       expect(both.start?.seo.findings.every((f) => f.fix)).toBeTruthy();
     });
+
+    it("applies the SEO filters to the SEO audit only (issue #209)", async () => {
+      const [rule] = both.seo.siteFindings.map((f) => f.rule);
+      assert(rule);
+
+      const [filtered, unfiltered] = await Promise.all([
+        auditSiteBoth(server.origin, { onlyRules: [rule], maxPages: 5 }),
+        auditSiteBoth(server.origin, { maxPages: 5 }),
+      ]);
+
+      const seoRules = [
+        ...filtered.seo.siteFindings,
+        ...filtered.seo.pages.flatMap((p) => p.findings),
+      ].map((f) => f.rule);
+
+      expect(seoRules.length).toBeGreaterThan(0);
+      expect(new Set(seoRules)).toStrictEqual(new Set([rule]));
+      expect(rulesOf(filtered.aeo.findings)).toStrictEqual(
+        rulesOf(unfiltered.aeo.findings)
+      );
+      expect(rulesOf(filtered.aeo.findings).length).toBeGreaterThan(0);
+    });
   });
 });
 
