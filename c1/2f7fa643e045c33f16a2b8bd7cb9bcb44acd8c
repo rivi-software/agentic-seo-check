@@ -1,0 +1,21 @@
+hosted/src/accounts/codes.ts
+  s_46ac76d26da34b::t_27ebcfdff9bbb9 130-135,137-138,140-142,145-150,152,160
+hosted/test/accounts-codes.test.ts
+  s_46ac76d26da34b::t_27ebcfdff9bbb9 152-171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c12f7fa643e045c33f16a2b8bd7cb9bcb44acd8c",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
