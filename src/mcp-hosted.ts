@@ -375,10 +375,13 @@ const CRAWL_SITE_INPUT = {
   ...agentArguments,
 };
 
-/** What seo_start_crawl keeps for the Workflow: the tool's input less format, detail and conversation_id. */
+/**
+ * What seo_start_crawl keeps for the Workflow: the tool's input less the answer's shape and the
+ * arguments for the analytics alone, so no agent's free text is kept with the crawl.
+ */
 export type BackgroundCrawlOptions = Omit<
   z.output<z.ZodObject<typeof CRAWL_SITE_INPUT>>,
-  "format" | "detail" | "conversation_id"
+  "format" | "detail" | "conversation_id" | "context" | "llm_model"
 >;
 
 /** How a background crawl failed: the text `fail(error)` answers, and whether the site refused it. */
@@ -1111,7 +1114,12 @@ const registerStartCrawl = (
       }
 
       // The analytics' arguments stay out of what the crawl keeps: they are no option of the crawl.
-      const { conversation_id: _conversation, ...options } = input;
+      const {
+        conversation_id: _conversation,
+        context: _context,
+        llm_model: _model,
+        ...options
+      } = input;
 
       return runCall(
         profile,

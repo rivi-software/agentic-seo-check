@@ -1983,6 +1983,7 @@ describe("the hosted server", () => {
       detail: "full",
       conversation_id: "01a1ccb2-c50e-77f6-9996-449b3851a46d",
       context: "first crawl before a redesign",
+      llm_model: "claude-opus-4-8",
     };
 
     const Started = z.object({
@@ -2052,9 +2053,13 @@ describe("the hosted server", () => {
           options.url,
           options.maxPages,
           options.maxDepth,
-          ["format", "detail", "conversation_id"].filter((key) =>
-            Object.hasOwn(options, key)
-          ),
+          [
+            "format",
+            "detail",
+            "conversation_id",
+            "context",
+            "llm_model",
+          ].filter((key) => Object.hasOwn(options, key)),
         ])
       ).toStrictEqual([[START.url, 20, HOSTED_LIMITS.maxDepth, []]]);
 
