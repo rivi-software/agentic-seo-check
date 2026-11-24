@@ -61,7 +61,7 @@ const Siteverify = z.object({
 });
 
 /** The widget's `data-action` on each form, which a token carries back. */
-export type FormAction = "audit" | "waitlist";
+export type FormAction = "audit" | "waitlist" | "sign_in";
 
 /**
  * Asks Turnstile whether the form's token is one it gave this form's widget, and has not been
