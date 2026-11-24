@@ -112,4 +112,22 @@ describe("accounts store", () => {
 
     await expect(accountById(d1, id)).resolves.toBeNull();
   });
+
+  it("deletes the account's pending sign-in code with it, and no other address's", async () => {
+    const d1 = d1Of(db);
+    const { id } = await accountForSignIn(d1, "Ann@Example.com", NOW);
+
+    const insert = db.prepare(
+      "INSERT INTO sign_in_codes (email, code_hash, attempts, expires_at, sent_at) VALUES (?, 'hash', 0, ?, ?)"
+    );
+
+    insert.run("Ann@example.com", NOW + 600_000, NOW);
+    insert.run("bob@example.com", NOW + 600_000, NOW);
+
+    await deleteAccount(d1, id);
+
+    const left = db.prepare("SELECT email FROM sign_in_codes").all();
+
+    expect(left.map((row) => row["email"])).toStrictEqual(["bob@example.com"]);
+  });
 });

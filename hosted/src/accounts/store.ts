@@ -146,6 +146,17 @@ export const applySubscription = async (
   return row !== null;
 };
 
+/** Deletes the account and a sign-in code still pending for its address, so nothing of it is kept. */
 export const deleteAccount = async (db: D1Like, id: string): Promise<void> => {
-  await db.prepare("DELETE FROM accounts WHERE id = ?").bind(id).run();
+  const deleted = await db
+    .prepare("DELETE FROM accounts WHERE id = ? RETURNING email")
+    .bind(id)
+    .first<{ email: string }>();
+
+  if (deleted !== null) {
+    await db
+      .prepare("DELETE FROM sign_in_codes WHERE email = ?")
+      .bind(deleted.email)
+      .run();
+  }
 };

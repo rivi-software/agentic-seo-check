@@ -106,9 +106,10 @@ export const ANALYTICS_HELPERS_JS = String.raw`
   // Session replay (issue #181): the parts of a page that can show the audited site, whose text a
   // recording masks, and whose attributes maskAttribute masks: the report, the wait for it, a
   // crawl's progress, the form's notices (an error can quote the address), a share page's hero,
-  // a shared report's heading, and the title and meta tags, which name a shared result.
+  // a shared report's heading, the title and meta tags, which name a shared result, and every
+  // .private part, which holds an account's email address (issue #229).
   const PRIVATE =
-    "title, meta, #report, #pending, #progress, .notice, .share-hero, .shared-head";
+    "title, meta, #report, #pending, #progress, .notice, .share-hero, .shared-head, .private";
 
   // The attributes of a private part a recording keeps: how it looks and what is open, never what
   // it says or links to. A rule's id and a severity are sent with events anyway.

@@ -47,6 +47,12 @@ describe("the two Workers' configurations", () => {
           namespace_id: "35007",
           simple: { limit: 5, period: 60 },
         },
+        // Sign-in codes for the premium accounts (issue #229).
+        {
+          name: "SIGN_IN_CODES",
+          namespace_id: "35008",
+          simple: { limit: 5, period: 60 },
+        },
       ])
     );
     expect(server.ratelimits).not.toContainEqual(

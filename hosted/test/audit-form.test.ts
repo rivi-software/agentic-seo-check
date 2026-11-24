@@ -140,6 +140,13 @@ const formEnv = (overrides: Partial<SiteEnv> = {}) => {
     CALLER_CRAWLS: limiter(),
     SHARE_UPLOADS: limiter(),
     WAITLIST_SIGNUPS: limiter(),
+    SIGN_IN_CODES: limiter(),
+    // The form reads no account: a query would be a bug here.
+    ACCOUNTS: {
+      prepare: () => {
+        throw new Error("The audit form reads no account");
+      },
+    },
     PLATFORM_CALLS: limiter(),
     PLATFORM_CRAWLS: limiter(),
     CALLS: {

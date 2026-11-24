@@ -15,6 +15,7 @@ import { SERVER_CARD, SITE_CARD } from "../ui/og.js";
 import { posthogFileResponse } from "../ui/posthog-script.js";
 import { productHuntUpvotes } from "../ui/product-hunt.js";
 import { shareImage } from "../ui/share-image.js";
+import { accountRoute } from "./account-routes.js";
 import { answerAudit, formCrawls, formOpen } from "./audit.js";
 import type { SiteEnv } from "./audit.js";
 import { LLMS_TXT, SITE_JS, SITE_ROBOTS_TXT, SITEMAP_XML } from "./files.js";
@@ -282,6 +283,12 @@ export const siteRoute = (
 
   if (waitlist) {
     return waitlist;
+  }
+
+  const account = accountRoute(request, env, ctx, url.pathname);
+
+  if (account) {
+    return account;
   }
 
   const sharing = sharedRoute(request, env, url.pathname);
