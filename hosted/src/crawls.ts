@@ -9,6 +9,7 @@
  */
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import { z } from "zod";
 
 import { WEBSITE_URL } from "../../src/brand.js";
@@ -29,7 +30,7 @@ import type {
   CrawlState,
 } from "../../src/mcp-hosted.js";
 import { inRequest, reportError, reportTask } from "./analytics.js";
-import type { AnalyticsEnv, ErrorRoute } from "./analytics.js";
+import type { AnalyticsEnv, ErrorRoute, ReportTask } from "./analytics.js";
 import { cruxOptions } from "./crux.js";
 import { backgroundCrawl, BOT_ORIGIN, USER_AGENT } from "./limits.js";
 import type { LimitsEnv, Outcome } from "./limits.js";
@@ -246,9 +247,16 @@ interface CrawlParams {
 
 /**
  * The port seo_start_crawl and seo_crawl_result use, or undefined without the bucket or the
- * Workflow, when both tools say background crawls are off.
+ * Workflow, when both tools say background crawls are off. `report` hears a crawl's end that could
+ * not be written.
  */
-export const backgroundCrawls = (env: Env): BackgroundCrawls | undefined => {
+export const backgroundCrawls = (
+  env: {
+    SHARED_REPORTS?: ReportBucket;
+    CRAWLS?: Pick<Workflow<CrawlParams>, "create">;
+  },
+  report?: ReportTask
+): BackgroundCrawls | undefined => {
   const { SHARED_REPORTS: bucket, CRAWLS: workflow } = env;
 
   if (!bucket || !workflow) {
@@ -265,8 +273,12 @@ export const backgroundCrawls = (env: Env): BackgroundCrawls | undefined => {
         await workflow.create({ id, params: { id } });
       } catch (error) {
         // A crawl that never runs would read as running for CRAWL_DAYS: it ends now, and the call
-        // answers the error.
-        await endCrawl(bucket, id, { failure: crawlFailure(error) });
+        // answers the error, the Workflow's and not the bucket's.
+        try {
+          await endCrawl(bucket, id, { failure: crawlFailure(error) });
+        } catch (error_) {
+          report?.(error_, "crawl_end");
+        }
 
         throw error;
       }
@@ -299,10 +311,135 @@ const outcomeOf = (error: ExpectedError): Outcome => {
 };
 
 /**
- * Runs a background crawl (issue #209) as seo_crawl_site runs one, with the server's User-Agent,
- * signature and key, under the limits of `backgroundCrawl`, and writes its end to the bucket. A
- * site's refusal or a limit ends the crawl failed at once, as the hosted server asks a site
- * nothing again once it refused; an error of the Worker's own gets one retry.
+ * A `waitUntil` that keeps what it is handed, and `settle`, which waits for all of it, and for what
+ * that adds in turn. Nothing says work a step hands to `waitUntil` outlives the step, so an
+ * attempt waits for its own: the day's count, which the daily cap reads, and its errors' events.
+ */
+const heldWork = (ctx: Pick<ExecutionContext, "waitUntil">) => {
+  const pending: Promise<unknown>[] = [];
+
+  return {
+    ctx: {
+      waitUntil: (promise: Promise<unknown>) => {
+        pending.push(promise);
+        ctx.waitUntil(promise);
+      },
+    },
+    settle: async (): Promise<void> => {
+      while (pending.length > 0) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- what settles may hand over more
+        await Promise.allSettled(pending.splice(0));
+      }
+    },
+  };
+};
+
+/** What one attempt of a crawl reads: the limits', the analytics' and the store's bindings. */
+export interface CrawlEnv extends LimitsEnv, AnalyticsEnv {
+  SHARED_REPORTS: ReportBucket;
+}
+
+/**
+ * One attempt of the background crawl `id` (issue #209), the Workflow's step: it runs the crawl as
+ * seo_crawl_site runs one, with the server's User-Agent, signature and key, under the limits of
+ * `backgroundCrawl`, writes its end to the bucket, and answers the number of pages it read, all
+ * the step keeps. A site's refusal or a limit ends the crawl failed at once, as the hosted server
+ * asks a site nothing again once it refused: when that end cannot be written either, the attempt
+ * throws a NonRetryableError, so the Workflow writes it once and asks the site nothing more. Any
+ * other error is reported and thrown, for the step's one retry. It resolves once the work it handed
+ * to `waitUntil` is done.
+ */
+export const crawlAttempt = (
+  env: CrawlEnv,
+  outer: Pick<ExecutionContext, "waitUntil">,
+  id: string
+): Promise<{ pages: number }> => {
+  const { ctx, settle } = heldWork(outer);
+  const bucket = env.SHARED_REPORTS;
+  const report = reportTask(env, ctx, CRAWL_ROUTE);
+
+  const attempt = async (): Promise<{ pages: number }> => {
+    const options = await crawlOptions(bucket, id);
+
+    // The crawl ended or expired: there is nothing left to run.
+    if (!options) {
+      return { pages: 0 };
+    }
+
+    const limits = backgroundCrawl(
+      env,
+      ctx,
+      new URL(options.url).hostname,
+      report
+    );
+
+    const started = Date.now();
+
+    try {
+      await limits.readmit();
+
+      const fetch = hostedFetch({
+        userAgent: USER_AGENT,
+        sign: requestSigner(env.WEB_BOT_AUTH_KEYS, BOT_ORIGIN, (problem) =>
+          report(problem, "signing_keys")
+        ),
+        limits: limits.gate,
+        crawl: true,
+      });
+
+      const audits = await runBackgroundCrawl(
+        options,
+        fetch,
+        cruxOptions(env, WEBSITE_URL)
+      );
+
+      await endCrawl(bucket, id, audits);
+
+      const pages = audits.seo.pages.length;
+      limits.end("ok", pages, Date.now() - started);
+
+      return { pages };
+    } catch (error) {
+      if (!(error instanceof ExpectedError)) {
+        // The attempt's record counts what it sent; the step tries once more.
+        limits.end("error", 0, Date.now() - started);
+
+        throw error;
+      }
+
+      limits.end(outcomeOf(error), 0, Date.now() - started);
+
+      try {
+        await endCrawl(bucket, id, { failure: crawlFailure(error) });
+      } catch (error_) {
+        report(error_, "crawl_end");
+
+        // The site's answer, or the limit's, for the Workflow to write: never a retry.
+        throw new NonRetryableError(error.message);
+      }
+
+      return { pages: 0 };
+    }
+  };
+
+  return inRequest({ env, ctx, route: CRAWL_ROUTE }, async () => {
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof NonRetryableError)) {
+        void reportError(env, ctx, error, CRAWL_ROUTE);
+      }
+
+      throw error;
+    } finally {
+      await settle();
+    }
+  });
+};
+
+/**
+ * Runs a background crawl (issue #209) in one step, `crawlAttempt`, which a Worker's error gets
+ * one retry of. Once the step has failed for good, the crawl ends failed.
  */
 export class CrawlWorkflow extends WorkflowEntrypoint<Env, CrawlParams> {
   override async run(
@@ -310,83 +447,16 @@ export class CrawlWorkflow extends WorkflowEntrypoint<Env, CrawlParams> {
     step: WorkflowStep
   ): Promise<void> {
     const { id } = event.payload;
-    const bucket = this.env.SHARED_REPORTS;
+    // CRUX_API_KEY among them, a secret that `wrangler types` does not see.
+    const env: CrawlEnv = this.env;
 
     try {
-      await step.do("crawl", CRAWL_STEP, () => this.crawl(bucket, id));
+      await step.do("crawl", CRAWL_STEP, () => crawlAttempt(env, this.ctx, id));
     } catch (error) {
-      // The retry is spent: the crawl ends failed, and the error was reported as each attempt
-      // threw it.
+      // Each attempt reported its error as it threw it.
       await step.do("fail", () =>
-        endCrawl(bucket, id, { failure: crawlFailure(error) })
+        endCrawl(env.SHARED_REPORTS, id, { failure: crawlFailure(error) })
       );
     }
-  }
-
-  /** One attempt: the number of pages it read, all the step keeps. */
-  private crawl(bucket: ReportBucket, id: string): Promise<{ pages: number }> {
-    const { ctx } = this;
-    // The bindings the limits, the analytics and the key read, CRUX_API_KEY among them, a secret
-    // that `wrangler types` does not see.
-    const env: LimitsEnv & AnalyticsEnv = this.env;
-
-    return inRequest({ env, ctx, route: CRAWL_ROUTE }, async () => {
-      const options = await crawlOptions(bucket, id);
-
-      // The crawl ended or expired: there is nothing left to run.
-      if (!options) {
-        return { pages: 0 };
-      }
-
-      const report = reportTask(env, ctx, CRAWL_ROUTE);
-
-      const limits = backgroundCrawl(
-        env,
-        ctx,
-        new URL(options.url).hostname,
-        report
-      );
-
-      const started = Date.now();
-
-      try {
-        await limits.readmit();
-
-        const fetch = hostedFetch({
-          userAgent: USER_AGENT,
-          sign: requestSigner(env.WEB_BOT_AUTH_KEYS, BOT_ORIGIN, (problem) =>
-            report(problem, "signing_keys")
-          ),
-          limits: limits.gate,
-          crawl: true,
-        });
-
-        const audits = await runBackgroundCrawl(
-          options,
-          fetch,
-          cruxOptions(env, WEBSITE_URL)
-        );
-
-        await endCrawl(bucket, id, audits);
-
-        const pages = audits.seo.pages.length;
-        limits.end("ok", pages, Date.now() - started);
-
-        return { pages };
-      } catch (error) {
-        if (error instanceof ExpectedError) {
-          limits.end(outcomeOf(error), 0, Date.now() - started);
-          await endCrawl(bucket, id, { failure: crawlFailure(error) });
-
-          return { pages: 0 };
-        }
-
-        // The attempt's record counts what it sent; the step tries once more.
-        limits.end("error", 0, Date.now() - started);
-        await reportError(env, ctx, error, CRAWL_ROUTE);
-
-        throw error;
-      }
-    });
   }
 }

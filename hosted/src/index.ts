@@ -118,7 +118,7 @@ const handleMcp = async (
       }),
       connection: tracking?.connection,
       share: reportKeeper(env),
-      crawls: backgroundCrawls(env),
+      crawls: backgroundCrawls(env, report),
     },
   });
 

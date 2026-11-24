@@ -1,8 +1,19 @@
 /**
- * The store of background crawls (issue #209), in Node with the bucket in memory. The Workflow
- * that writes it is tested in workerd.
+ * The store of background crawls (issue #209), in Node with the bucket in memory, and an attempt
+ * of the Workflow's step whose bucket fails. The Workflow itself is tested in workerd.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { setTimeout as sleep } from "node:timers/promises";
+
+import { NonRetryableError } from "cloudflare:workflows";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 
 import { auditSiteBoth } from "../../src/core/aeo/audit.ts";
 import type { AeoAudit, SiteAudit } from "../../src/core/types.ts";
@@ -12,15 +23,19 @@ import {
   startFixtureServer,
 } from "../../test/helpers/fixture-server.ts";
 import type { FixtureServer } from "../../test/helpers/fixture-server.ts";
+import type { ErrorTask } from "../src/analytics.ts";
 import {
+  backgroundCrawls,
   CRAWL_DAYS,
   CRAWL_ID,
+  crawlAttempt,
   crawlOptions,
   endCrawl,
   keepCrawl,
   newCrawlId,
   readCrawl,
 } from "../src/crawls.ts";
+import type { CrawlEnv } from "../src/crawls.ts";
 import type { ReportBucket } from "../src/shared-reports.ts";
 
 /** An R2 bucket in memory, with what the store uses of one, and the keys it was asked for. */
@@ -197,5 +212,118 @@ describe("the store of background crawls", () => {
     expect(CRAWL_ID.source).toBe("^[\\w-]{22}$");
     expect(ids.every((id) => CRAWL_ID.test(id))).toBeTruthy();
     expect(new Set(ids).size).toBe(100);
+  });
+});
+
+/** A rate limiter the attempt never reaches: MODE keeps it out first. */
+const unused: RateLimit = {
+  limit: () => Promise.reject(new Error("No limit is asked for.")),
+};
+
+/** The bindings of an attempt under MODE `closed`, which `readmit` refuses, with `bucket`. */
+const closedEnv = (bucket: ReportBucket) => {
+  const outcomes: string[] = [];
+
+  const env: CrawlEnv = {
+    MODE: "closed",
+    DAILY_REQUESTS: 100_000,
+    CALLER_SITES: 10,
+    PLATFORM_SITES: 100,
+    SITE_REQUESTS: unused,
+    CALLER_CALLS: unused,
+    CALLER_CRAWLS: unused,
+    PLATFORM_CALLS: unused,
+    PLATFORM_CRAWLS: unused,
+    SHARE_UPLOADS: unused,
+    CALLS: {
+      writeDataPoint: (point) => {
+        outcomes.push(String(point?.blobs?.[1]));
+      },
+    },
+    STATE: {
+      getByName: () => {
+        throw new Error("No Durable Object is asked for.");
+      },
+      jurisdiction: () => ({
+        getByName: () => {
+          throw new Error("No Durable Object is asked for.");
+        },
+      }),
+    },
+    POSTHOG_HOST: "https://posthog.test",
+    SHARED_REPORTS: bucket,
+  };
+
+  return { env, outcomes };
+};
+
+describe("an attempt of a background crawl", () => {
+  it("throws a refusal it cannot write as no retry, once its error's event has gone", async () => {
+    const { bucket } = memoryBucket();
+    const id = newCrawlId();
+
+    await keepCrawl(bucket, id, OPTIONS);
+    // R2 is down from now on.
+    bucket.put = () => Promise.reject(new Error("R2 is unavailable."));
+
+    const { env, outcomes } = closedEnv(bucket);
+    const sent: string[] = [];
+
+    // PostHog answers late: the attempt must wait for it.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      await sleep(50);
+      sent.push(String(input));
+
+      return Response.json({ status: 1 });
+    });
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+
+    const handed: Promise<unknown>[] = [];
+    const attempt = crawlAttempt(env, { waitUntil: (p) => handed.push(p) }, id);
+
+    await expect(attempt).rejects.toBeInstanceOf(NonRetryableError);
+    await expect(attempt).rejects.toThrow("The hosted server is paused.");
+    // The bucket's error went to PostHog before the attempt ended, and the record says limited.
+    expect(sent).toStrictEqual(["https://posthog.test/batch/"]);
+    expect(handed.length).toBeGreaterThan(0);
+    expect(outcomes).toStrictEqual(["limited"]);
+  });
+});
+
+describe("the background crawls of a server", () => {
+  it("answers the Workflow's error when the crawl it could not start cannot be ended either", async () => {
+    const { bucket } = memoryBucket();
+    const put = bucket.put.bind(bucket);
+    let puts = 0;
+
+    // The start's write goes in; the end's fails.
+    bucket.put = (...args) => {
+      puts += 1;
+
+      return puts === 1
+        ? put(...args)
+        : Promise.reject(new Error("R2 is down."));
+    };
+
+    const heard: ErrorTask[] = [];
+
+    const crawls = backgroundCrawls(
+      {
+        SHARED_REPORTS: bucket,
+        CRAWLS: {
+          create: () => Promise.reject(new Error("Workflows are down.")),
+        },
+      },
+      (_error, task) => heard.push(task)
+    );
+
+    await expect(crawls?.start(OPTIONS)).rejects.toThrow("Workflows are down.");
+    expect(heard).toStrictEqual(["crawl_end"]);
+  });
+
+  it("is off without the bucket or the Workflow", () => {
+    expect(backgroundCrawls({})).toBeUndefined();
   });
 });

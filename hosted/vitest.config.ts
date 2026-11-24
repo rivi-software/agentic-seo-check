@@ -9,11 +9,15 @@ export default defineConfig({
   // (where src/version.ts reads the version from package.json itself).
   define: { HOSTED_RATE_LIMITS: defines().HOSTED_RATE_LIMITS },
   // limits.ts and callers.ts ask for the Durable Object through state.ts, which imports
-  // `cloudflare:workers`, a module only workerd has.
+  // `cloudflare:workers`, a module only workerd has, and crawls.ts `cloudflare:workflows` too.
   resolve: {
     alias: {
       "cloudflare:workers": new URL(
         "test/stubs/cloudflare-workers.ts",
+        import.meta.url
+      ).pathname,
+      "cloudflare:workflows": new URL(
+        "test/stubs/cloudflare-workflows.ts",
         import.meta.url
       ).pathname,
     },
