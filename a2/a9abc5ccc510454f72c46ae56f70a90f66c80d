@@ -1,0 +1,20 @@
+hosted/test/worker.test.ts
+  s_46ac76d26da34b::t_f633cce1564a03 1753,1757
+  s_46ac76d26da34b::t_7c129189bcafba 1750-1752,1754-1756,1758-1760
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2a9abc5ccc510454f72c46ae56f70a90f66c80d",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
