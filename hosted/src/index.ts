@@ -36,6 +36,7 @@ import {
   notFoundPage,
 } from "./pages.js";
 import { mayCallTool, protocolServers } from "./protocol-server.js";
+import { refusalOf } from "./refused-requests.js";
 import { keepReport } from "./shared-reports.js";
 import { DIRECTORY_PATH, directoryResponse, signingKeys } from "./signing.js";
 import { SITE_JS } from "./site/files.js";
@@ -142,6 +143,18 @@ const handleMcp = async (
 
   try {
     const response = await transport.handleRequest(request);
+
+    // A 4xx here is the transport refusing the request before any tool ran, which nothing else
+    // hears (issue #210). Its answer is a small JSON error, read once here and sent on as it is.
+    let body: BodyInit | null = response.body;
+
+    if (tracking && response.status >= 400 && response.status < 500) {
+      const text = await response.text();
+
+      tracking.refused(refusalOf(request, response.status, text));
+      body = text;
+    }
+
     const headers = new Headers(response.headers);
 
     for (const [name, value] of Object.entries(CORS)) {
@@ -155,7 +168,7 @@ const handleMcp = async (
       headers.set("mcp-session-id", session);
     }
 
-    return new Response(response.body, { status: response.status, headers });
+    return new Response(body, { status: response.status, headers });
   } finally {
     ctx.waitUntil(server.close());
   }

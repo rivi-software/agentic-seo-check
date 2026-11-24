@@ -299,7 +299,7 @@ export const clientToken = (value: string | undefined): string | undefined =>
   PRODUCT_TOKEN.exec(value?.trim() ?? "")?.[0];
 
 /** A revision of the protocol, such as `2025-11-25`: the only form a client's own value keeps. */
-const ProtocolVersion = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u);
+export const ProtocolVersion = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u);
 
 /** A tool a server's analytics count with what its calls gave: its arguments and its description. */
 export interface CountedTool {
@@ -831,6 +831,36 @@ export const unknownToolEvent = (
     $mcp_tool_name: call.tool,
     $mcp_resource_name: call.tool,
     $mcp_conversation_id: call.conversationId,
+    ...context.properties,
+  },
+});
+
+/**
+ * A request the transport refused before any tool ran (issue #210), such as a 400 for an
+ * unsupported protocol version: its HTTP status, why, from a fixed list, and who sent it, as far as
+ * the headers say.
+ */
+export interface McpRefusedRequest extends McpCaller {
+  status: number;
+  reason: string;
+  at: Date;
+}
+
+/**
+ * A refused request. Like an `initialize`, it has no `$session_id`: a client whose requests are
+ * refused used nothing, so it counts no session.
+ */
+export const refusedRequestEvent = (
+  refusal: McpRefusedRequest,
+  context: McpEventContext
+): PostHogEvent => ({
+  event: "$mcp_request_refused",
+  timestamp: refusal.at.toISOString(),
+  properties: {
+    ...common(context),
+    ...callerProperties(refusal),
+    $mcp_http_status: refusal.status,
+    $mcp_refusal_reason: refusal.reason,
     ...context.properties,
   },
 });
