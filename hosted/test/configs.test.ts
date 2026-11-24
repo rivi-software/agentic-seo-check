@@ -57,6 +57,10 @@ describe("the two Workers' configurations", () => {
     ]);
   });
 
+  it("keep traces off, since a fetch span holds the audited page's address (issue #208)", () => {
+    expect(server.observability.traces).toStrictEqual({ enabled: false });
+  });
+
   it("send the analytics to the host the website's CSP allows", () => {
     expect(server.vars["POSTHOG_HOST"]).toBe(POSTHOG_HOST);
     expect(site.vars["POSTHOG_HOST"]).toBe(POSTHOG_HOST);

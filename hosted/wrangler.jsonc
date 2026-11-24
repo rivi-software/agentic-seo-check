@@ -108,9 +108,14 @@
     "POSTHOG_HOST": "https://g.rivi.software"
   },
   // Errors only, as the Worker logs them: no invocation logs, which carry request details.
+  // Traces stay off (issue #208): the span of every outgoing fetch keeps url.full, url.path and
+  // server.address, so a trace would hold the audited page's address and hostname, and no setting
+  // drops them (redact_query_string takes out the query only). Off is stated, not left out,
+  // because Cloudflare plans to turn traces on wherever observability is enabled.
   "observability": {
     "enabled": true,
     "redact_query_string": true,
-    "logs": { "invocation_logs": false }
+    "logs": { "invocation_logs": false },
+    "traces": { "enabled": false }
   }
 }
