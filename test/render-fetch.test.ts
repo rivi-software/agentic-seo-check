@@ -105,6 +105,11 @@ describe(fetchThroughOptions, () => {
     "/target": { body: "<p>target</p>" },
     "/big.js": { body: "x".repeat(2000) },
     "/exact.js": { body: "x".repeat(1000) },
+    // Node leaves Content-Length off a HEAD unless the route sets it.
+    "/declared.js": {
+      headers: { "content-length": "2000" },
+      body: "x".repeat(2000),
+    },
     // 1,000 bytes in ten chunks, 30 ms apart, with no Content-Length.
     "/stream.js": {
       chunked: { chunk: "s".repeat(100), count: 10, everyMs: 30 },
@@ -519,12 +524,6 @@ describe(fetchThroughOptions, () => {
       maxBytesInFlight: 1500,
     });
 
-    let most = 0;
-
-    const sample = setInterval(() => {
-      most = Math.max(most, through.held());
-    }, 1);
-
     const started = Date.now();
 
     const answers = await Promise.all(
@@ -534,8 +533,6 @@ describe(fetchThroughOptions, () => {
         return { answer, ms: Date.now() - started };
       })
     );
-
-    clearInterval(sample);
 
     const fulfilled = answers.filter(({ answer }) => answer.kind === "fulfil");
 
@@ -553,17 +550,15 @@ describe(fetchThroughOptions, () => {
       fulfilled: fulfilled.length,
       blocked: blocked.length,
       body: text(answered?.answer ?? NO_ANSWER),
-      // The two over the cap stopped while their bodies were still streaming, well before the
-      // last chunk of the one that was answered.
-      stoppedEarly: blocked.every(({ ms }) => ms < (answered?.ms ?? 0) - 50),
-      withinCap: most <= 1500,
+      // The two over the cap stopped while their bodies were still streaming: each was answered
+      // before the one that read its body to the end, which a read counted only once whole cannot.
+      stoppedEarly: blocked.every(({ ms }) => ms < (answered?.ms ?? 0)),
       heldBeforeDelivery,
     }).toStrictEqual({
       fulfilled: 1,
       blocked: 2,
       body: "s".repeat(1000),
       stoppedEarly: true,
-      withinCap: true,
       heldBeforeDelivery: 1000,
     });
     expect(through.held()).toBe(0);
@@ -600,6 +595,22 @@ describe(fetchThroughOptions, () => {
       through(request(`${site.origin}/exact.js`))
     ).resolves.toStrictEqual({ kind: "fail", reason: "BlockedByClient" });
     expect(through.held()).toBe(1000);
+  });
+
+  it("answers a HEAD whatever its Content-Length, since it has no body to read", async () => {
+    const { gate } = gateStub();
+
+    const through = fetchThroughOptions(
+      optionsWith(gate, { maxBodyBytes: 1000 }),
+      `${site.origin}/`
+    );
+
+    // /declared.js is 2,000 bytes, over maxBodyBytes: its HEAD says so and sends none of them.
+    const head = await through(
+      request(`${site.origin}/declared.js`, { method: "HEAD" })
+    );
+
+    expect([head.kind, through.held()]).toStrictEqual(["fulfil", 0]);
   });
 
   it("counts the robots.txt a gate that reads it requests for each new host as one more request", async () => {

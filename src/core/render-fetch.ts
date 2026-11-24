@@ -314,14 +314,15 @@ const readBudgeted = async (
 
   const declared = declaredLength(res);
 
-  if (declared !== null && declared > maxBytes) {
-    await res.body?.cancel().catch(() => null);
-
-    return null;
-  }
-
+  // A HEAD or a 204 has no body, whatever its Content-Length says.
   if (!res.body) {
     return new Uint8Array(0);
+  }
+
+  if (declared !== null && declared > maxBytes) {
+    await res.body.cancel().catch(() => null);
+
+    return null;
   }
 
   const reader = res.body.getReader();
