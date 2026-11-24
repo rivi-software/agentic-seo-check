@@ -1,0 +1,24 @@
+hosted/src/psi.ts
+  s_46ac76d26da34b::t_c7cdac862522dc 4-6,12-17,38
+hosted/src/crux.ts
+  s_46ac76d26da34b::t_c7cdac862522dc 19-20,23-26,28-32,51
+hosted/test/psi.test.ts
+  s_46ac76d26da34b::t_6ab1f25661a488 14,33,40,76-82
+  s_46ac76d26da34b::t_b77076de084454 83-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f43ea7110fa62197fe2e0b8d490b4f4dfce79d97",
+  "prompts": {},
+  "sessions": {
+    "s_46ac76d26da34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bb0dfce-8bdf-4446-8279-436150989786",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
