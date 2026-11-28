@@ -27,6 +27,7 @@ const settings = (config: typeof server) => ({
   analytics_engine_datasets: config.analytics_engine_datasets,
   r2_buckets: config.r2_buckets,
   DAILY_REQUESTS: config.vars["DAILY_REQUESTS"],
+  PAID_DAILY_REQUESTS: config.vars["PAID_DAILY_REQUESTS"],
   CALLER_SITES: config.vars["CALLER_SITES"],
   PLATFORM_SITES: config.vars["PLATFORM_SITES"],
   POSTHOG_HOST: config.vars["POSTHOG_HOST"],
@@ -151,6 +152,27 @@ describe("the two Workers' configurations", () => {
     expect(server.kv_namespaces).toStrictEqual([
       expect.objectContaining({ binding: "OAUTH_KV" }),
     ]);
+  });
+
+  it("give both the premium server's renders a minute and the subscribers' requests a day (issue #230)", () => {
+    const renders = (config: typeof server) =>
+      config.ratelimits.find(
+        (r: { name: string }) => r.name === "RENDER_CALLS"
+      );
+
+    expect(renders(server)).toStrictEqual({
+      name: "RENDER_CALLS",
+      namespace_id: "35009",
+      simple: { limit: 10, period: 60 },
+    });
+    expect(renders(site)).toStrictEqual(renders(server));
+    expect(server.vars["PAID_DAILY_REQUESTS"]).toBe(100_000);
+  });
+
+  it("bind Browser Run and cap the day's renders on the MCP server only (issue #230)", () => {
+    expect(server.vars["DAILY_RENDERS"]).toBe(2000);
+    expect(server.browser).toStrictEqual({ binding: "BROWSER" });
+    expect(site.browser).toBeUndefined();
   });
 
   it("bind background crawls on the MCP server only (issue #209)", () => {

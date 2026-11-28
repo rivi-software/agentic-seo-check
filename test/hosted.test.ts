@@ -25,11 +25,15 @@ import {
   hostedUrlProblem,
   siteRefusal,
 } from "../src/core/hosted.js";
+import type { RequestLike, RouteLike } from "../src/core/render-fetch.js";
+import { RenderUnavailableError } from "../src/core/render.js";
+import type { RenderBrowser } from "../src/core/render.js";
 import type { SharedReport } from "../src/core/share.js";
 import {
   CallLimitError,
   guarded,
   HOSTED_TOOLS,
+  PREMIUM_TOOLS,
   runBackgroundCrawl,
 } from "../src/mcp-hosted.js";
 import type {
@@ -104,10 +108,119 @@ interface Profile {
   ends: HostedCallEnd[];
 }
 
+/** What the fake browser's route handler is handed: Playwright's route, as render-fetch.ts reads it. */
+type FakeRoute = RouteLike & { request: () => RequestLike };
+
+/**
+ * A browser with just what renderPage asks of it, which launches nothing: its navigation goes
+ * through the context's route, as Browser Run's does, and fails as Chromium's does when the route
+ * aborts it. Then it asks the route for each of `subresources`, as a page's scripts and fonts.
+ */
+const routedBrowser = (subresources: string[] = []): RenderBrowser => {
+  let handler: ((route: FakeRoute) => Promise<void>) | undefined;
+  let current = "about:blank";
+
+  /** Asks the route for `url`; true when it aborted the request. */
+  const ask = async (url: string, navigation: boolean): Promise<boolean> => {
+    let aborted = false;
+
+    await handler?.({
+      request: () => ({
+        url: () => url,
+        method: () => "GET",
+        allHeaders: () => Promise.resolve({}),
+        resourceType: () => (navigation ? "document" : "stylesheet"),
+        isNavigationRequest: () => navigation,
+        frame: () => ({ parentFrame: () => null }),
+      }),
+      abort: () => {
+        aborted = true;
+
+        return Promise.resolve();
+      },
+      fulfill: () => Promise.resolve(),
+    });
+
+    return aborted;
+  };
+
+  const tab = {
+    on: () => tab,
+    goto: async (url: string) => {
+      current = url;
+
+      if (await ask(url, true)) {
+        throw new Error(`page.goto: net::ERR_BLOCKED_BY_CLIENT at ${url}`);
+      }
+
+      for (const resource of subresources) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- a page's requests, one after another
+        await ask(resource, false);
+      }
+
+      return null;
+    },
+    waitForTimeout: () => Promise.resolve(),
+    content: () => Promise.resolve("<html></html>"),
+    url: () => current,
+  };
+
+  const context = {
+    route: (_pattern: string, answer: (route: FakeRoute) => Promise<void>) => {
+      handler = answer;
+
+      return Promise.resolve();
+    },
+    routeWebSocket: () => Promise.resolve(),
+    newPage: () => Promise.resolve(tab),
+  };
+
+  const browser = {
+    newContext: () => Promise.resolve(context),
+    close: () => Promise.resolve(),
+  };
+
+  // SAFETY: renderPage calls only the methods above; the rest of Playwright's Browser is never read.
+  // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- a stand-in has a part of RenderBrowser only, which TypeScript sees no overlap with
+  return browser as unknown as RenderBrowser;
+};
+
+/** A browser that is never there, as Browser Run when it has none free. */
+const unavailableBrowser = () =>
+  vi.fn<() => Promise<RenderBrowser>>(() =>
+    Promise.reject(new RenderUnavailableError("No browser is free."))
+  );
+
+/** A listed tool's `render` argument, if it has one. */
+const renderOf = (tool: { inputSchema: { properties?: object } }) =>
+  tool.inputSchema.properties && "render" in tool.inputSchema.properties
+    ? tool.inputSchema.properties.render
+    : undefined;
+
+/** The premium server's profile: `paid` when the account has a subscription. */
+const premiumWith = (
+  launch: () => Promise<RenderBrowser>,
+  paid?: HostedProfile["paid"],
+  options: Parameters<typeof profileWith>[0] = {}
+) => {
+  const made = profileWith(options);
+
+  return {
+    ...made,
+    profile: {
+      ...made.profile,
+      premium: true,
+      browser: { launch },
+      ...(paid && { paid }),
+    },
+  };
+};
+
 /** A hosted profile that lets every call through, with `gate` as the server's own limits. */
 const profileWith = (
   options: {
     gate?: RequestGate;
+    subresourceGate?: RequestGate;
     refuse?: string;
     sign?: HostedProfile["sign"];
     crawls?: BackgroundCrawls;
@@ -131,7 +244,11 @@ const profileWith = (
           throw new CallLimitError(options.refuse, "caller_calls");
         }
 
-        return { gate: options.gate, end: (end) => ends.push(end) };
+        return {
+          gate: options.gate,
+          subresourceGate: options.subresourceGate,
+          end: (end) => ends.push(end),
+        };
       },
     },
   };
@@ -369,6 +486,55 @@ describe("the hosted server", () => {
         scope: "host",
         message: expect.stringContaining("at most 30 s in all for Crawl-delay"),
       });
+    });
+
+    it("gives a render's subresources a gate that obeys robots.txt and the URL rules, and asks the subresource limits rather than the call's", async () => {
+      serve({
+        "https://fonts.example.net/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nDisallow: /private\n",
+        },
+      });
+
+      const asked: { by: string; url: string }[] = [];
+
+      const limits = (by: string): RequestGate => ({
+        beforeRequest: (url) => {
+          asked.push({ by, url: url.href });
+        },
+      });
+
+      const { subresourceGate } = hostedFetch({
+        userAgent: USER_AGENT,
+        crawl: false,
+        limits: limits("call"),
+        subresourceLimits: limits("subresources"),
+      });
+
+      assert(subresourceGate, "a render's call has a subresource gate");
+
+      await expect(
+        subresourceGate.beforeRequest(
+          new URL("https://fonts.example.net/a.css")
+        )
+      ).resolves.toBeUndefined();
+      await expect(
+        subresourceGate.beforeRequest(
+          new URL("https://fonts.example.net/private/b.css")
+        )
+      ).resolves.toMatchObject({ reason: "robots_txt" });
+      await expect(
+        subresourceGate.beforeRequest(new URL("http://127.0.0.1/x.js"))
+      ).resolves.toMatchObject({ reason: "address" });
+
+      // robots.txt and the font: the subresource limits, never the call's.
+      expect(asked).toStrictEqual([
+        { by: "subresources", url: "https://fonts.example.net/robots.txt" },
+        { by: "subresources", url: "https://fonts.example.net/a.css" },
+      ]);
+      expect(
+        hostedFetch({ userAgent: USER_AGENT, crawl: false }).subresourceGate
+      ).toBeUndefined();
     });
 
     it("tells a site's refusal from its page", () => {
@@ -2576,6 +2742,255 @@ describe("the hosted server", () => {
       });
       expect(started.map((c) => c.fetches)).toStrictEqual([false]);
       expect(calls[0]?.properties?.reason).toBe("field_data");
+    });
+  });
+
+  describe("its rendering for subscribers (issue #230)", () => {
+    const SHOP = "https://shop.example.com/";
+
+    const serveShop = () =>
+      serve({
+        "https://shop.example.com/robots.txt": {
+          headers: { "content-type": "text/plain" },
+          body: "User-agent: *\nAllow: /\n",
+        },
+        [SHOP]: {
+          body: page("Shop home page for the fixture", "<p>Widgets.</p>"),
+        },
+      });
+
+    it("lists `render` on the premium server's seo_audit_page only", async () => {
+      const client = await connect(premiumWith(unavailableBrowser()).profile);
+      const { tools } = await client.listTools();
+
+      expect(
+        tools.filter((t) => renderOf(t) !== undefined).map((t) => t.name)
+      ).toStrictEqual(["seo_audit_page"]);
+      expect(
+        renderOf(
+          tools.find((t) => t.name === "seo_audit_page") ?? { inputSchema: {} }
+        )
+      ).toMatchObject({ type: "boolean" });
+
+      // Each tool that says what the hosted server cannot do says what the premium one adds.
+      const noted = tools.filter((t) =>
+        t.description?.includes("from Cloudflare's network")
+      );
+
+      expect(noted.map((t) => t.name).toSorted()).toStrictEqual([
+        "seo_aeo_audit",
+        "seo_audit_page",
+        "seo_compare_pages",
+        "seo_crawl_site",
+        "seo_share_report",
+        "seo_start_crawl",
+      ]);
+
+      for (const tool of noted) {
+        expect(tool.description).toContain("premium hosted server");
+        expect(tool.description).toContain("`render: true`");
+        expect(tool.description).not.toContain("does not render JavaScript");
+      }
+    });
+
+    it("keeps `render` off the free server, even for a profile with a browser and a subscription", async () => {
+      const launch = unavailableBrowser();
+      const { profile } = premiumWith(launch, "subscription");
+      const client = await connect({ ...profile, premium: false });
+      const { tools } = await client.listTools();
+
+      serveShop();
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, render: true },
+      });
+
+      expect(tools.filter((t) => renderOf(t) !== undefined)).toStrictEqual([]);
+      expect(result.isError).toBeFalsy();
+      expect(launch).not.toHaveBeenCalled();
+    });
+
+    it("counts the premium server's tools in its analytics, with `render` and their descriptions", async () => {
+      const client = await connect(premiumWith(unavailableBrowser()).profile);
+      const { tools } = await client.listTools();
+
+      expect(
+        namedArguments(
+          [...PREMIUM_TOOLS].map(([tool, counted]) => [tool, counted.arguments])
+        )
+      ).toStrictEqual(
+        namedArguments(
+          tools.map((t) => [
+            t.name,
+            Object.keys(t.inputSchema.properties ?? {}),
+          ])
+        )
+      );
+
+      for (const tool of tools) {
+        expect(PREMIUM_TOOLS.get(tool.name)?.description).toBe(
+          tool.description
+        );
+      }
+    });
+
+    it("asks an account without a subscription to subscribe, before the call counts and with no browser launched", async () => {
+      serveShop();
+
+      const launch = unavailableBrowser();
+      const { profile, calls } = premiumWith(launch);
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, render: true },
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toBe(
+        "Agentic SEO Check error: Rendering needs a subscription. Subscribe at https://agentic-seo.org/account."
+      );
+
+      expect(launch).not.toHaveBeenCalled();
+      expect(calls).toStrictEqual([]);
+    });
+
+    it("audits inline html for an account without a subscription, since html never renders", async () => {
+      const launch = unavailableBrowser();
+      const { profile } = premiumWith(launch);
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { html: "<html><title>Shop</title></html>", render: true },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(launch).not.toHaveBeenCalled();
+    });
+
+    it("renders with the server's browser for a subscriber, once per call, and tells the limits", async () => {
+      serveShop();
+
+      const launch = unavailableBrowser();
+      const { profile, calls } = premiumWith(launch, "subscription");
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, render: true },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(
+        rulesOf(Findings.parse(result.structuredContent).findings)
+      ).toContain("tool.render-unavailable");
+      expect(launch).toHaveBeenCalledOnce();
+      expect(calls.map((c) => c.render)).toStrictEqual([true]);
+    });
+
+    it("launches no browser for a subscriber's call without `render`, or for inline HTML", async () => {
+      serveShop();
+
+      const launch = unavailableBrowser();
+      const { profile, calls } = premiumWith(launch, "subscription");
+      const client = await connect(profile);
+
+      await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP },
+      });
+      await client.callTool({
+        name: "seo_audit_page",
+        arguments: {
+          html: page("Inline page for the fixture", ""),
+          render: true,
+        },
+      });
+
+      expect(launch).not.toHaveBeenCalled();
+      expect(calls.map((c) => c.render ?? false)).toStrictEqual([false, false]);
+    });
+
+    it("sends the page's navigation through the call's gate and its subresources through the subresource gate", async () => {
+      serveShop();
+
+      const FONT = "https://fonts.example.net/font.css";
+      const asked: { by: string; url: string }[] = [];
+
+      const gate = (by: string): RequestGate => ({
+        beforeRequest: (url) => {
+          asked.push({ by, url: url.href });
+        },
+      });
+
+      const { profile } = premiumWith(
+        () => Promise.resolve(routedBrowser([FONT])),
+        "subscription",
+        { gate: gate("call"), subresourceGate: gate("subresources") }
+      );
+
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, render: true },
+      });
+
+      expect(result.isError).toBeFalsy();
+      // The call's gate: the audit's own requests and the browser's navigation; the font, and its
+      // host's robots.txt, never.
+      expect(
+        asked.filter((a) => a.url.startsWith("https://fonts."))
+      ).toStrictEqual([
+        {
+          by: "subresources",
+          url: "https://fonts.example.net/robots.txt",
+        },
+        { by: "subresources", url: FONT },
+      ]);
+      expect(
+        asked.flatMap((a) => (a.by === "subresources" ? [a.url] : []))
+      ).toStrictEqual(["https://fonts.example.net/robots.txt", FONT]);
+      expect(
+        asked.filter((a) => a.by === "call" && a.url === SHOP).length
+      ).toBeGreaterThanOrEqual(2);
+    });
+
+    it("answers with the site's refusal when the gate refuses the page the browser asks for", async () => {
+      serveShop();
+
+      let pageRequests = 0;
+      const refusal = "The site refused the rendered page.";
+
+      const { profile, ends } = premiumWith(
+        () => Promise.resolve(routedBrowser()),
+        "subscription",
+        {
+          gate: {
+            beforeRequest: (url) => {
+              pageRequests += url.href === SHOP ? 1 : 0;
+
+              // The audit's own request passes; the browser's, the second, is refused.
+              return url.href === SHOP && pageRequests > 1
+                ? { scope: "url", reason: "robots_txt", message: refusal }
+                : undefined;
+            },
+          },
+        }
+      );
+
+      const client = await connect(profile);
+
+      const result = await client.callTool({
+        name: "seo_audit_page",
+        arguments: { url: SHOP, render: true },
+      });
+
+      expect(result.isError).toBeTruthy();
+      expect(textOf(result)).toContain(refusal);
+      expect(ends.map((e) => e.outcome)).toStrictEqual(["refused"]);
     });
   });
 });

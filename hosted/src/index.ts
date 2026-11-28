@@ -11,7 +11,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 
 import { onCaughtError } from "../../src/core/errors.js";
 import { HOSTED_LIMITS } from "../../src/core/hosted.js";
-import { HOSTED_TOOLS } from "../../src/mcp-hosted.js";
+import { HOSTED_TOOLS, PREMIUM_TOOLS } from "../../src/mcp-hosted.js";
 import type { HostedProfile } from "../../src/mcp-hosted.js";
 import { createMcpServer } from "../../src/mcp.js";
 import { instrumentTransport } from "../../src/telemetry/mcp.js";
@@ -23,6 +23,7 @@ import {
   reportTask,
 } from "./analytics.js";
 import type { ErrorRoute } from "./analytics.js";
+import { serverBrowser } from "./browser.js";
 import {
   callerOf,
   openAiRangesReader,
@@ -80,6 +81,11 @@ const reportKeeper = (env: Env): HostedProfile["share"] => {
 /** The servers for requests without a tool call, from a listing this isolate reads once. */
 const protocolServer = protocolServers();
 
+/** The same on the premium server, whose tools list `render` (issue #230). */
+const premiumProtocolServer = protocolServers(createMcpServer, {
+  premium: true,
+});
+
 /** OpenAI's ranges as this isolate reads them: from the Durable Object at most once an hour. */
 const openAiRanges = openAiRangesReader();
 
@@ -89,7 +95,8 @@ const openAiRanges = openAiRangesReader();
  * of protocol-server.ts, which answers alike. The `Mcp-Session-Id` an `initialize` is answered with is a token for the analytics alone
  * (analytics.ts), which any request can read without the server keeping anything. There is no
  * session to resume or end, so GET and DELETE answer 405, as the protocol allows. On the premium
- * server, `as` names the token's account as the caller, and what it paid.
+ * server, `as` names the token's account as the caller, and what it paid, and its tools are the
+ * premium server's, with the server's browser for a subscriber's `render` (issue #230).
  */
 const handleMcp = async (
   request: Request,
@@ -105,6 +112,7 @@ const handleMcp = async (
   }
 
   const report = reportTask(env, ctx, "server:/mcp");
+  const paid = as?.paid;
 
   const caller =
     as?.caller ??
@@ -118,8 +126,10 @@ const handleMcp = async (
     ctx,
     caller,
     request.headers.get("mcp-session-id"),
-    as?.paid
+    paid
   );
+
+  const premium = as !== undefined;
 
   // A request that calls no tool, as nearly all are, needs nothing of the caller's (issue #211).
   const server = (await mayCallTool(request))
@@ -128,14 +138,16 @@ const handleMcp = async (
           ...hostedProfile(env, ctx, caller, {
             observe: tracking?.observe,
             report,
-            paid: as?.paid,
+            paid,
           }),
+          ...(premium && { premium, browser: serverBrowser(env.BROWSER) }),
           connection: tracking?.connection,
           share: reportKeeper(env),
-          crawls: backgroundCrawls(env, report),
+          // A subscriber's crawl counts against the subscribers' day when it runs (issue #230).
+          crawls: backgroundCrawls(env, report, paid),
         },
       })
-    : await protocolServer();
+    : await (premium ? premiumProtocolServer : protocolServer)();
 
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
@@ -148,7 +160,11 @@ const handleMcp = async (
   await server.connect(transport);
 
   if (tracking) {
-    instrumentTransport(transport, tracking.analytics, HOSTED_TOOLS);
+    instrumentTransport(
+      transport,
+      tracking.analytics,
+      premium ? PREMIUM_TOOLS : HOSTED_TOOLS
+    );
   }
 
   try {

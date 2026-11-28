@@ -98,6 +98,13 @@ export {
 
 export { renderPage, RenderUnavailableError } from "./core/render.js";
 
+export type {
+  RenderBrowser,
+  RenderOptions,
+  RenderOutput,
+  SuppliedBrowser,
+} from "./core/render.js";
+
 export { ExpectedError } from "./core/errors.js";
 
 export { FieldDataKeyError } from "./core/field-data.js";

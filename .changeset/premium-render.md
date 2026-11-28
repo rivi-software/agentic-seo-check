@@ -1,0 +1,7 @@
+---
+"@rivi-software/agentic-seo-check": minor
+---
+
+Subscribers of the hosted server's premium tier can render a page's JavaScript with `render: true` on `seo_audit_page` (issue #230), in a browser that fetches nothing itself: every request it makes goes through the server's own fetch, which obeys robots.txt and signs the request, and anything else is denied. Without a subscription the option is an error that says so, and the server's free tier, the local server and the CLI are unchanged. A subscriber may ask for 10 renders a minute; the limits that hold subscribers' calls are named in the refusals as `render_calls`, `daily_renders` and `paid_daily_requests`.
+
+In the library, `AuditOptions` has `browser`: `{ launch }`, a function that starts the browser to render with (any client with Playwright's API, typed as `RenderBrowser`), and optionally `maxRequests` and `maxBytesInFlight`. The browser then fetches nothing itself: each request it makes, GET and HEAD only, goes through the audit's `fetch` options, its gate and signature included, and a redirect is followed there. `FetchOptions` has `subresourceGate`, the gate of what a rendered page requests besides its own navigation, and the rendering result has `blockedRequests`, the page's requests that were blocked rather than sent; console errors about them are no longer reported. Without `browser`, `render` launches Playwright as before.

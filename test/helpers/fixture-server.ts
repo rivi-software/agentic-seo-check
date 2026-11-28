@@ -12,6 +12,8 @@ export interface Route {
   blockUserAgents?: string[];
   /** Milliseconds to wait before answering the first, second, ... request to this path, to order races. */
   delaysMs?: number[];
+  /** Send the body as `count` chunks of `chunk`, `everyMs` apart, with no Content-Length: a slow stream. */
+  chunked?: { chunk: string; count: number; everyMs: number };
 }
 
 /** The site a fixture server serves, by path; a test may add a route once the server listens. */
@@ -25,6 +27,8 @@ export interface FixtureServer {
   userAgents: string[];
   /** The headers of each request, in the order of `requests`. */
   requestHeaders: http.IncomingHttpHeaders[];
+  /** The body of each request, as text, in the order of `requests`. */
+  requestBodies: string[];
 }
 
 const page = (title: string, body: string, extraHead = "") =>
@@ -95,6 +99,7 @@ export const startFixtureServer = async (
   const requests: string[] = [];
   const userAgents: string[] = [];
   const requestHeaders: http.IncomingHttpHeaders[] = [];
+  const requestBodies: string[] = [];
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -103,6 +108,12 @@ export const startFixtureServer = async (
     requests.push(url.pathname);
     userAgents.push(userAgent);
     requestHeaders.push(req.headers);
+    const body = requestBodies.push("") - 1;
+    req.setEncoding("utf-8");
+    req.on("data", (chunk: string) => {
+      requestBodies[body] += chunk;
+    });
+    await once(req, "end");
     const route = routes[url.pathname];
     const origin = originOf(server);
     const delay = route?.delaysMs?.[earlier] ?? 0;
@@ -135,6 +146,20 @@ export const startFixtureServer = async (
 
     res.writeHead(route.status ?? 200);
 
+    if (route.chunked) {
+      const { chunk, count, everyMs } = route.chunked;
+
+      for (let sent = 0; sent < count && !res.destroyed; sent += 1) {
+        res.write(chunk);
+        // oxlint-disable-next-line eslint/no-await-in-loop -- the chunks go out one after another, on purpose slowly
+        await wait(everyMs);
+      }
+
+      res.end();
+
+      return;
+    }
+
     if (Buffer.isBuffer(route.body)) {
       res.end(route.body);
 
@@ -156,6 +181,7 @@ export const startFixtureServer = async (
     requests,
     userAgents,
     requestHeaders,
+    requestBodies,
     close: () => server[Symbol.asyncDispose](),
   };
 };

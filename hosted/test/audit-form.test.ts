@@ -112,10 +112,23 @@ const reset = () =>
 /** The day's counts as HostedState keeps them, in memory, or an object that fails every call. */
 const state = (failing: boolean) => {
   const object = failing
-    ? { requests: reset, addRequests: reset, admitSite: reset }
+    ? {
+        requests: reset,
+        addRequests: reset,
+        paidRequests: reset,
+        addPaidRequests: reset,
+        renders: reset,
+        addRenders: reset,
+        admitSite: reset,
+      }
     : {
         requests: () => Promise.resolve(0),
         addRequests: (_day: string, count: number) => Promise.resolve(count),
+        paidRequests: () => Promise.resolve(0),
+        addPaidRequests: (_day: string, count: number) =>
+          Promise.resolve(count),
+        renders: () => Promise.resolve(0),
+        addRenders: (_day: string, count: number) => Promise.resolve(count),
         admitSite: () => Promise.resolve(true),
       };
 
@@ -133,6 +146,7 @@ const formEnv = (overrides: Partial<SiteEnv> = {}) => {
   const env: SiteEnv = {
     MODE: "open",
     DAILY_REQUESTS: 100_000,
+    PAID_DAILY_REQUESTS: 100_000,
     CALLER_SITES: 10,
     PLATFORM_SITES: 100,
     SITE_REQUESTS: limiter(),
@@ -141,6 +155,7 @@ const formEnv = (overrides: Partial<SiteEnv> = {}) => {
     SHARE_UPLOADS: limiter(),
     WAITLIST_SIGNUPS: limiter(),
     SIGN_IN_CODES: limiter(),
+    RENDER_CALLS: limiter(),
     // The form reads no account: a query would be a bug here.
     ACCOUNTS: {
       prepare: () => {

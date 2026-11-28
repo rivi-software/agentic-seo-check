@@ -249,6 +249,7 @@ const closedEnv = (bucket: ReportBucket) => {
   const env: CrawlEnv = {
     MODE: "closed",
     DAILY_REQUESTS: 100_000,
+    PAID_DAILY_REQUESTS: 100_000,
     CALLER_SITES: 10,
     PLATFORM_SITES: 100,
     SITE_REQUESTS: unused,
@@ -257,6 +258,7 @@ const closedEnv = (bucket: ReportBucket) => {
     PLATFORM_CALLS: unused,
     PLATFORM_CRAWLS: unused,
     SHARE_UPLOADS: unused,
+    RENDER_CALLS: unused,
     CALLS: {
       writeDataPoint: (point) => {
         outcomes.push(String(point?.blobs?.[1]));
@@ -345,6 +347,10 @@ const openEnv = (bucket: ReportBucket) => {
   const day: DayCounter = {
     requests: () => Promise.resolve(0),
     addRequests: (_day, count) => Promise.resolve(count),
+    paidRequests: () => Promise.resolve(0),
+    addPaidRequests: (_day, count) => Promise.resolve(count),
+    renders: () => Promise.resolve(0),
+    addRenders: (_day, count) => Promise.resolve(count),
     admitSite: () => Promise.resolve(true),
   };
 
@@ -453,6 +459,64 @@ describe("an attempt of a background crawl that has asked the site", () => {
       1
     );
     expect(outcomes).toStrictEqual(["error"]);
+  });
+
+  it("counts a subscriber's crawl against the subscribers' day, as its call was (issue #230)", async () => {
+    const { bucket } = memoryBucket();
+    const free = newCrawlId();
+    const paid = newCrawlId();
+    const created: string[] = [];
+
+    const crawls = backgroundCrawls(
+      {
+        SHARED_REPORTS: bucket,
+        CRAWLS: {
+          create: ({ id } = {}) => {
+            created.push(String(id));
+
+            // SAFETY: start reads nothing of the instance the Workflow answers with.
+            return Promise.resolve({} as WorkflowInstance);
+          },
+        },
+      },
+      undefined,
+      "subscription"
+    );
+
+    const started = await crawls?.start(OPTIONS);
+
+    await expect(
+      storedCrawlOptions(bucket, String(started?.id))
+    ).resolves.toMatchObject({ paid: "subscription" });
+
+    await keepCrawl(bucket, free, OPTIONS);
+    await keepCrawl(bucket, paid, OPTIONS, START, "subscription");
+    serveShop(200);
+
+    const counted = { free: 0, paid: 0 };
+    const { env } = openEnv(bucket);
+    const day = env.STATE.getByName("global");
+
+    day.addRequests = (_day, count) => {
+      counted.free += count;
+
+      return Promise.resolve(counted.free);
+    };
+
+    day.addPaidRequests = (_day, count) => {
+      counted.paid += count;
+
+      return Promise.resolve(counted.paid);
+    };
+
+    await crawlAttempt(env, IGNORED, free);
+    const freeCount = counted.free;
+
+    await crawlAttempt(env, IGNORED, paid);
+
+    expect(freeCount).toBeGreaterThan(0);
+    expect(counted).toStrictEqual({ free: freeCount, paid: freeCount });
+    expect(created).toHaveLength(1);
   });
 
   it("leaves an error before any refusal to the step's retry", async () => {

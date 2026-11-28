@@ -13,6 +13,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -116,6 +117,39 @@ try {
     project
   );
   console.log("ok  installed without Playwright and the optional peers");
+
+  // A type from an optional module fails a user's type check without it (and skipLibCheck off).
+  const installed = path.join(
+    project,
+    "node_modules",
+    "@rivi-software",
+    "agentic-seo-check",
+    "dist"
+  );
+
+  const OPTIONAL_IMPORT =
+    /(?:\bfrom\s*|\bimport\s*\(\s*)["'](?:playwright|lighthouse|chrome-launcher)(?:\/[^"']*)?["']/u;
+
+  const typesNeedingOptional = readdirSync(installed, {
+    recursive: true,
+    encoding: "utf-8",
+  }).filter(
+    (file) =>
+      file.endsWith(".d.ts") &&
+      readFileSync(path.join(installed, file), "utf-8")
+        .split("\n")
+        .some(
+          (line) => !/^\s*(?:\*|\/\/)/u.test(line) && OPTIONAL_IMPORT.test(line)
+        )
+  );
+
+  if (typesNeedingOptional.length > 0) {
+    fail(
+      `These declaration files import an optional module: ${typesNeedingOptional.join(", ")}.`
+    );
+  }
+
+  console.log("ok  no declaration file imports an optional module");
 
   const exports = run(
     "node",

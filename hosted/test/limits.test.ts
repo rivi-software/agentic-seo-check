@@ -33,6 +33,9 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
   const points: AnalyticsEngineDataPoint[] = [];
   const waiting: Promise<unknown>[] = [];
   let stored = { day: "", count: 0 };
+  /** Subscribers' requests and the pages rendered, by day, as HostedState counts them (issue #230). */
+  let paid = { day: "", count: 0 };
+  let renders = { day: "", count: 0 };
   /** The sites each caller audited, by day and caller, as HostedState counts them. */
   const sites = new Map<string, Set<string>>();
   /** The objects the limits asked for, as "jurisdiction/name", "/name" without one. */
@@ -51,6 +54,25 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
       };
 
       return stored.count;
+    },
+    // oxlint-disable-next-line eslint/require-await -- the Durable Object answers with a promise
+    paidRequests: async (day: string) => (paid.day === day ? paid.count : 0),
+    // oxlint-disable-next-line eslint/require-await -- the Durable Object answers with a promise
+    addPaidRequests: async (day: string, count: number) => {
+      paid = { day, count: (paid.day === day ? paid.count : 0) + count };
+
+      return paid.count;
+    },
+    // oxlint-disable-next-line eslint/require-await -- the Durable Object answers with a promise
+    renders: async (day: string) => (renders.day === day ? renders.count : 0),
+    // oxlint-disable-next-line eslint/require-await -- the Durable Object answers with a promise
+    addRenders: async (day: string, count: number) => {
+      renders = {
+        day,
+        count: (renders.day === day ? renders.count : 0) + count,
+      };
+
+      return renders.count;
     },
     // oxlint-disable-next-line eslint/require-await -- the Durable Object answers with a promise
     admitSite: async (
@@ -86,6 +108,8 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
   const env: LimitsEnv = {
     MODE: "open",
     DAILY_REQUESTS: 100_000,
+    PAID_DAILY_REQUESTS: 100_000,
+    DAILY_RENDERS: 2000,
     CALLER_SITES: 10,
     PLATFORM_SITES: 100,
     SITE_REQUESTS: limiter(600),
@@ -94,6 +118,7 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
     PLATFORM_CALLS: limiter(300),
     PLATFORM_CRAWLS: limiter(30),
     SHARE_UPLOADS: limiter(5),
+    RENDER_CALLS: limiter(10),
     CALLS: {
       // As Analytics Engine does, throw for an index longer than it holds.
       writeDataPoint: (point) => {
@@ -127,6 +152,8 @@ const fakeEnv = (overrides: Partial<LimitsEnv> = {}) => {
     points,
     settled: () => Promise.all(waiting),
     stored: () => stored,
+    paid: () => paid,
+    renders: () => renders,
     sites,
     objects,
     asked,
@@ -165,6 +192,9 @@ const COMPARE: HostedCallInfo = {
   host: "www.example.com",
   competitors: ["rival.example.org", "www.other.example.net"],
 };
+
+/** A subscriber's page audit with `render` (issue #230). */
+const RENDER: HostedCallInfo = { ...PAGE, render: true };
 
 const INLINE: HostedCallInfo = {
   tool: "seo_audit_page",
@@ -769,12 +799,20 @@ describe("the hosted server's limits", () => {
         getByName: () => ({
           requests: () => Promise.reject(failure),
           addRequests: () => Promise.reject(failure),
+          paidRequests: () => Promise.reject(failure),
+          addPaidRequests: () => Promise.reject(failure),
+          renders: () => Promise.reject(failure),
+          addRenders: () => Promise.reject(failure),
           admitSite: () => Promise.reject(failure),
         }),
         jurisdiction: () => ({
           getByName: () => ({
             requests: () => Promise.reject(failure),
             addRequests: () => Promise.reject(failure),
+            paidRequests: () => Promise.reject(failure),
+            addPaidRequests: () => Promise.reject(failure),
+            renders: () => Promise.reject(failure),
+            addRenders: () => Promise.reject(failure),
             admitSite: () => Promise.reject(failure),
           }),
         }),
@@ -902,5 +940,216 @@ describe("the hosted server's limits", () => {
     await expect(
       crawl.gate.beforeRequest(new URL("https://shop.example.com/"))
     ).resolves.toMatchObject({ scope: "host", reason: "site_requests" });
+  });
+
+  describe("for subscribers (issue #230)", () => {
+    const ANN = accountCaller("acc_ann");
+
+    it("let an account render 10 pages a minute", async () => {
+      const { env, ctx, renders } = fakeEnv();
+      const profile = hostedProfile(env, ctx, ANN, { paid: "subscription" });
+
+      const answers = await Promise.all(
+        Array.from({ length: 11 }, () => refusalOf(profile.startCall(RENDER)))
+      );
+
+      expect(answers.filter((a) => a === "admitted")).toHaveLength(10);
+      expect(answers.at(-1)).toBe(
+        "This account has asked for 10 renders on the premium server in the last minute, its limit per account. Try again in a minute. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp"
+      );
+      await expect(reasonOf(profile.startCall(RENDER))).resolves.toBe(
+        "render_calls"
+      );
+      // A call without `render` is no render.
+      await expect(refusalOf(profile.startCall(PAGE))).resolves.toBe(
+        "admitted"
+      );
+      expect(renders().count).toBe(10);
+    });
+
+    it("refuse a render once the day's renders are done, and say when they start again", async () => {
+      const { env, ctx } = fakeEnv({ DAILY_RENDERS: 2 });
+
+      await env.STATE.jurisdiction("eu")
+        .getByName("global")
+        .addRenders(new Date().toISOString().slice(0, 10), 2);
+
+      const profile = hostedProfile(env, ctx, ANN, { paid: "subscription" });
+
+      await expect(refusalOf(profile.startCall(RENDER))).resolves.toBe(
+        "The premium server has rendered its 2 pages for today, its daily limit for all accounts together. Rendering waits until 00:00 UTC; audits without `render` still work. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp"
+      );
+      await expect(reasonOf(profile.startCall(RENDER))).resolves.toBe(
+        "daily_renders"
+      );
+      await expect(refusalOf(profile.startCall(PAGE))).resolves.toBe(
+        "admitted"
+      );
+    });
+
+    it("count a render only once every other limit let its call through", async () => {
+      const { env, ctx, renders } = fakeEnv({ CALLER_SITES: 0 });
+      const profile = hostedProfile(env, ctx, ANN, { paid: "subscription" });
+
+      await expect(reasonOf(profile.startCall(RENDER))).resolves.toBe(
+        "caller_sites"
+      );
+      expect(renders().count).toBe(0);
+    });
+
+    it("count a subscriber's requests against the subscribers' day, not the free one", async () => {
+      const { env, ctx, settled, stored, paid } = fakeEnv();
+
+      const call = await hostedProfile(env, ctx, ANN, {
+        paid: "subscription",
+      }).startCall(PAGE);
+
+      const url = new URL("https://www.example.com/");
+
+      for (let i = 0; i < 30; i += 1) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- a call's requests, one after another
+        await call.gate?.beforeRequest(url);
+      }
+
+      call.end?.({ outcome: "ok", pages: 1 });
+      await settled();
+
+      expect(paid().count).toBe(30);
+      expect(stored().count).toBe(0);
+    });
+
+    it("let a render's subresources reach other hosts without spending a site of the day or writing a record for each", async () => {
+      const { env, ctx, settled, points, asked, paid } = fakeEnv({
+        CALLER_SITES: 1,
+      });
+
+      const call = await hostedProfile(env, ctx, ANN, {
+        paid: "subscription",
+      }).startCall(RENDER);
+
+      const gate = call.subresourceGate;
+
+      expect(gate).toBeDefined();
+
+      const hosts = [
+        "fonts.googleapis.com",
+        "cdn.shopify.com",
+        "www.googletagmanager.com",
+      ];
+
+      for (const host of hosts) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- a render's requests, one after another
+        await expect(
+          gate?.beforeRequest(new URL(`https://${host}/x`))
+        ).resolves.toBeUndefined();
+      }
+
+      // The page's own navigation is the call's, and its site the one admitted.
+      await call.gate?.beforeRequest(new URL("https://www.example.com/"));
+      call.end?.({ outcome: "ok", pages: 1 });
+      await settled();
+
+      expect(asked.map((line) => line.split(" ")[2])).toStrictEqual([
+        "example.com",
+      ]);
+      expect(points.map((point) => point.blobs?.[2])).toStrictEqual([
+        "www.example.com",
+      ]);
+      // Counted against the subscribers' day, and in the call's own record.
+      expect(paid().count).toBe(4);
+      expect(points[0]?.doubles?.[1]).toBe(4);
+    });
+
+    it("hold a render's subresources to each host's requests a minute", async () => {
+      const { env, ctx } = fakeEnv({ SITE_REQUESTS: limiter(1) });
+
+      const call = await hostedProfile(env, ctx, ANN, {
+        paid: "subscription",
+      }).startCall(RENDER);
+
+      const font = new URL("https://fonts.googleapis.com/css");
+
+      await expect(
+        call.subresourceGate?.beforeRequest(font)
+      ).resolves.toBeUndefined();
+      await expect(
+        call.subresourceGate?.beforeRequest(font)
+      ).resolves.toMatchObject({ scope: "host", reason: "site_requests" });
+    });
+
+    it("give a call without render no subresource gate", async () => {
+      const { env, ctx } = fakeEnv();
+
+      const call = await hostedProfile(env, ctx, ANN, {
+        paid: "subscription",
+      }).startCall(PAGE);
+
+      expect(call.subresourceGate).toBeUndefined();
+    });
+
+    it("count a subscriber's background crawl against the subscribers' day, and check that day before it runs", async () => {
+      const day = new Date().toISOString().slice(0, 10);
+
+      const { env, ctx, settled, stored, paid } = fakeEnv({
+        DAILY_REQUESTS: 1,
+      });
+
+      // The free day is spent; the subscribers' is not.
+      await env.STATE.jurisdiction("eu")
+        .getByName("global")
+        .addRequests(day, 1);
+
+      const crawl = backgroundCrawl(
+        env,
+        ctx,
+        "shop.example.com",
+        undefined,
+        "subscription"
+      );
+
+      await expect(crawl.readmit()).resolves.toBeUndefined();
+      await crawl.gate.beforeRequest(new URL("https://shop.example.com/"));
+      crawl.end("ok", 1, 10);
+      await settled();
+
+      expect({ paid: paid().count, free: stored().count }).toStrictEqual({
+        paid: 1,
+        free: 1,
+      });
+    });
+
+    it("refuse a subscriber's audit once the subscribers' requests for the day are sent, whatever the free day's count", async () => {
+      const day = new Date().toISOString().slice(0, 10);
+      const freeSpent = fakeEnv({ DAILY_REQUESTS: 2 });
+      const paidSpent = fakeEnv({ PAID_DAILY_REQUESTS: 2 });
+
+      await freeSpent.env.STATE.jurisdiction("eu")
+        .getByName("global")
+        .addRequests(day, 2);
+      await paidSpent.env.STATE.jurisdiction("eu")
+        .getByName("global")
+        .addPaidRequests(day, 2);
+
+      const subscriber = (env: LimitsEnv, ctx: typeof freeSpent.ctx) =>
+        hostedProfile(env, ctx, ANN, { paid: "subscription" });
+
+      await expect(
+        refusalOf(subscriber(freeSpent.env, freeSpent.ctx).startCall(PAGE))
+      ).resolves.toBe("admitted");
+      await expect(
+        refusalOf(subscriber(paidSpent.env, paidSpent.ctx).startCall(PAGE))
+      ).resolves.toBe(
+        "The premium server has sent its 2 requests for subscribers today, its daily limit for all accounts together. Audits that request a site wait until 00:00 UTC; audits of inline HTML and seo_list_rules still work. Or use the local server, which has no limits: npx -y @rivi-software/agentic-seo-check mcp"
+      );
+      await expect(
+        reasonOf(subscriber(paidSpent.env, paidSpent.ctx).startCall(PAGE))
+      ).resolves.toBe("paid_daily_requests");
+      // A free caller is held to the free day alone.
+      await expect(
+        refusalOf(
+          hostedProfile(paidSpent.env, paidSpent.ctx, PERSON).startCall(PAGE)
+        )
+      ).resolves.toBe("admitted");
+    });
   });
 });
