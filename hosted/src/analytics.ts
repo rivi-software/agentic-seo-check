@@ -58,6 +58,7 @@ import type {
   PropertyValue,
 } from "../../src/telemetry/posthog.js";
 import type { Caller } from "./callers.js";
+import type { Paid } from "./entitlement.js";
 import type { CallRecord } from "./limits.js";
 
 /** The Worker's variable the analytics use (wrangler.jsonc). */
@@ -188,7 +189,8 @@ export type ErrorTask =
   | "call_record"
   | "openai_ranges"
   | "signing_keys"
-  | "request_signature";
+  | "request_signature"
+  | "revoke_grants";
 
 /** Hears an error of `task`, for its event; it never throws. */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a thrown value is unknown until exceptions.ts reads it
@@ -405,6 +407,7 @@ const CALL_PROPERTIES = [
   "recheck",
   "target",
   "platform",
+  "paid",
   "outcome",
   "requests",
   "pages",
@@ -425,7 +428,8 @@ export const hostedAnalytics = (
   env: AnalyticsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
   caller: Caller,
-  sessionHeader?: string | null
+  sessionHeader?: string | null,
+  paid?: Paid
 ): HostedAnalytics | undefined => {
   if (!env.POSTHOG_HOST) {
     return undefined;
@@ -466,6 +470,8 @@ export const hostedAnalytics = (
     properties: {
       $mcp_interface: "mcp",
       platform: caller.platform ?? "none",
+      // Absent when not paid; never an account id.
+      paid,
       outcome: record?.outcome,
       requests: record?.requests,
       pages: record?.pages,

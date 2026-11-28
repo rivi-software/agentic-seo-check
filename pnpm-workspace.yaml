@@ -14,3 +14,8 @@ allowBuilds:
 
 # No transitive dependencies from git or tarball URLs.
 blockExoticSubdeps: true
+
+# pnpm waits a day before it installs a new release; the premium server (issue #229) is built on this one, which
+# came out within that day. Drop the line once it is older.
+minimumReleaseAgeExclude:
+  - "@cloudflare/workers-oauth-provider@1.3.0"

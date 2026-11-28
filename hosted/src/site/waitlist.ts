@@ -9,21 +9,16 @@ import { PRODUCT_NAME } from "../../../src/brand.js";
 import { reportError } from "../analytics.js";
 import type { AnalyticsEnv } from "../analytics.js";
 import { callerOf } from "../callers.js";
+import type { D1Like, D1Statement } from "../d1.js";
 import { SITE_ORIGIN } from "../limits.js";
 import { randomSecret, sha256Hex } from "../secrets.js";
 import { field, fromThisSite, personSent, readForm } from "./forms.js";
 import type { TurnstileEnv } from "./forms.js";
 
-/** A statement of the part of D1's API the waitlist calls, which D1Database has. */
-export interface WaitlistStatement {
-  bind: (...values: (string | number | null)[]) => WaitlistStatement;
-  run: () => Promise<object>;
-  first: <T>() => Promise<T | null>;
-}
+/** The waitlist's names for the D1 subset in src/d1.ts. */
+export type WaitlistStatement = D1Statement;
 
-export interface WaitlistDatabase {
-  prepare: (sql: string) => WaitlistStatement;
-}
+export type WaitlistDatabase = D1Like;
 
 export interface WaitlistEnv {
   /** The waitlist's D1 database, in the EU; without it the form is off. */

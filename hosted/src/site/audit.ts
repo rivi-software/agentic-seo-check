@@ -31,6 +31,7 @@ import { callerOf } from "../callers.js";
 import { cruxOptions } from "../crux.js";
 import { hostedProfile, SITE_ORIGIN } from "../limits.js";
 import type { CallRecord, LimitsEnv } from "../limits.js";
+import type { AccountSiteEnv } from "./account-routes.js";
 import { field, fromThisSite, personSent, readForm } from "./forms.js";
 import type { TurnstileEnv } from "./forms.js";
 import type { FailureKind, HomeState } from "./home.js";
@@ -47,7 +48,10 @@ import {
 } from "./site-report.js";
 import type { WaitlistEnv } from "./waitlist.js";
 
-/** The Worker's bindings and variables the audit form uses, beside the limits' and sharing's. */
+/**
+ * The Worker's bindings and variables the audit form uses, beside the limits', sharing's, the
+ * waitlist's and the accounts' (issue #229).
+ */
 export interface SiteEnv
   extends
     LimitsEnv,
@@ -55,7 +59,8 @@ export interface SiteEnv
     ShareApiEnv,
     WaitlistEnv,
     TurnstileEnv,
-    AnalyticsEnv {}
+    AnalyticsEnv,
+    AccountSiteEnv {}
 
 /** The name the record of a run has where a tool call's has the tool. */
 export const WEB_AUDIT = "web_audit_page";

@@ -58,7 +58,9 @@
     { "name": "SHARE_UPLOADS", "namespace_id": "35006", "simple": { "limit": 5, "period": 60 } },
     // Signups to the premium waitlist one IP address may send a minute (src/site/waitlist.ts,
     // issue #232): the website's alone, so the MCP server's configuration has no such namespace.
-    { "name": "WAITLIST_SIGNUPS", "namespace_id": "35007", "simple": { "limit": 5, "period": 60 } }
+    { "name": "WAITLIST_SIGNUPS", "namespace_id": "35007", "simple": { "limit": 5, "period": 60 } },
+    // Sign-in codes one IP address may ask for a minute (src/accounts/codes.ts, issue #229).
+    { "name": "SIGN_IN_CODES", "namespace_id": "35008", "simple": { "limit": 5, "period": 60 } }
   ],
   // The MCP server's Durable Object, so the form's requests count in the same day. It runs the code
   // the MCP server last deployed, which deploys first: keep its methods additive (src/state.ts).
@@ -86,18 +88,38 @@
       "database_name": "agentic-seo-check-waitlist",
       "database_id": "b43422ec-7419-40cd-ba78-9a78a09fde39",
       "migrations_dir": "migrations"
+    },
+    // The premium accounts (issue #229): an address, its Stripe customer and subscription, and
+    // pending sign-in codes, in the EU. Its tables are in migrations-accounts/, which the deploy job
+    // applies before it deploys the website (`pnpm run site:migrate-accounts`).
+    {
+      "binding": "ACCOUNTS",
+      "database_name": "agentic-seo-check-accounts",
+      // In the EU jurisdiction (`wrangler d1 create agentic-seo-check-accounts --jurisdiction eu`).
+      "database_id": "9136b689-56af-4781-aeb0-0a2be3381955",
+      "migrations_dir": "migrations-accounts"
     }
   ],
   // Once a day: the waitlist's unconfirmed addresses whose link has run out are deleted (worker.ts).
   "triggers": { "crons": ["17 3 * * *"] },
-  // Cloudflare Email Service, for the waitlist's emails: the link that confirms an address. It may
-  // send from WAITLIST_FROM only. Locally, Wrangler writes each email to a file instead.
+  // Cloudflare Email Service, for the waitlist's emails (the link that confirms an address) and the
+  // accounts' sign-in codes. It may send from WAITLIST_FROM and ACCOUNTS_FROM only. Locally, Wrangler writes each email to a file instead.
   "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["premium@rivi.software"] }],
   // The MCP server's dataset: one record per run of the form, as per tool call.
   "analytics_engine_datasets": [{ "binding": "CALLS", "dataset": "agentic_seo_check_calls" }],
   // A deploy fails until these are set on the Worker (`pnpm run site:secret <NAME>`), rather than
-  // put the website live with its form off, its requests unsigned and no Share button.
-  "secrets": { "required": ["TURNSTILE_SECRET_KEY", "WEB_BOT_AUTH_KEYS", "SHARE_KEY"] },
+  // put the website live with its form off, its requests unsigned, no Share button, or account
+  // pages that cannot sign in or take payments (issue #229).
+  "secrets": {
+    "required": [
+      "TURNSTILE_SECRET_KEY",
+      "WEB_BOT_AUTH_KEYS",
+      "SHARE_KEY",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET",
+      "ACCOUNT_SESSION_KEY"
+    ]
+  },
   "vars": {
     // "open"; "no-crawls" audits a homepage alone; "closed" turns the form off. Change it and deploy.
     "MODE": "open",
@@ -121,7 +143,15 @@
     "POSTHOG_HOST": "https://g.rivi.software",
     // The address the waitlist's emails come from, on a domain onboarded to Email Service; the
     // send_email binding above allows it. Empty turns the waitlist's form off.
-    "WAITLIST_FROM": "premium@rivi.software"
+    "WAITLIST_FROM": "premium@rivi.software",
+    // The address the sign-in codes come from, which the send_email binding above allows. Empty
+    // turns signing in off.
+    "ACCOUNTS_FROM": "premium@rivi.software",
+    // The Stripe price of the premium subscription (price_...), set in Stripe's Dashboard so the
+    // price changes without a deploy. Empty keeps Subscribe off. This one is the sandbox's EUR 5 a
+    // month, tax included (product "Agentic SEO Check Premium", txcd_10103001); a live price
+    // replaces it with the live keys at launch.
+    "STRIPE_PRICE": "price_1UfMq9D0IJGW6zjS1HysS23O"
   },
   // Errors only, as the Worker logs them: no invocation logs, which carry request details.
   // Traces stay off (issue #208): the span of every outgoing fetch keeps url.full, url.path and

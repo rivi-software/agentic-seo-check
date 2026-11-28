@@ -114,8 +114,13 @@ export interface HostedCall {
   end?: (end: HostedCallEnd) => void;
 }
 
+/** How a premium call is paid for (hosted/src/entitlement.ts). */
+export type HostedPaid = "subscription" | "per_call";
+
 /** What the hosted server (hosted/src/index.ts) adds to the tools. */
 export interface HostedProfile {
+  /** Set on the premium host when the call is paid for; no tool reads it yet. */
+  paid?: HostedPaid;
   /** The User-Agent of every request the tools send; it keeps the agentic-seo-check product token. */
   userAgent: string;
   /** Signs each request the tools send (Web Bot Auth, issue #41); without it they go unsigned. */

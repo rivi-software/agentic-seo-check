@@ -10,6 +10,7 @@ import {
   FORMER_SERVER_HOSTS,
   FORMER_SITE_HOST,
   ORIGIN,
+  PREMIUM_HOST,
   SERVER_PATHS,
 } from "../src/limits.ts";
 
@@ -45,6 +46,12 @@ describe("the two Workers' configurations", () => {
         {
           name: "WAITLIST_SIGNUPS",
           namespace_id: "35007",
+          simple: { limit: 5, period: 60 },
+        },
+        // Sign-in codes for the premium accounts (issue #229).
+        {
+          name: "SIGN_IN_CODES",
+          namespace_id: "35008",
           simple: { limit: 5, period: 60 },
         },
       ])
@@ -107,6 +114,42 @@ describe("the two Workers' configurations", () => {
         pattern: former,
         custom_domain: true,
       })),
+      { pattern: PREMIUM_HOST, custom_domain: true },
+    ]);
+  });
+
+  it("leave OAuth's discovery documents to the premium hostname: agentic-seo.org routes none of them (issue #229)", () => {
+    const host = new URL(ORIGIN).hostname;
+
+    const paths: string[] = server.routes
+      .map((r: { pattern: string }) => r.pattern)
+      .filter((pattern: string) => pattern.startsWith(`${host}/`));
+
+    expect(paths.filter((path) => path.includes("oauth"))).toStrictEqual([]);
+  });
+
+  it("give the premium server the website's accounts database, sign-in limit, mail and sender (issue #229)", () => {
+    const premium = (config: typeof server) => ({
+      accounts: config.d1_databases.find(
+        (d: { binding: string }) => d.binding === "ACCOUNTS"
+      ),
+      codes: config.ratelimits.find(
+        (r: { name: string }) => r.name === "SIGN_IN_CODES"
+      ),
+      email: config.send_email,
+      from: config.vars["ACCOUNTS_FROM"],
+      siteKey: config.vars["TURNSTILE_SITE_KEY"],
+    });
+
+    expect(premium(server)).toStrictEqual(premium(site));
+    expect(premium(server).accounts).toBeDefined();
+    expect(premium(server).codes).toBeDefined();
+  });
+
+  it("keep the premium server's way in on any hostname off in production", () => {
+    expect(server.vars["PREMIUM_DEV"]).toBe("off");
+    expect(server.kv_namespaces).toStrictEqual([
+      expect.objectContaining({ binding: "OAUTH_KV" }),
     ]);
   });
 

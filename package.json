@@ -64,6 +64,7 @@
     "site:build": "node hosted/scripts/wrangler.ts deploy --dry-run --outdir dist/site --config wrangler.site.jsonc",
     "site:deploy": "node hosted/scripts/wrangler.ts deploy --config wrangler.site.jsonc",
     "site:migrate": "node hosted/scripts/wrangler.ts d1 migrations apply agentic-seo-check-waitlist --remote --config wrangler.site.jsonc",
+    "site:migrate-accounts": "node hosted/scripts/wrangler.ts d1 migrations apply agentic-seo-check-accounts --remote --config wrangler.site.jsonc",
     "site:secret": "cd hosted && wrangler secret put --config wrangler.site.jsonc",
     "changeset": "changeset",
     "version-packages": "changeset version && pnpm install --lockfile-only",
@@ -114,6 +115,7 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
     "@changesets/cli": "3.0.3",
+    "@cloudflare/workers-oauth-provider": "1.3.0",
     "@resvg/resvg-wasm": "2.6.2",
     "@types/node": "22.20.5",
     "chrome-launcher": "^1.2.3",

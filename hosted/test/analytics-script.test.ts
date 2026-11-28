@@ -13,6 +13,7 @@ import { auditAeoHtml } from "../../src/core/aeo/audit.ts";
 import { auditHtml } from "../../src/core/audit.ts";
 import { parseDocument } from "../../src/core/html/dom.ts";
 import { cleanMessage as coreCleanMessage } from "../../src/telemetry/exceptions.ts";
+import { accountPage } from "../src/site/account-page.ts";
 import { ANALYTICS_HELPERS_JS } from "../src/site/analytics-script.ts";
 import { SITE_JS } from "../src/site/files.ts";
 import { homePage } from "../src/site/home.ts";
@@ -219,6 +220,42 @@ const closest = (element: Element, selector: string): Element | null => {
 
 const AUDITED = "https://shop.example.com/pricing?plan=team";
 
+/** An account's address, on the audited site's domain so that the same check finds it. */
+const OWNER = "owner@shop.example.com";
+
+/** The account pages that show an address (issue #229): the code form, and the signed-in page. */
+const accountPages = (): string[] => {
+  const state = {
+    open: true,
+    billing: true,
+    testMode: true,
+    siteKey: "1x00000000000000000000BB",
+  };
+
+  return [
+    accountPage({
+      ...state,
+      page: { view: "code", email: OWNER, error: "That code is not right." },
+    }),
+    accountPage({
+      ...state,
+      page: {
+        view: "account",
+        account: {
+          id: "acc_1",
+          email: OWNER,
+          stripeCustomerId: "cus_1",
+          subscriptionId: "sub_1",
+          subscriptionStatus: "active",
+          currentPeriodEnd: 1_800_000_000,
+          stripeEventAt: 1,
+        },
+        error: `We could not cancel the subscription of ${OWNER}.`,
+      },
+    }),
+  ];
+};
+
 /**
  * Every page that can show an audited address, with that address everywhere it can be: the form
  * filled with it and refused, the wait for a crawl and its pages, the report with its share menu,
@@ -280,6 +317,7 @@ const pagesWithTheAddress = async (): Promise<string[]> => {
       report: renderReport(seo, aeo, false, shareMenu(link)),
     }),
     sharePage(link),
+    ...accountPages(),
   ];
 };
 
@@ -292,7 +330,7 @@ describe("what a session recording shows (issue #181)", () => {
     expect(SITE_JS).not.toContain("disable_session_recording");
   });
 
-  it("masks every text and attribute of the pages that names the audited site", async () => {
+  it("masks every text and attribute of the pages that names the audited site or an account's address", async () => {
     const leaks: string[] = [];
 
     for (const html of await pagesWithTheAddress()) {

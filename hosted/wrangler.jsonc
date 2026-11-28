@@ -28,7 +28,10 @@
       "zone_name": "agentic-seo.org"
     },
     { "pattern": "mcp.agentic-seo.rivi.software", "custom_domain": true },
-    { "pattern": "mcp.agentic-seo-check.rivi.software", "custom_domain": true }
+    { "pattern": "mcp.agentic-seo-check.rivi.software", "custom_domain": true },
+    // The premium server (issue #229): the same tools behind an account's sign-in, with OAuth's
+    // endpoints and discovery documents, which agentic-seo.org never serves (src/premium/).
+    { "pattern": "premium.agentic-seo.org", "custom_domain": true }
   ],
   // Writes the website's fixed files into .generated/assets/ (scripts/assets.ts, issue #202), as the
   // website's build does.
@@ -63,7 +66,10 @@
     { "name": "PLATFORM_CRAWLS", "namespace_id": "35005", "simple": { "limit": 30, "period": 60 } },
     // Reports one IP address may share a minute, uploaded to the website or kept by the MCP server's
     // seo_share_report (src/shared-reports.ts).
-    { "name": "SHARE_UPLOADS", "namespace_id": "35006", "simple": { "limit": 5, "period": 60 } }
+    { "name": "SHARE_UPLOADS", "namespace_id": "35006", "simple": { "limit": 5, "period": 60 } },
+    // Sign-in codes one IP address may ask for a minute (src/accounts/codes.ts, issue #229), shared
+    // with the website's account pages, so both forms count together.
+    { "name": "SIGN_IN_CODES", "namespace_id": "35008", "simple": { "limit": 5, "period": 60 } }
   ],
   // The day's count of outgoing requests, the sites each caller audited today, and ChatGPT's
   // connector addresses. The website binds it too.
@@ -82,6 +88,35 @@
       "jurisdiction": "eu"
     }
   ],
+  // The premium accounts (issue #229), the website's database (wrangler.site.jsonc), which applies
+  // its migrations: the premium server reads an account and writes sign-in codes.
+  "d1_databases": [
+    {
+      "binding": "ACCOUNTS",
+      "database_name": "agentic-seo-check-accounts",
+      // In the EU jurisdiction (`wrangler d1 create agentic-seo-check-accounts --jurisdiction eu`).
+      "database_id": "9136b689-56af-4781-aeb0-0a2be3381955",
+      "migrations_dir": "migrations-accounts"
+    }
+  ],
+  // The OAuth grants and tokens of the premium server (src/premium/provider.ts), kept by
+  // @cloudflare/workers-oauth-provider as hashes, with each grant's props encrypted.
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      // In the EU jurisdiction (`wrangler kv namespace create agentic-seo-check-oauth
+      // --jurisdiction=eu`).
+      "id": "38e1d186ebd643659564aee9f6e5fc01"
+    }
+  ],
+  // Cloudflare Email Service, for the premium server's sign-in codes. Locally, Wrangler keeps each
+  // email instead of sending it.
+  "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["premium@rivi.software"] }],
+  // A deploy fails until these are set on the Worker (`pnpm run hosted:secret <NAME>`), rather than
+  // put the premium server live with a sign-in that no person can pass, or the requests unsigned.
+  // With a list here, local runs load only these from .dev.vars, so the list names every secret
+  // .dev.vars gives this Worker. CRUX_API_KEY stays optional.
+  "secrets": { "required": ["TURNSTILE_SECRET_KEY", "WEB_BOT_AUTH_KEYS"] },
   // The Workflow that runs a background crawl seo_start_crawl started (src/crawls.ts, issue #209).
   // The website starts none, so its configuration binds none.
   "workflows": [
@@ -114,7 +149,17 @@
     // events, after their consent banner's rules, and one event per MCP tool call. It is the managed
     // proxy POSTHOG_HOST names in src/telemetry/posthog.ts, which the website's CSP allows. Empty
     // turns both off; .dev.vars empties it for local runs.
-    "POSTHOG_HOST": "https://g.rivi.software"
+    "POSTHOG_HOST": "https://g.rivi.software",
+    // The address the sign-in codes come from, which the send_email binding above allows. Empty
+    // turns signing in to the premium server off.
+    "ACCOUNTS_FROM": "premium@rivi.software",
+    // The public site key of the Turnstile widget on the premium server's sign-in, the website's.
+    // Its secret key is the Worker secret TURNSTILE_SECRET_KEY. .dev.vars has Cloudflare's test keys.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAF7cZ5A-51MpK6BR",
+    // "on" lets a request with the header x-agentic-seo-premium: 1 reach the premium server on any
+    // hostname, for `hosted:dev` and the tests, whose requests all carry the first route's hostname.
+    // .dev.vars turns it on; production keeps it off.
+    "PREMIUM_DEV": "off"
   },
   // Errors only, as the Worker logs them: no invocation logs, which carry request details.
   // Traces stay off (issue #208): the span of every outgoing fetch keeps url.full, url.path and

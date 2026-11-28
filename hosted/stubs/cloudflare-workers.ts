@@ -1,9 +1,12 @@
 /**
- * What src/state.ts and src/crawls.ts take from `cloudflare:workers`, a module only workerd has,
- * for the tests that import the Worker's modules in Node (vitest.config.ts), and for the bundle of
- * them scripts/assets.ts imports. They import state.ts for `globalState` and crawls.ts for its
- * store, and never run the Durable Object or the Workflow; the workerd tests run both.
+ * What src/state.ts, src/crawls.ts and the OAuth provider (src/premium/) take from
+ * `cloudflare:workers`, a module only workerd has, for the tests that import the Worker's modules
+ * in Node (vitest.config.ts), and for the bundle of them scripts/assets.ts imports. They import
+ * state.ts for `globalState` and crawls.ts for its store, and never run the Durable Object or the
+ * Workflow; the workerd tests run both.
  */
+export { WorkerEntrypoint } from "./worker-entrypoint.ts";
+
 export class DurableObject<Env = unknown> {
   protected ctx: DurableObjectState;
   protected env: Env;

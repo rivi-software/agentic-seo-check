@@ -9,3 +9,5 @@ coverage/
 hosted/worker-configuration.d.ts
 # hosted/: the website's static assets, which scripts/assets.ts writes before each build.
 hosted/.generated/
+# hosted/: local secrets (Stripe test keys), which scripts/wrangler.ts passes to `dev`. .dev.vars is committed.
+hosted/.dev.secrets

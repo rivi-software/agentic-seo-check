@@ -10,6 +10,15 @@ import { globalState } from "./state.js";
 import type { StateEnv } from "./state.js";
 
 /**
+ * The caller of a signed-in premium account: its limits and its sites of the day are the
+ * account's, whatever address it calls from.
+ */
+export const accountCaller = (accountId: string): Caller => ({
+  key: `account:${accountId}`,
+  platform: null,
+});
+
+/**
  * Anthropic's outbound addresses, from which claude.ai, Cowork and the Claude apps call remote MCP
  * servers. They change only with notice (platform.claude.com/docs/en/api/ip-addresses).
  */

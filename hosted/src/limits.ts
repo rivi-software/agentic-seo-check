@@ -64,6 +64,15 @@ export const FORMER_SERVER_HOSTS: ReadonlySet<string> = new Set([
   "mcp.agentic-seo-check.rivi.software",
 ]);
 
+/**
+ * The premium server's hostname (issue #229): the same tools behind an account's sign-in, with
+ * OAuth's endpoints and discovery documents, which ORIGIN never serves (src/premium/). The MCP
+ * server's Worker has it as a custom domain.
+ */
+export const PREMIUM_HOST = "premium.agentic-seo.org";
+
+export const PREMIUM_ORIGIN = `https://${PREMIUM_HOST}`;
+
 /** The website's hostname before issue #168, which sends every request to ORIGIN (site/routes.ts). */
 export const FORMER_SITE_HOST = "agentic-seo.rivi.software";
 
@@ -664,6 +673,8 @@ export interface ProfileListeners {
    * failed, and signing keys that do not parse.
    */
   report?: ReportTask;
+  /** How the call is paid for, on the premium host. */
+  paid?: HostedProfile["paid"];
 }
 
 /** The hosted profile of one request to /mcp: its caller's limits, and the Worker's bindings. */
@@ -671,7 +682,7 @@ export const hostedProfile = (
   env: LimitsEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
   caller: Caller,
-  { observe, report }: ProfileListeners = {}
+  { observe, report, paid }: ProfileListeners = {}
 ): HostedProfile => {
   const keep = (
     call: HostedCallInfo,
@@ -687,7 +698,7 @@ export const hostedProfile = (
     });
   };
 
-  return {
+  const profile: HostedProfile = {
     userAgent: USER_AGENT,
     sign: requestSigner(
       env.WEB_BOT_AUTH_KEYS,
@@ -754,4 +765,10 @@ export const hostedProfile = (
       };
     },
   };
+
+  if (paid !== undefined) {
+    profile.paid = paid;
+  }
+
+  return profile;
 };
