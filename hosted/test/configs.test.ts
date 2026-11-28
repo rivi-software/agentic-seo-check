@@ -61,10 +61,14 @@ describe("the two Workers' configurations", () => {
     );
   });
 
-  it("build the website as the MCP server, and then copy pdfmake for a report's PDF", () => {
-    expect(site.build).toStrictEqual({
-      ...server.build,
-      command: `${server.build.command} && node scripts/pdfmake.ts`,
+  it("build the same static assets for both, which the website serves first and the MCP server only behind its own routes (issue #202)", () => {
+    expect(site.build).toStrictEqual(server.build);
+    expect(server.build.command).toBe("node scripts/assets.ts");
+    expect(site.assets).toStrictEqual({ directory: server.assets.directory });
+    expect(server.assets).toStrictEqual({
+      directory: ".generated/assets",
+      binding: "ASSETS",
+      run_worker_first: true,
     });
   });
 

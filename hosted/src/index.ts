@@ -37,22 +37,13 @@ import {
   PREMIUM_HOST,
   PREMIUM_ORIGIN,
 } from "./limits.js";
-import {
-  crawlerPage,
-  FAVICON_SVG,
-  landingPage,
-  notFoundPage,
-} from "./pages.js";
+import { crawlerPage, landingPage, notFoundPage } from "./pages.js";
 import { premiumProvider } from "./premium/provider.js";
 import type { PremiumCall } from "./premium/provider.js";
 import { mayCallTool, protocolServers } from "./protocol-server.js";
 import { refusalOf } from "./refused-requests.js";
 import { keepReport } from "./shared-reports.js";
 import { DIRECTORY_PATH, directoryResponse, signingKeys } from "./signing.js";
-import { SITE_JS } from "./site/files.js";
-import { fontResponse, shareImageResponse } from "./ui/assets.js";
-import { SERVER_CARD } from "./ui/og.js";
-import { posthogFileResponse } from "./ui/posthog-script.js";
 import { productHuntUpvotes } from "./ui/product-hunt.js";
 
 export { CrawlWorkflow } from "./crawls.js";
@@ -248,35 +239,14 @@ const serverPage = async (
 };
 
 /**
- * The files the pages load, which the website serves on the one hostname: here for `hosted:dev`,
- * which runs this Worker alone. The 404 page for any other path.
+ * The files the pages load, which the website serves on the one hostname from its static assets
+ * (scripts/assets.ts, issue #202): here from the same directory, for `hosted:dev`, which runs this
+ * Worker alone. The 404 page for any other path.
  */
-const devFile = (
-  request: Request,
-  env: Env,
-  pathname: string
-): Response | Promise<Response> => {
-  switch (pathname) {
-    case "/favicon.svg": {
-      return page(request, FAVICON_SVG, "image/svg+xml");
-    }
+const devFile = async (request: Request, env: Env): Promise<Response> => {
+  const file = await env.ASSETS.fetch(request);
 
-    case "/site.js": {
-      return page(request, SITE_JS, "text/javascript; charset=utf-8");
-    }
-
-    case SERVER_CARD.path: {
-      return shareImageResponse(request, "server");
-    }
-
-    default: {
-      return (
-        posthogFileResponse(request, pathname, env.POSTHOG_HOST) ??
-        fontResponse(request, pathname) ??
-        page(request, notFoundPage(), HTML, 404)
-      );
-    }
-  }
+  return file.status === 404 ? page(request, notFoundPage(), HTML, 404) : file;
 };
 
 /** The premium hostname serves the pages' files beside OAuth and /authorize, and not found else. */
@@ -285,7 +255,7 @@ const premiumOther = (
   env: Env
 ): Response | Promise<Response> =>
   request.method === "GET" || request.method === "HEAD"
-    ? devFile(request, env, new URL(request.url).pathname)
+    ? devFile(request, env)
     : new Response("Method not allowed.\n", {
         status: 405,
         headers: { allow: "GET, HEAD" },
@@ -370,7 +340,7 @@ const route = (request: Request, env: Env, ctx: ExecutionContext) => {
     }
 
     default: {
-      return devFile(request, env, pathname);
+      return devFile(request, env);
     }
   }
 };

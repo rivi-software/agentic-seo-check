@@ -17,16 +17,20 @@
     { "pattern": "agentic-seo.org", "custom_domain": true },
     { "pattern": "agentic-seo.rivi.software", "custom_domain": true }
   ],
-  // The pages' fonts and share images (src/ui/assets.ts), and the fonts of a shared result's image
-  // (src/ui/share-image.ts), bundled as their bytes; resvg, which draws that image, as WebAssembly.
+  // The fonts of a shared result's image (src/ui/share-image.ts), bundled as their bytes; resvg,
+  // which draws that image, as WebAssembly.
   "rules": [
-    { "type": "Data", "globs": ["**/*.woff2", "**/*.png", "**/*.ttf"], "fallthrough": true },
+    { "type": "Data", "globs": ["**/*.ttf"], "fallthrough": true },
     { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }
   ],
-  // Copies posthog-js's browser build to .generated/posthog-js.txt, served at /ph.js (issue #57),
-  // its session recorder to .generated/posthog-recorder.txt, served at /ph-recorder.js (issue #181),
-  // and pdfmake's to .generated/pdfmake.txt, served at /pdfmake.js for a report's PDF (issue #157).
-  "build": { "command": "node scripts/posthog-js.ts && node scripts/pdfmake.ts" },
+  // Writes the website's fixed files into .generated/assets/ (scripts/assets.ts, issue #202): the
+  // pages' script and fonts, the favicon, the share images, posthog-js and its recorder, and pdfmake
+  // with a report's PDF fonts.
+  "build": { "command": "node scripts/assets.ts" },
+  // Those files, served before the Worker runs: a request for one costs no invocation, and
+  // Cloudflare sends their ETag and 304 itself. Every other path reaches the Worker. Their headers
+  // are in the directory's _headers.
+  "assets": { "directory": ".generated/assets" },
   "workers_dev": false,
   "preview_urls": false,
   // `pnpm run site:dev` beside `pnpm run hosted:dev`, which serves the Durable Object on 8787.

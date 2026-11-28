@@ -55,3 +55,14 @@ export const defines = (file = SERVER_CONFIG) =>
     "globalThis.AGENTIC_SEO_CHECK_VERSION": JSON.stringify(readVersion()),
     HOSTED_RATE_LIMITS: JSON.stringify(readRateLimits(file)),
   }) satisfies Record<string, string>;
+
+/**
+ * The modules only workerd has, which src/state.ts and src/crawls.ts import, and the stand-ins
+ * Node takes instead: for the tests that import the Worker's modules (vitest.config.ts) and for
+ * the bundle of them scripts/assets.ts reads.
+ */
+export const WORKERD_STUBS = {
+  "cloudflare:workers": new URL("stubs/cloudflare-workers.ts", hosted).pathname,
+  "cloudflare:workflows": new URL("stubs/cloudflare-workflows.ts", hosted)
+    .pathname,
+};
