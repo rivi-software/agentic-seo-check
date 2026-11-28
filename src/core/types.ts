@@ -589,6 +589,17 @@ export interface PerformanceResult {
   renderBlocking?: LighthouseItem[];
   /** Scripts with the most main-thread time (bootup-time), `wastedMs` holding their script evaluation time. */
   scripts?: LighthouseItem[];
+  /**
+   * Where the run came from, on a lab result only: Google's PageSpeed Insights (the premium hosted
+   * server, issue #222). A local Lighthouse run has no `source`.
+   */
+  source?: "pagespeed-insights";
+  /**
+   * On a lab result only: the Lighthouse categories the lab did not return, such as
+   * `agentic-browsing`, which PageSpeed Insights does not run. Their scores are null and no rule
+   * fires on them.
+   */
+  notMeasured?: string[];
 }
 
 /**

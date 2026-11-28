@@ -9,6 +9,7 @@ import type {
 } from "./crawl.js";
 import { caughtError, ExpectedError } from "./errors.js";
 import {
+  askGate,
   DEFAULT_USER_AGENT,
   fetchPage,
   forAuditOf,
@@ -26,8 +27,16 @@ import {
 } from "./field-data.js";
 import type { FieldDataOptions } from "./field-data.js";
 import { extractPage } from "./html/extract.js";
-import { runLighthouse, LighthouseUnavailableError } from "./lighthouse.js";
+import {
+  LIGHTHOUSE_CATEGORIES,
+  runLighthouse,
+  summarize,
+  LighthouseUnavailableError,
+} from "./lighthouse.js";
+import type { LhrLike } from "./lighthouse.js";
 import { performanceFindings } from "./performance-rules.js";
+import { LabUnavailableError } from "./psi.js";
+import type { LabRunner } from "./psi.js";
 import {
   assignIds,
   compareWithBaseline,
@@ -62,6 +71,7 @@ import type {
   NoFieldData,
   PageAudit,
   PageSource,
+  PerformanceResult,
   Requirement,
   ResponseInfo,
   SiteAudit,
@@ -84,6 +94,12 @@ export interface AuditOptions {
   /** Run Lighthouse (performance + SEO + agentic-browsing categories). */
   lighthouse?: boolean;
   formFactor?: "mobile" | "desktop";
+  /**
+   * A lab runner the caller supplies for `lighthouse` (the hosted server's, from PageSpeed
+   * Insights, issue #222), in place of a local Lighthouse. It is asked only once `fetch`'s gate
+   * lets the page's URL through, since the runner's service visits the page.
+   */
+  lab?: LabRunner;
   /**
    * Real-user Core Web Vitals from the Chrome UX Report for a URL, or its origin when it has too
    * few visits; a crawl asks for its first pages (issue #130). `true` reads the API key from
@@ -501,6 +517,20 @@ const renderFindings = async (
   }
 };
 
+/**
+ * A supplied lab's result: summarized as a local run is, then marked as PageSpeed Insights' with the
+ * categories it left out, as the object's last keys.
+ */
+const labResult = (
+  lhr: LhrLike,
+  url: string,
+  formFactor: "mobile" | "desktop"
+): PerformanceResult => ({
+  ...summarize(lhr, url, formFactor),
+  source: "pagespeed-insights",
+  notMeasured: LIGHTHOUSE_CATEGORIES.filter((c) => !lhr.categories[c]),
+});
+
 /** Runs Lighthouse on the page, on `audit.performance`. */
 const lighthouseFindings = async (
   audit: PageAudit,
@@ -512,12 +542,22 @@ const lighthouseFindings = async (
     message: `Running Lighthouse (${options.formFactor ?? "mobile"}) on ${url}`,
   });
 
+  const formFactor = options.formFactor ?? "mobile";
+
+  // Asked outside the try: a refused page is the site's answer, not a finding about the lab, as
+  // in renderFindings.
+  if (options.lab) {
+    await askGate(options.fetch?.labGate ?? options.fetch?.gate, url);
+  }
+
   try {
-    const perf = await runLighthouse(url, {
-      formFactor: options.formFactor ?? "mobile",
-      userAgent: options.fetch?.userAgent,
-      headers: options.fetch?.headers,
-    });
+    const perf = options.lab
+      ? labResult(await options.lab(url, formFactor), url, formFactor)
+      : await runLighthouse(url, {
+          formFactor,
+          userAgent: options.fetch?.userAgent,
+          headers: options.fetch?.headers,
+        });
 
     audit.performance = perf;
 
@@ -529,7 +569,8 @@ const lighthouseFindings = async (
     return [
       toolFinding(
         "tool.lighthouse-unavailable",
-        error instanceof LighthouseUnavailableError
+        error instanceof LighthouseUnavailableError ||
+          error instanceof LabUnavailableError
           ? error.message
           : `Lighthouse failed: ${error instanceof Error ? error.message : String(error)}`,
         url
@@ -545,12 +586,31 @@ const enrichPage = async (
   const url = audit.response?.finalUrl ?? audit.url;
   const extra: Finding[] = [];
 
-  if (options.render) {
-    extra.push(...(await renderFindings(audit, options, url)));
-  }
+  if (options.lab && options.render && options.lighthouse) {
+    // A supplied lab runs elsewhere (Google's servers, issue #222), so it need not wait for the
+    // render: both at once save a minute. A local Lighthouse launches its own Chrome, so it waits.
+    // Both settle before the call answers, a refusal included, so the browser is closed and no
+    // work outlives the answer; then the first failure, the render's before the lab's, is thrown.
+    const settled = await Promise.allSettled([
+      renderFindings(audit, options, url),
+      lighthouseFindings(audit, options, url),
+    ]);
 
-  if (options.lighthouse) {
-    extra.push(...(await lighthouseFindings(audit, options, url)));
+    for (const side of settled) {
+      if (side.status === "rejected") {
+        throw side.reason;
+      }
+
+      extra.push(...side.value);
+    }
+  } else {
+    if (options.render) {
+      extra.push(...(await renderFindings(audit, options, url)));
+    }
+
+    if (options.lighthouse) {
+      extra.push(...(await lighthouseFindings(audit, options, url)));
+    }
   }
 
   if (extra.length) {

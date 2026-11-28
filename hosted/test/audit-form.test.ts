@@ -156,6 +156,7 @@ const formEnv = (overrides: Partial<SiteEnv> = {}) => {
     WAITLIST_SIGNUPS: limiter(),
     SIGN_IN_CODES: limiter(),
     RENDER_CALLS: limiter(),
+    LAB_CALLS: limiter(),
     // The form reads no account: a query would be a bug here.
     ACCOUNTS: {
       prepare: () => {

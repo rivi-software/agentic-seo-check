@@ -2303,32 +2303,44 @@ describe("the hosted Worker in workerd", () => {
       );
     });
 
-    it("answer a subscriber's render without a browser binding with the tool.render-unavailable finding (issue #230)", async () => {
-      const email = "premium-render@example.com";
-      const { access_token: token } = await signIn(email);
-      const periodEnd = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+    /** A subscriber's headers: one sign-in for every test that needs one, as the codes allow five a minute. */
+    let subscribed: Promise<Record<string, string>> | undefined;
 
-      await accountsSql(
-        `UPDATE accounts SET subscription_status = 'active', current_period_end = ${periodEnd} WHERE email = '${email}'`
+    const subscriber = (): Promise<Record<string, string>> => {
+      subscribed ??= (async () => {
+        const email = "premium-render@example.com";
+        const { access_token: token } = await signIn(email);
+        const periodEnd = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+
+        await accountsSql(
+          `UPDATE accounts SET subscription_status = 'active', current_period_end = ${periodEnd} WHERE email = '${email}'`
+        );
+
+        return { ...PREMIUM_HEADER, authorization: `Bearer ${token}` };
+      })();
+
+      return subscribed;
+    };
+
+    const AuditAnswer = z.object({
+      result: z.object({
+        isError: z.boolean().optional(),
+        structuredContent: z.object({
+          findings: z.array(
+            z.object({ rule: z.string(), message: z.string() })
+          ),
+        }),
+      }),
+    });
+
+    it("answer a subscriber's render without a browser binding with the tool.render-unavailable finding (issue #230)", async () => {
+      const { res, text } = await mcpPost(
+        worker,
+        RENDER_PAGE,
+        await subscriber()
       );
 
-      const { res, text } = await mcpPost(worker, RENDER_PAGE, {
-        ...PREMIUM_HEADER,
-        authorization: `Bearer ${token}`,
-      });
-
-      const answer = z
-        .object({
-          result: z.object({
-            isError: z.boolean().optional(),
-            structuredContent: z.object({
-              findings: z.array(
-                z.object({ rule: z.string(), message: z.string() })
-              ),
-            }),
-          }),
-        })
-        .parse(JSON.parse(text));
+      const answer = AuditAnswer.parse(JSON.parse(text));
 
       expect(res.status).toBe(200);
       expect(answer.result.isError).toBeFalsy();
@@ -2337,6 +2349,30 @@ describe("the hosted Worker in workerd", () => {
           (f) => f.rule === "tool.render-unavailable"
         )?.message
       ).toContain("no browser");
+    });
+
+    it("answer a subscriber's lab run without PSI_API_KEY with the tool.lighthouse-unavailable finding (issue #222)", async () => {
+      const { res, text } = await mcpPost(
+        worker,
+        {
+          method: "tools/call",
+          params: {
+            name: "seo_audit_page",
+            arguments: { url: "https://shop.example.com/", lighthouse: true },
+          },
+        },
+        await subscriber()
+      );
+
+      const answer = AuditAnswer.parse(JSON.parse(text));
+
+      expect(res.status).toBe(200);
+      expect(answer.result.isError).toBeFalsy();
+      expect(
+        answer.result.structuredContent.findings.find(
+          (f) => f.rule === "tool.lighthouse-unavailable"
+        )?.message
+      ).toBe("Lab performance is not set up on this server.");
     });
 
     it("answer an anonymous /mcp without the premium server's KV and database", async () => {

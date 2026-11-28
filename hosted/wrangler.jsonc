@@ -71,7 +71,10 @@
     // with the website's account pages, so both forms count together.
     { "name": "SIGN_IN_CODES", "namespace_id": "35008", "simple": { "limit": 5, "period": 60 } },
     // Pages one premium account may render a minute (issue #230), in the server's browser.
-    { "name": "RENDER_CALLS", "namespace_id": "35009", "simple": { "limit": 10, "period": 60 } }
+    { "name": "RENDER_CALLS", "namespace_id": "35009", "simple": { "limit": 10, "period": 60 } },
+    // Calls with `lighthouse` one premium account may make a minute (issue #222), each a PageSpeed
+    // Insights run from RIVI's key.
+    { "name": "LAB_CALLS", "namespace_id": "35010", "simple": { "limit": 5, "period": 60 } }
   ],
   // Browser Run (issue #230), for a subscriber's `render` on the premium server (src/browser.ts). It
   // fetches nothing itself: every request it makes is answered by the audit's own gated, signed fetch.
@@ -120,7 +123,7 @@
   // A deploy fails until these are set on the Worker (`pnpm run hosted:secret <NAME>`), rather than
   // put the premium server live with a sign-in that no person can pass, or the requests unsigned.
   // With a list here, local runs load only these from .dev.vars, so the list names every secret
-  // .dev.vars gives this Worker. CRUX_API_KEY stays optional.
+  // .dev.vars gives this Worker. CRUX_API_KEY and PSI_API_KEY (issue #222) stay optional.
   "secrets": { "required": ["TURNSTILE_SECRET_KEY", "WEB_BOT_AUTH_KEYS"] },
   // The Workflow that runs a background crawl seo_start_crawl started (src/crawls.ts, issue #209).
   // The website starts none, so its configuration binds none.

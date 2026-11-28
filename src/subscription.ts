@@ -5,13 +5,21 @@
 import { WEBSITE_URL } from "./brand.js";
 import { ExpectedError } from "./core/errors.js";
 
-/** What `render: true` answers on the premium server for an account without a subscription. */
+/**
+ * What a paid feature answers on the premium server for an account without a subscription:
+ * `render: true` ("Rendering"), or `lighthouse: true` ("Lab performance", issue #222). A call that
+ * asks for both is told of both at once, so it does not learn of the second only after dropping
+ * the first.
+ */
 export class SubscriptionNeededError extends ExpectedError {
   override name = "SubscriptionNeededError";
 
-  constructor() {
+  constructor(...features: string[]) {
+    const [first = "Rendering", ...rest] = features;
+    const named = [first, ...rest.map((f) => f.toLowerCase())].join(" and ");
+
     super(
-      `Rendering needs a subscription. Subscribe at ${WEBSITE_URL}/account.`,
+      `${named} ${rest.length ? "need" : "needs"} a subscription. Subscribe at ${WEBSITE_URL}/account.`,
       { reason: "subscription" }
     );
   }

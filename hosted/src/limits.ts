@@ -22,6 +22,7 @@ import type { ReportTask } from "./analytics.js";
 import type { Caller } from "./callers.js";
 import { cruxOptions } from "./crux.js";
 import type { CruxEnv } from "./crux.js";
+import type { PsiEnv } from "./psi.js";
 import { DIRECTORY_PATH, requestSigner } from "./signing.js";
 import { globalState } from "./state.js";
 import type { StateEnv } from "./state.js";
@@ -109,7 +110,8 @@ export type LimitName =
   | "CALLER_CRAWLS"
   | "PLATFORM_CALLS"
   | "PLATFORM_CRAWLS"
-  | "RENDER_CALLS";
+  | "RENDER_CALLS"
+  | "LAB_CALLS";
 
 /** A rate limit as people read it: 300 a minute. */
 export interface RateLimitText {
@@ -179,6 +181,12 @@ const renderCallsRefusal = (): string => {
   return `This account has asked for ${limit} renders on the premium server in the last ${period}, its limit per account. ${tryAgain(period)} ${NO_LIMITS}`;
 };
 
+const labCallsRefusal = (): string => {
+  const { limit, period } = rateLimit("LAB_CALLS");
+
+  return `This account has asked for ${limit} lab runs on the premium server in the last ${period}, its limit per account. ${tryAgain(period)} ${NO_LIMITS}`;
+};
+
 const dailyRendersRefusal = (limit: number): string =>
   `The premium server has rendered its ${limit.toLocaleString("en")} pages for today, its daily limit for all accounts together. Rendering waits until 00:00 UTC; audits without \`render\` still work. ${NO_LIMITS}`;
 
@@ -229,7 +237,7 @@ export type DailyLimits = Pick<
 >;
 
 /** The bindings and variables the limits use (wrangler.jsonc, and wrangler.site.jsonc alike). */
-export interface LimitsEnv extends StateEnv<DayCounter>, CruxEnv {
+export interface LimitsEnv extends StateEnv<DayCounter>, CruxEnv, PsiEnv {
   MODE: string;
   DAILY_REQUESTS: number;
   /** Requests a day for paid calls, all accounts together (issue #230), apart from DAILY_REQUESTS. */
@@ -252,6 +260,8 @@ export interface LimitsEnv extends StateEnv<DayCounter>, CruxEnv {
   SHARE_UPLOADS: RateLimit;
   /** Pages one account may render a minute on the premium server (issue #230). */
   RENDER_CALLS: RateLimit;
+  /** Calls with `lighthouse` one account may make a minute on the premium server (issue #222). */
+  LAB_CALLS: RateLimit;
   CALLS: AnalyticsEngineDataset;
   /**
    * The Ed25519 keys that sign every request (Web Bot Auth, issue #41), a Worker secret: a JSON
@@ -493,6 +503,15 @@ const admit = async (
 
   if (call.render) {
     await checkRender(env, caller);
+  }
+
+  // Each run is a PageSpeed Insights query, from a quota RIVI's key shares among all accounts.
+  if (call.lab) {
+    const labAllowed = await env.LAB_CALLS.limit({ key: caller.key });
+
+    if (!labAllowed.success) {
+      throw new CallLimitError(labCallsRefusal(), "lab_calls");
+    }
   }
 
   if (call.fetches) {

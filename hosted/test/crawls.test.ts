@@ -259,6 +259,7 @@ const closedEnv = (bucket: ReportBucket) => {
     PLATFORM_CRAWLS: unused,
     SHARE_UPLOADS: unused,
     RENDER_CALLS: unused,
+    LAB_CALLS: unused,
     CALLS: {
       writeDataPoint: (point) => {
         outcomes.push(String(point?.blobs?.[1]));

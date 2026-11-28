@@ -141,6 +141,12 @@ export interface FetchOptions {
    */
   subresourceGate?: RequestGate;
   /**
+   * What decides whether a lab service (PageSpeed Insights, issue #222) may visit a page in the
+   * audit's place: the service sends that request, not this fetch. Without it, `gate`. The hosted
+   * server's obeys robots.txt and its URL rules as `gate` does, but counts no request to the site.
+   */
+  labGate?: RequestGate;
+  /**
    * The headers that sign a request (the hosted server's Web Bot Auth signature), asked for each
    * request the gate lets through: the first and every redirect, since a signature covers the
    * host it goes to.
