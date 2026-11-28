@@ -17,6 +17,6 @@
     // The Worker's runtime and bindings (wrangler types), and Node's types for the core it bundles.
     "types": ["./worker-configuration.d.ts", "node"]
   },
-  "include": ["src", "test", "scripts", "*.config.ts", "../src"],
+  "include": ["src", "test", "scripts", "stubs", "*.config.ts", "../src"],
   "exclude": ["node_modules", "dist"]
 }

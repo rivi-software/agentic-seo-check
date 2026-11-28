@@ -112,7 +112,7 @@ export interface PdfReport {
 
 /**
  * The fonts the PDF is set in, by the names its styles use, as files the website serves under
- * PDF_FONT_DIR (pdf-assets.ts). pdfmake needs static instances, and TrueType files, as fontkit
+ * PDF_FONT_DIR (scripts/assets.ts). pdfmake needs static instances, and TrueType files, as fontkit
  * fails to cut a subset of these fonts out of WOFF2.
  */
 export const PDF_FONTS = {

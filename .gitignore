@@ -7,7 +7,7 @@ coverage/
 # hosted/: Wrangler's local state, and the types `wrangler types` writes before each typecheck.
 .wrangler/
 hosted/worker-configuration.d.ts
-# hosted/: posthog-js's browser build as text, which scripts/posthog-js.ts copies before each build.
+# hosted/: the website's static assets, which scripts/assets.ts writes before each build.
 hosted/.generated/
 # hosted/: local secrets (Stripe test keys), which scripts/wrangler.ts passes to `dev`. .dev.vars is committed.
 hosted/.dev.secrets
