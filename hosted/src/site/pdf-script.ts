@@ -4,7 +4,7 @@
  * what every report's PDF shares, adds what pdfmake takes as functions (the table layouts, the
  * cover's ground, the head and foot of each page, and the page breaks that keep a heading with
  * what follows it), lets pdfmake fetch the fonts and nothing else, and returns pdfmake's document.
- * The website serves it after pdfmake at /pdfmake.js (pdf-assets.ts), so a page loads it on the
+ * The website serves it after pdfmake at /pdfmake.js (scripts/assets.ts), so a page loads it on the
  * first "Download PDF" only, and the tests run the same source with pdfmake in Node
  * (test/pdf.test.ts).
  */

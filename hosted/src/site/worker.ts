@@ -17,7 +17,10 @@ import { purgeExpired } from "./waitlist.js";
 // The errors the core catches in the form's audits reach error tracking, with their run (issue #96).
 onCaughtError(hearCaughtError);
 
-/** The paths an error's event may name (issue #60); any other is `other`. */
+/**
+ * The paths an error's event may name (issue #60); any other is `other`. The fixed files are static
+ * assets, which never reach this Worker (scripts/assets.ts).
+ */
 const KNOWN_PATHS = new Set([
   "/",
   "/audit",
@@ -35,10 +38,6 @@ const KNOWN_PATHS = new Set([
   "/robots.txt",
   "/sitemap.xml",
   "/llms.txt",
-  "/site.js",
-  "/ph.js",
-  "/ph-recorder.js",
-  "/favicon.svg",
 ]);
 
 /** Where a request went, as an error's event names it: never its address, nor a share link's result. */

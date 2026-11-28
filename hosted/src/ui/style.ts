@@ -12,7 +12,7 @@
  * Geist Mono the machine text.
  */
 
-/** Where both hostnames serve the fonts (ui/assets.ts). */
+/** Where both hostnames serve the fonts (static assets, scripts/assets.ts). */
 export const FONT_PATHS = {
   display: "/fonts/bricolage-grotesque-latin.woff2",
   sans: "/fonts/geist-latin.woff2",

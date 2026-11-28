@@ -1,6 +1,7 @@
 /**
- * The answer for a file that keeps its address when a deploy changes it: the pages, `/site.js`,
- * `/ph.js`, robots.txt (issue #160). `no-cache` lets a browser keep the file but makes it ask on
+ * The answer for a file the Worker builds that keeps its address when a deploy changes it: the
+ * pages, robots.txt, the sitemap (issue #160). The fixed files, `/site.js` and `/ph.js` among them,
+ * are static assets with the same `no-cache` from their _headers (scripts/assets.ts, issue #202). `no-cache` lets a browser keep the file but makes it ask on
  * every visit, so a deploy shows on the next one, and a page never pairs with the script of another
  * deploy. The ETag lets the browser keep its copy, with a 304, while the bytes are unchanged: the
  * rules page alone is some 350 KB.
