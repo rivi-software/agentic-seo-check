@@ -1,0 +1,71 @@
+hosted/stubs/cloudflare-workers.ts
+  s_c80e8193ce4b6e::t_4953bffe9149b7 4-6
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 1-3,7-21
+hosted/src/ui/style.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 15
+hosted/src/site/pdf.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 115
+hosted/stubs/worker-entrypoint.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 1-13
+hosted/test/configs.test.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 64-71
+hosted/test/worker.test.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 31,1317,1319-1326,1419,1429,1437-1438,1443
+hosted/scripts/asset-sources.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 1-20
+hosted/src/site/modules.d.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 2-3
+hosted/stubs/workflow-entrypoint.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 1-10
+hosted/src/site/files.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 64,1055
+.gitignore
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 10
+hosted/scripts/assets.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 1-255
+AGENTS.md
+  s_c80e8193ce4b6e::t_4953bffe9149b7 26
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 58
+hosted/wrangler.site.jsonc
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 20-21,23,26-33
+hosted/src/site/worker.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 20-23
+hosted/wrangler.jsonc
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 36-42
+hosted/src/index.ts
+  s_c80e8193ce4b6e::t_b321bef58272c2 40
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 242-244,246-247,249,343
+  s_c80e8193ce4b6e::t_4953bffe9149b7 258
+hosted/src/site/pdf-script.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 7
+hosted/stubs/cloudflare-workflows.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 1-7
+hosted/tsconfig.json
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 20
+hosted/vitest.config.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 3,13
+hosted/README.md
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 11-12,23-25,117
+hosted/scripts/defines.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 58-68
+hosted/src/fresh.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 2-4
+hosted/src/site/routes.ts
+  s_c80e8193ce4b6e::t_0aac2a5ac485e5 8-11,18,313-317
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d668fdc3247f93a70d153b076a5c6f13d3749b01",
+  "prompts": {},
+  "sessions": {
+    "s_c80e8193ce4b6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b42b449f-a85d-4bc0-84f0-79078e98760a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Rik Visser <rik@rivi.software>"
+    }
+  }
+}
